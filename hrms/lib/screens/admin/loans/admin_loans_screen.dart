@@ -1,5 +1,7 @@
-// Admin "Loans": overview (GET /admin/loans/dashboard), the approval queue
-// (GET /admin/loans/requests) and the loan register (GET /admin/loans), like the web.
+// Admin "Loans": dashboard with charts (GET /admin/loans/dashboard), the approval queue
+// (GET /admin/loans/requests) and the loan register (GET /admin/loans) with the web's
+// filters (category / loan type / department / branch / dates). The app-bar menu opens the
+// other loan screens: Salary Advance, Disbursement, Payroll Recovery, Policies, Configuration.
 // The loan admin APIs accept the `admin` role only.
 
 import 'dart:async';
@@ -13,112 +15,111 @@ import '../../../utils/error_message_utils.dart';
 import '../../../widgets/app_tab_loader.dart';
 import '../../loans/loan_detail_screen.dart';
 import '../../loans/loan_widgets.dart';
+import 'admin_loan_dashboard.dart';
+import 'admin_loan_disbursement_screen.dart';
 import 'admin_loan_request_screen.dart';
+import 'admin_loan_settings_screen.dart';
+import 'admin_loan_sheets.dart';
+import 'admin_payroll_recovery_screen.dart';
+import 'admin_salary_advance_screen.dart';
 
 class AdminLoansScreen extends StatefulWidget {
   const AdminLoansScreen({super.key, this.initialTab = 1});
-  final int initialTab; // 0 overview, 1 requests, 2 loans
+  final int initialTab; // 0 dashboard, 1 requests, 2 loans
 
   @override
   State<AdminLoansScreen> createState() => _AdminLoansScreenState();
 }
 
 class _AdminLoansScreenState extends State<AdminLoansScreen> {
+  void _openScreen(String key) {
+    final Widget screen = switch (key) {
+      'advance' => const AdminSalaryAdvanceScreen(),
+      'disburse' => const AdminLoanDisbursementScreen(),
+      'payroll' => const AdminPayrollRecoveryScreen(),
+      'policies' => const AdminLoanSettingsScreen(group: LoanSettingsGroup.policies),
+      _ => const AdminLoanSettingsScreen(group: LoanSettingsGroup.configuration),
+    };
+    Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+  }
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 3,
       initialIndex: widget.initialTab,
-      child: Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(
-          title: const Text('Loans', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-          backgroundColor: Colors.white,
-          foregroundColor: AppColors.textPrimary,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
-          bottom: const TabBar(
-            labelColor: AppColors.brandDark,
-            unselectedLabelColor: AppColors.textSecondary,
-            indicatorColor: AppColors.brand,
-            tabs: [Tab(text: 'Overview'), Tab(text: 'Requests'), Tab(text: 'Loans')],
+      child: Builder(
+        builder: (context) => Scaffold(
+          backgroundColor: AppColors.background,
+          appBar: AppBar(
+            title: const Text('Loans'),
+            actions: [
+              PopupMenuButton<String>(
+                tooltip: 'More loan screens',
+                icon: const Icon(Icons.more_vert_rounded),
+                onSelected: _openScreen,
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'advance', child: Text('Salary Advance')),
+                  PopupMenuItem(value: 'disburse', child: Text('Disbursement')),
+                  PopupMenuItem(value: 'payroll', child: Text('Payroll Recovery')),
+                  PopupMenuItem(value: 'policies', child: Text('Loan Policies')),
+                  PopupMenuItem(value: 'config', child: Text('Configuration')),
+                ],
+              ),
+            ],
+            bottom: const TabBar(
+              tabs: [Tab(text: 'Dashboard'), Tab(text: 'Approvals'), Tab(text: 'Loans')],
+            ),
           ),
+          body: TabBarView(children: [
+            AdminLoanDashboard(onOpenTab: (i) => DefaultTabController.of(context).animateTo(i)),
+            const _RequestsTab(),
+            const _LoansTab(),
+          ]),
         ),
-        body: const TabBarView(children: [_OverviewTab(), _RequestsTab(), _LoansTab()]),
       ),
     );
   }
 }
 
 Widget _errorView(String message, VoidCallback retry) => ListView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
       children: [
-        Text(message, textAlign: TextAlign.center),
+        Center(
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+            child: const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 30),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, height: 1.4)),
+        const SizedBox(height: 8),
         TextButton(onPressed: retry, child: const Text('Retry')),
       ],
     );
 
-class _OverviewTab extends StatefulWidget {
-  const _OverviewTab();
-  @override
-  State<_OverviewTab> createState() => _OverviewTabState();
-}
-
-class _OverviewTabState extends State<_OverviewTab> {
-  Map<String, dynamic>? _totals;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final d = await LoanService().adminDashboard();
-      if (mounted) setState(() => _totals = d['totals'] is Map ? Map<String, dynamic>.from(d['totals']) : {});
-    } catch (e) {
-      if (mounted) setState(() => _error = ErrorMessageUtils.toUserFriendlyMessage(e));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_error != null) return _errorView(_error!, _load);
-    final t = _totals;
-    if (t == null) return const Center(child: AppTabLoader());
-    num n(String k) => (t[k] as num?) ?? 0;
-    final tiles = <(String, String, Color?)>[
-      ('Pending requests', '${n('pending')}', AppColors.brandDark),
-      ('Total loans', '${n('totalLoans')}', null),
-      ('Approved (to disburse)', '${n('approved')}', null),
-      ('Disbursed', '${n('disbursed')}', null),
-      ('Overdue loans', '${n('overdue')}', n('overdue') > 0 ? AppColors.error : null),
-      ('Defaulted', '${n('defaulted')}', n('defaulted') > 0 ? AppColors.error : null),
-      ('Amount disbursed', loanMoney(n('disbursedAmount')), null),
-      ('Recovered', loanMoney(n('recoveredAmount')), AppColors.success),
-      ('Outstanding', loanMoney(n('outstandingAmount')), null),
-      ('Overdue amount', loanMoney(n('overdueAmount')), n('overdueAmount') > 0 ? AppColors.error : null),
-      ('Interest earned', loanMoney(n('interestEarned')), null),
-      ('Active advances', '${n('activeAdvances')}', null),
-    ];
-    return RefreshIndicator(
-      color: AppColors.primary,
-      onRefresh: _load,
-      child: GridView.count(
-        padding: const EdgeInsets.all(16),
-        crossAxisCount: 2,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 2.2,
-        children: [
-          for (final (label, value, color) in tiles) LoanCard(child: LoanStat(label, value, color: color)),
-        ],
-      ),
+/// Centered empty state: tinted icon circle + message.
+Widget _emptyView(IconData icon, String message) => ListView(
+      padding: const EdgeInsets.fromLTRB(24, 64, 24, 24),
+      children: [
+        Center(
+          child: Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+            child: Icon(icon, color: AppColors.primaryText, size: 30),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text(message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+      ],
     );
-  }
-}
 
 class _RequestsTab extends StatefulWidget {
   const _RequestsTab();
@@ -130,6 +131,7 @@ class _RequestsTabState extends State<_RequestsTab> {
   static const _statuses = ['Pending', 'Need Clarification', 'Approved', 'Rejected', 'Cancelled', 'All'];
   String _status = 'Pending';
   String _search = '';
+  LoanListFilters _filters = const LoanListFilters();
   Timer? _debounce;
   List<LoanRequest>? _items;
   String? _error;
@@ -148,7 +150,16 @@ class _RequestsTabState extends State<_RequestsTab> {
 
   Future<void> _load() async {
     try {
-      final list = await LoanService().adminRequests(status: _status, search: _search);
+      final list = await LoanService().adminRequests(
+        status: _status,
+        search: _search,
+        category: _filters.category,
+        loanType: _filters.loanType,
+        department: _filters.department,
+        branch: _filters.branch,
+        from: _filters.from,
+        to: _filters.to,
+      );
       if (mounted) {
         setState(() {
           _items = list;
@@ -171,6 +182,14 @@ class _RequestsTabState extends State<_RequestsTab> {
       children: [
         _Filters(
           statuses: _statuses,
+          filters: _filters,
+          onFilters: (f) {
+            setState(() {
+              _filters = f;
+              _items = null;
+            });
+            _load();
+          },
           selected: _status,
           onStatus: (s) {
             setState(() {
@@ -194,16 +213,11 @@ class _RequestsTabState extends State<_RequestsTab> {
                       color: AppColors.primary,
                       onRefresh: _load,
                       child: _items!.isEmpty
-                          ? ListView(children: const [
-                              Padding(
-                                padding: EdgeInsets.all(32),
-                                child: Center(child: Text('No requests.', style: TextStyle(color: AppColors.textSecondary))),
-                              ),
-                            ])
+                          ? _emptyView(Icons.inbox_outlined, 'No requests.')
                           : ListView.separated(
                               padding: const EdgeInsets.all(16),
                               itemCount: _items!.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 10),
+                              separatorBuilder: (_, __) => const SizedBox(height: 12),
                               itemBuilder: (_, i) {
                                 final r = _items![i];
                                 return LoanCard(
@@ -214,10 +228,10 @@ class _RequestsTabState extends State<_RequestsTab> {
                                         child: Column(
                                           crossAxisAlignment: CrossAxisAlignment.start,
                                           children: [
-                                            Text(r.employee.name, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                                            Text(r.employee.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
                                             Text(
                                               '${r.isAdvance ? 'Salary Advance' : r.loanType} · ${r.requestNo} · ${loanDate(r.appliedOn)}',
-                                              style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                                              style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary, height: 1.4),
                                             ),
                                           ],
                                         ),
@@ -226,7 +240,7 @@ class _RequestsTabState extends State<_RequestsTab> {
                                         crossAxisAlignment: CrossAxisAlignment.end,
                                         children: [
                                           Text(loanMoney(r.requestedAmount),
-                                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
                                           const SizedBox(height: 4),
                                           LoanStatusChip(r.status),
                                         ],
@@ -253,6 +267,7 @@ class _LoansTabState extends State<_LoansTab> {
   static const _statuses = ['All', 'Approved', 'Disbursed', 'Active', 'Defaulted', 'Completed', 'Closed', 'Cancelled'];
   String _status = 'All';
   String _search = '';
+  LoanListFilters _filters = const LoanListFilters();
   Timer? _debounce;
   List<Loan>? _items;
   String? _error;
@@ -271,7 +286,16 @@ class _LoansTabState extends State<_LoansTab> {
 
   Future<void> _load() async {
     try {
-      final list = await LoanService().adminLoans(status: _status, search: _search);
+      final list = await LoanService().adminLoans(
+        status: _status,
+        search: _search,
+        category: _filters.category,
+        loanType: _filters.loanType,
+        department: _filters.department,
+        branch: _filters.branch,
+        from: _filters.from,
+        to: _filters.to,
+      );
       if (mounted) {
         setState(() {
           _items = list;
@@ -294,6 +318,14 @@ class _LoansTabState extends State<_LoansTab> {
       children: [
         _Filters(
           statuses: _statuses,
+          filters: _filters,
+          onFilters: (f) {
+            setState(() {
+              _filters = f;
+              _items = null;
+            });
+            _load();
+          },
           selected: _status,
           onStatus: (s) {
             setState(() {
@@ -317,16 +349,11 @@ class _LoansTabState extends State<_LoansTab> {
                       color: AppColors.primary,
                       onRefresh: _load,
                       child: _items!.isEmpty
-                          ? ListView(children: const [
-                              Padding(
-                                padding: EdgeInsets.all(32),
-                                child: Center(child: Text('No loans.', style: TextStyle(color: AppColors.textSecondary))),
-                              ),
-                            ])
+                          ? _emptyView(Icons.account_balance_wallet_outlined, 'No loans.')
                           : ListView.separated(
                               padding: const EdgeInsets.all(16),
                               itemCount: _items!.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 10),
+                              separatorBuilder: (_, __) => const SizedBox(height: 12),
                               itemBuilder: (_, i) {
                                 final l = _items![i];
                                 return LoanCard(
@@ -338,14 +365,19 @@ class _LoansTabState extends State<_LoansTab> {
                                         children: [
                                           Expanded(
                                             child: Text(l.employee.name,
-                                                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                                                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
                                           ),
+                                          const SizedBox(width: 8),
                                           LoanStatusChip(l.status),
                                         ],
                                       ),
+                                      const SizedBox(height: 2),
                                       Text('${l.isAdvance ? 'Salary Advance' : l.loanType} · ${l.loanNo}',
-                                          style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
-                                      const SizedBox(height: 8),
+                                          style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary, height: 1.4)),
+                                      const Padding(
+                                        padding: EdgeInsets.symmetric(vertical: 12),
+                                        child: Divider(height: 1),
+                                      ),
                                       Row(
                                         children: [
                                           Expanded(child: LoanStat('Principal', loanMoney(l.principal))),
@@ -368,43 +400,78 @@ class _LoansTabState extends State<_LoansTab> {
   }
 }
 
-/// Search box + status chips shared by the two list tabs.
+/// Search box, filter button and status chips shared by the two list tabs.
 class _Filters extends StatelessWidget {
-  const _Filters({required this.statuses, required this.selected, required this.onStatus, required this.onSearch});
+  const _Filters({
+    required this.statuses,
+    required this.selected,
+    required this.onStatus,
+    required this.onSearch,
+    required this.filters,
+    required this.onFilters,
+  });
   final List<String> statuses;
   final String selected;
   final ValueChanged<String> onStatus;
   final ValueChanged<String> onSearch;
+  final LoanListFilters filters;
+  final ValueChanged<LoanListFilters> onFilters;
 
   @override
   Widget build(BuildContext context) => Container(
-        color: Colors.white,
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
+        ),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
         child: Column(
           children: [
-            TextField(
-              onChanged: onSearch,
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: 'Search employee or number',
-                prefixIcon: const Icon(Icons.search_rounded, size: 20),
-                filled: true,
-                fillColor: AppColors.inputFill,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-              ),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    onChanged: onSearch,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      hintText: 'Search employee or number',
+                      prefixIcon: Icon(Icons.search_rounded, size: 20),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton.outlined(
+                  tooltip: 'Filters',
+                  onPressed: () async {
+                    final f = await showLoanFiltersSheet(context, filters);
+                    if (f != null) onFilters(f);
+                  },
+                  icon: Badge(
+                    isLabelVisible: filters.count > 0,
+                    label: Text('${filters.count}'),
+                    backgroundColor: AppColors.primary,
+                    textColor: AppColors.onPrimary,
+                    child: const Icon(Icons.tune_rounded, size: 20),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
                   for (final s in statuses)
                     Padding(
-                      padding: const EdgeInsets.only(right: 6),
+                      padding: const EdgeInsets.only(right: 8),
                       child: ChoiceChip(
-                        label: Text(s, style: const TextStyle(fontSize: 12)),
+                        label: Text(s,
+                            style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: s == selected ? FontWeight.w600 : FontWeight.w500,
+                                color: s == selected ? AppColors.textPrimary : AppColors.textSecondary)),
                         selected: s == selected,
-                        selectedColor: AppColors.brandLight,
+                        showCheckmark: false,
+                        visualDensity: VisualDensity.compact,
                         onSelected: (_) => onStatus(s),
                       ),
                     ),

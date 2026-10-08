@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../services/interaction_service.dart';
 import '../../widgets/app_drawer.dart';
@@ -122,6 +124,8 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
     }
   }
 
+  static const Color _kHairline = Color(0xFFECEEF1);
+
   bool get _cannotVote => InteractionService.roleCannotVote(_role);
 
   bool get _alreadyVoted => _myOptionIds != null && _myOptionIds!.isNotEmpty;
@@ -138,6 +142,7 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
     final end = DateTime.tryParse(_poll?['endDate']?.toString() ?? '')?.toLocal();
 
     return Scaffold(
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
@@ -146,74 +151,150 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(title, style: Theme.of(context).textTheme.titleLarge),
+                  AppCard(
+                    padding: const EdgeInsets.all(20),
+                    border: Border.all(color: _kHairline),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(Icons.poll_outlined, size: 22, color: AppColors.primaryText),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(title, style: AppTextStyles.headingMedium)),
+                    ],
+                  ),
                   if (desc != null && desc.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Text(desc, style: TextStyle(color: Colors.grey.shade800)),
+                    const SizedBox(height: 12),
+                    Text(
+                      desc,
+                      style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary, height: 1.45),
+                    ),
                   ],
                   if (start != null || end != null) ...[
                     const SizedBox(height: 12),
-                    Text(
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Padding(
+                          padding: EdgeInsets.only(top: 1),
+                          child: Icon(Icons.schedule_rounded, size: 16, color: AppColors.textSecondary),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
                       [
                         if (start != null) 'Starts: ${DateFormat.yMMMd().add_jm().format(start)}',
                         if (end != null) 'Ends: ${DateFormat.yMMMd().add_jm().format(end)}',
                       ].join('\n'),
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary, height: 1.5),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
+                      ],
+                    ),
+                  ),
                   if (_cannotVote) ...[
-                    const SizedBox(height: 16),
-                    Material(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
-                      child: const Padding(
-                        padding: EdgeInsets.all(12),
-                        child: Text(
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.infoBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.info_outline_rounded, size: 18, color: AppColors.info),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
                           'Admin-side roles can manage polls on web and cannot vote in app (web parity).',
-                        ),
+                              style: TextStyle(fontSize: 13, color: AppColors.textPrimary, height: 1.4),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                   const SizedBox(height: 20),
                   if (_results != null && _results!.isNotEmpty) ...[
-                    Text('Results', style: Theme.of(context).textTheme.titleMedium),
+                    const Text('Results', style: AppTextStyles.headingSmall),
                     const SizedBox(height: 8),
+                    AppCard(
+                      border: Border.all(color: _kHairline),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
                     ..._results!.map((r) {
                       final label = r['optionText']?.toString() ?? '';
                       final pct = (r['percentage'] as num?)?.toInt() ?? 0;
                       final count = (r['voteCount'] as num?)?.toInt() ?? 0;
                       return Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
+                        padding: const EdgeInsets.symmetric(vertical: 6),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
                               children: [
-                                Expanded(child: Text(label)),
-                                Text('$pct% ($count)'),
+                                Expanded(
+                                  child: Text(
+                                    label,
+                                    style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '$pct% ($count)',
+                                  style: AppTextStyles.caption.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.textSecondary,
+                                  ),
+                                ),
                               ],
                             ),
-                            LinearProgressIndicator(
+                            const SizedBox(height: 8),
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(999),
+                              child: LinearProgressIndicator(
                               value: pct / 100,
                               minHeight: 8,
-                              backgroundColor: Colors.grey.shade200,
+                              backgroundColor: const Color(0xFFEDEFF2),
                               valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                              ),
                             ),
                           ],
                         ),
                       );
                     }),
+                        ],
+                      ),
+                    ),
                   ] else if (!_closed && !_cannotVote && !_alreadyVoted) ...[
-                    Text('Your vote', style: Theme.of(context).textTheme.titleMedium),
+                    const Text('Your vote', style: AppTextStyles.headingSmall),
                     const SizedBox(height: 8),
                     if (_pollType == 'single')
                       ..._options.map((o) {
                         final id = o['_id']?.toString() ?? '';
-                        return RadioListTile<String>(
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          clipBehavior: Clip.antiAlias,
+                          child: RadioListTile<String>(
                           value: id,
                           groupValue: _selected.length == 1 ? _selected.first : null,
                           onChanged: id.isEmpty
@@ -225,13 +306,20 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
                                       ..add(v!);
                                   });
                                 },
-                          title: Text(o['optionText']?.toString() ?? ''),
+                          title: Text(
+                            o['optionText']?.toString() ?? '',
+                            style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500),
+                          ),
+                          ),
                         );
                       })
                     else
                       ..._options.map((o) {
                         final id = o['_id']?.toString() ?? '';
-                        return CheckboxListTile(
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 8),
+                          clipBehavior: Clip.antiAlias,
+                          child: CheckboxListTile(
                           value: _selected.contains(id),
                           onChanged: id.isEmpty
                               ? null
@@ -244,25 +332,50 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
                                     }
                                   });
                                 },
-                          title: Text(o['optionText']?.toString() ?? ''),
+                          title: Text(
+                            o['optionText']?.toString() ?? '',
+                            style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500),
+                          ),
                           controlAffinity: ListTileControlAffinity.leading,
+                          ),
                         );
                       }),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
                     FilledButton(
                       onPressed: _submitting ? null : _submit,
                       child: _submitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               height: 22,
                               width: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                             )
                           : const Text('Submit vote'),
                     ),
                   ] else if (_alreadyVoted && (_results == null || _results!.isEmpty))
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: Text('Thanks — your vote was recorded.')),
+                    Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 64,
+                              height: 64,
+                              decoration: const BoxDecoration(
+                                color: AppColors.successBg,
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.check_rounded, size: 28, color: AppColors.success),
+                            ),
+                            const SizedBox(height: 12),
+                            const Text(
+                              'Thanks — your vote was recorded.',
+                              textAlign: TextAlign.center,
+                              style: AppTextStyles.headingSmall,
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                 ],
               ),

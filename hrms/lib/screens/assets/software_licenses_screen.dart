@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/animations.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -73,18 +74,15 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Software Licenses',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        elevation: 0,
-        centerTitle: true,
+        title: const Text('Software Licenses'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_none),
+            icon: const Icon(Icons.notifications_none_rounded),
+            tooltip: 'Notifications',
             onPressed: () {},
           ),
         ],
@@ -95,7 +93,7 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
               onRefresh: _fetch,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(16),
                 children: [
                   _buildStatusCard(),
                   const SizedBox(height: 24),
@@ -104,20 +102,16 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
                     children: [
                       const Text(
                         'Active Subscriptions',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                       if (_licenses.isNotEmpty)
                         const Text(
                           'VIEW ALL',
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w700,
                             color: AppColors.textCaption,
-                            letterSpacing: 0.5,
+                            letterSpacing: 0.8,
                           ),
                         ),
                     ],
@@ -139,27 +133,15 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
                   const SizedBox(height: 12),
                   SizedBox(
                     width: double.infinity,
+                    height: 52,
                     child: ElevatedButton(
                       onPressed: () => _openRequest(),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                      ),
                       child: const Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_circle_outline, size: 20),
+                          Icon(Icons.add_circle_outline_rounded, size: 20),
                           SizedBox(width: 8),
-                          Text(
-                            'Request New License',
-                            style: TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
+                          Text('Request New License'),
                         ],
                       ),
                     ),
@@ -183,7 +165,7 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -196,32 +178,28 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
                 children: [
                   Text(
                     'CURRENT STATUS',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.85),
-                      fontSize: 12,
-                      letterSpacing: 1,
-                      fontWeight: FontWeight.w600,
+                    style: AppTextStyles.sectionLabel.copyWith(
+                      color: AppColors.onPrimary.withValues(alpha: 0.8),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  const Text(
+                  const SizedBox(height: 6),
+                  Text(
                     'Software Licenses',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
+                    style: AppTextStyles.headingLarge.copyWith(
+                      color: AppColors.onPrimary,
                     ),
                   ),
                 ],
               ),
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.2),
+                  color: AppColors.onPrimary.withValues(alpha: 0.12),
                 ),
-                child: const Icon(Icons.verified_user_outlined,
-                    color: Colors.white, size: 22),
+                child: Icon(Icons.verified_user_outlined,
+                    color: AppColors.onPrimary, size: 22),
               ),
             ],
           ),
@@ -250,9 +228,9 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
 
   Widget _statTile(String value, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.18),
+        color: Colors.white.withValues(alpha: 0.22),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -260,18 +238,17 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
         children: [
           Text(
             value,
-            style: const TextStyle(
-              color: Colors.white,
+            style: AppTextStyles.displayLarge.copyWith(
+              color: AppColors.onPrimary,
               fontSize: 26,
-              fontWeight: FontWeight.bold,
             ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Text(
             label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.9),
-              fontSize: 12,
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.onPrimary.withValues(alpha: 0.85),
+              fontWeight: FontWeight.w500,
             ),
           ),
         ],
@@ -297,41 +274,39 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
             ),
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Color(0x0F000000),
               blurRadius: 10,
-              offset: const Offset(0, 3),
+              offset: Offset(0, 3),
             ),
           ],
         ),
         child: Row(
           children: [
             Container(
-              width: 46,
-              height: 46,
+              width: 48,
+              height: 48,
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
+                color: AppColors.primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(Icons.apps, color: AppColors.primary, size: 24),
+              child: Icon(Icons.apps_rounded,
+                  color: AppColors.primaryText, size: 24),
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     asset.name,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingSmall,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -342,19 +317,19 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
                       if ((asset.assetCategory ?? '').isNotEmpty)
                         asset.assetCategory,
                     ].whereType<String>().join(' • '),
-                    style: const TextStyle(
-                        fontSize: 12, color: AppColors.textSecondary),
+                    style: AppTextStyles.caption
+                        .copyWith(color: AppColors.textSecondary),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Icon(
                         isUrgent
                             ? Icons.warning_amber_rounded
                             : Icons.calendar_today_outlined,
-                        size: 13,
+                        size: 14,
                         color: isUrgent
                             ? AppColors.warning
                             : AppColors.textCaption,
@@ -365,7 +340,7 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight:
-                              isUrgent ? FontWeight.w600 : FontWeight.normal,
+                              isUrgent ? FontWeight.w600 : FontWeight.w400,
                           color: isUrgent
                               ? AppColors.warning
                               : AppColors.textSecondary,
@@ -379,15 +354,15 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
             const SizedBox(width: 8),
             Container(
               padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
                 color: badge.bg,
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
                 badge.label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                   color: badge.fg,
                 ),
@@ -429,23 +404,35 @@ class _SoftwareLicensesScreenState extends State<SoftwareLicensesScreen> {
   Widget _buildEmptyState() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
+      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 20),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Column(
         children: [
-          Icon(Icons.apps_outlined, size: 56, color: AppColors.textHint),
-          const SizedBox(height: 12),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.apps_outlined,
+                size: 30, color: AppColors.primaryText),
+          ),
+          const SizedBox(height: 16),
           const Text(
             'No software licenses yet.',
-            style: TextStyle(fontSize: 15, color: AppColors.textSecondary),
+            textAlign: TextAlign.center,
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 4),
           const Text(
             'Request a new license to get started.',
-            style: TextStyle(fontSize: 13, color: AppColors.textCaption),
+            textAlign: TextAlign.center,
+            style: AppTextStyles.bodySmall,
           ),
         ],
       ),

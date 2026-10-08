@@ -6,7 +6,9 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../models/loan_models.dart';
+import '../../widgets/app_card.dart';
 
 final _money = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
 final _money2 = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
@@ -17,8 +19,15 @@ String loanDate(DateTime? d) => d == null ? '—' : DateFormat('d MMM yyyy').for
 /// 'SalaryAdvance' → 'Salary Advance'.
 String loanCategoryLabel(String category) => category == 'SalaryAdvance' ? 'Salary Advance' : 'Loan';
 
+/// Hairline border for loan cards and list rows.
+const Color kLoanHairline = Color(0xFFECEEF1);
+
 /// Status colours: green done/approved, gold in progress, red refused/overdue, grey closed.
 ({Color fg, Color bg}) loanStatusColors(String status) {
+  // The app-wide pill colours for the shared statuses (Approved / Pending /
+  // Rejected / Under Review); loan-specific statuses fall through to the switch.
+  final shared = AppColors.statusStyle(status);
+  if (shared.fg != AppColors.textSecondary) return (fg: shared.fg, bg: shared.bg);
   switch (status) {
     case 'Approved':
     case 'Disbursed':
@@ -52,41 +61,44 @@ class LoanStatusChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = loanStatusColors(status);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: c.bg,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: c.fg.withValues(alpha: 0.35)),
+        borderRadius: BorderRadius.circular(999),
       ),
       // Upper-case pill like the web ("● PENDING").
       child: Text('● ${status.toUpperCase()}',
-          style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.4, color: c.fg)),
+          style: AppTextStyles.caption.copyWith(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.4, color: c.fg)),
     );
   }
 }
 
 /// White rounded card used across the loan screens.
 class LoanCard extends StatelessWidget {
-  const LoanCard({super.key, required this.child, this.onTap, this.padding = const EdgeInsets.all(14)});
+  const LoanCard({super.key, required this.child, this.onTap, this.padding = const EdgeInsets.all(16)});
   final Widget child;
   final VoidCallback? onTap;
   final EdgeInsets padding;
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AppColors.divider),
+    final radius = BorderRadius.circular(16);
+    return DecoratedBox(
+      decoration: BoxDecoration(borderRadius: radius, boxShadow: kSoftCardShadow),
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: radius,
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onTap,
+          child: Container(
+            padding: padding,
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              border: Border.all(color: kLoanHairline),
+            ),
+            child: child,
           ),
-          child: child,
         ),
       ),
     );
@@ -99,9 +111,39 @@ class LoanSectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(2, 18, 2, 8),
-        child: Text(text, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
+        padding: const EdgeInsets.fromLTRB(4, 24, 4, 12),
+        child: Text(text, style: AppTextStyles.headingSmall),
       );
+}
+
+/// Centered empty state: a tinted icon circle above a short title.
+class LoanEmptyState extends StatelessWidget {
+  const LoanEmptyState(this.icon, this.title, {super.key});
+  final IconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = AppColors.primaryText;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+              child: Icon(icon, size: 28, color: c),
+            ),
+            const SizedBox(height: 12),
+            Text(title, textAlign: TextAlign.center, style: AppTextStyles.headingSmall),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// Label / value pair on one line.
@@ -112,17 +154,22 @@ class LoanInfoRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5),
+        padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Expanded(flex: 4, child: Text(label, style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary))),
+            Expanded(flex: 4, child: Text(label, style: AppTextStyles.bodySmall)),
+            const SizedBox(width: 12),
             Expanded(
               flex: 6,
               child: Text(
                 value.isEmpty ? '—' : value,
                 textAlign: TextAlign.right,
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: valueColor ?? AppColors.textPrimary),
+                style: AppTextStyles.label.copyWith(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                  color: valueColor ?? AppColors.textPrimary,
+                ),
               ),
             ),
           ],
@@ -139,7 +186,7 @@ class LoanApprovalTracker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (approvals.isEmpty) {
-      return const Text('No approval levels.', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary));
+      return const Text('No approval levels.', style: AppTextStyles.bodySmall);
     }
     return Column(
       children: [
@@ -163,41 +210,55 @@ class LoanApprovalTracker extends StatelessWidget {
         children: [
           Column(
             children: [
-              Icon(icon, size: 20, color: c.fg),
-              if (!last) Expanded(child: Container(width: 2, color: AppColors.divider)),
+              Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(color: c.bg, shape: BoxShape.circle),
+                child: Icon(icon, size: 18, color: c.fg),
+              ),
+              if (!last)
+                Expanded(
+                  child: Container(
+                    width: 2,
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    decoration: BoxDecoration(color: kLoanHairline, borderRadius: BorderRadius.circular(1)),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.only(bottom: 14),
+              padding: const EdgeInsets.only(top: 4, bottom: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Expanded(
-                        child: Text(a.level,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                        child: Text(a.level, style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600)),
                       ),
+                      const SizedBox(width: 8),
                       LoanStatusChip(a.decision),
                     ],
                   ),
                   if (a.approverName.isNotEmpty || a.decidedAt != null)
                     Padding(
-                      padding: const EdgeInsets.only(top: 3),
+                      padding: const EdgeInsets.only(top: 4),
                       child: Text(
                         [if (a.approverName.isNotEmpty) a.approverName, if (a.decidedAt != null) loanDate(a.decidedAt)].join(' · '),
-                        style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                       ),
                     ),
                   if (a.approvedAmount != null)
                     Text('Approved amount: ${loanMoney(a.approvedAmount!)}',
-                        style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
                   if (a.remarks.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3),
-                      child: Text('“${a.remarks}”', style: const TextStyle(fontSize: 12, color: AppColors.textPrimary)),
+                    Container(
+                      margin: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(10)),
+                      child: Text('“${a.remarks}”', style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary)),
                     ),
                 ],
               ),
@@ -218,39 +279,47 @@ class LoanScheduleList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (schedule.isEmpty) {
-      return const Text('No schedule yet.', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary));
+      return const Text('No schedule yet.', style: AppTextStyles.bodySmall);
     }
     return Column(
       children: [
         for (final e in schedule)
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.divider))),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kLoanHairline))),
             child: Row(
               children: [
-                SizedBox(
-                  width: 28,
-                  child: Text('#${e.no}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
+                Container(
+                  width: 36,
+                  height: 36,
+                  margin: const EdgeInsets.only(right: 12),
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(10)),
+                  child: Text('#${e.no}',
+                      style: AppTextStyles.caption.copyWith(fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
                 ),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(loanDate(e.dueDate), style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                      Text(loanDate(e.dueDate), style: AppTextStyles.label.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
                       Text(
                         'Principal ${loanMoney(e.principal)} · Interest ${loanMoney(e.interest)}',
-                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                       ),
                       if (e.paid > 0 && e.paid < e.total)
-                        Text('Paid ${loanMoney(e.paid)}', style: const TextStyle(fontSize: 11, color: AppColors.success)),
+                        Text('Paid ${loanMoney(e.paid)}',
+                            style: AppTextStyles.caption.copyWith(color: AppColors.success, fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(loanMoney(e.total), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
-                    if (showStatus) ...[const SizedBox(height: 3), LoanStatusChip(e.status)],
+                    Text(loanMoney(e.total), style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w700)),
+                    if (showStatus) ...[const SizedBox(height: 4), LoanStatusChip(e.status)],
                   ],
                 ),
               ],
@@ -269,14 +338,14 @@ class LoanLedgerList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (ledger.isEmpty) {
-      return const Text('No ledger entries yet.', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary));
+      return const Text('No ledger entries yet.', style: AppTextStyles.bodySmall);
     }
     return Column(
       children: [
         for (final l in ledger)
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppColors.divider))),
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kLoanHairline))),
             child: Row(
               children: [
                 Expanded(
@@ -284,26 +353,28 @@ class LoanLedgerList extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(l.description.isEmpty ? l.mode : l.description,
-                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+                          style: AppTextStyles.label.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 2),
                       Text(
                         [loanDate(l.date), if (l.mode.isNotEmpty) l.mode, if (l.reference.isNotEmpty) l.reference].join(' · '),
-                        style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
                       l.credit > 0 ? '− ${loanMoney(l.credit)}' : '+ ${loanMoney(l.debit)}',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
+                      style: AppTextStyles.label.copyWith(
+                        fontWeight: FontWeight.w700,
                         color: l.credit > 0 ? AppColors.success : AppColors.textPrimary,
                       ),
                     ),
-                    Text('Bal ${loanMoney(l.balance)}', style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                    const SizedBox(height: 2),
+                    Text('Bal ${loanMoney(l.balance)}', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
                   ],
                 ),
               ],
@@ -322,7 +393,7 @@ class LoanDocumentList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (documents.isEmpty) {
-      return const Text('No documents.', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary));
+      return const Text('No documents.', style: AppTextStyles.bodySmall);
     }
     return Column(
       children: [
@@ -330,14 +401,24 @@ class LoanDocumentList extends StatelessWidget {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: Icon(
-              d.name.toLowerCase().endsWith('.pdf') ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
-              color: AppColors.textSecondary,
+            leading: Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
+              child: Icon(
+                d.name.toLowerCase().endsWith('.pdf') ? Icons.picture_as_pdf_outlined : Icons.image_outlined,
+                size: 20,
+                color: AppColors.textSecondary,
+              ),
             ),
-            title: Text(d.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+            title: Text(
+              d.name,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.label.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600),
+            ),
             subtitle: Text([if (d.type.isNotEmpty) d.type, if (d.uploadedAt != null) loanDate(d.uploadedAt)].join(' · '),
-                style: const TextStyle(fontSize: 11.5)),
-            trailing: const Icon(Icons.open_in_new_rounded, size: 18),
+                style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+            trailing: const Icon(Icons.open_in_new_rounded, size: 18, color: AppColors.textSecondary),
             onTap: d.url.isEmpty
                 ? null
                 : () => launchUrl(Uri.parse(d.url), mode: LaunchMode.externalApplication),
@@ -357,9 +438,12 @@ class LoanStat extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-          const SizedBox(height: 3),
-          Text(value, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: color ?? AppColors.textPrimary)),
+          Text(label, style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: AppTextStyles.headingSmall.copyWith(fontWeight: FontWeight.w700, color: color ?? AppColors.textPrimary),
+          ),
         ],
       );
 }

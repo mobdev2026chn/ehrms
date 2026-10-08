@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/auth_service.dart';
 import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/snackbar_utils.dart';
@@ -94,61 +95,81 @@ class _FaceEnrollScreenState extends State<FaceEnrollScreen> {
       appBar: AppBar(title: const Text('Register Your Face')),
       body: SafeArea(
         child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.face_retouching_natural,
-                    size: 72, color: AppColors.primary),
-                const SizedBox(height: 20),
-                Text(
-                  _busy ? 'Registering your face…' : 'Register your face',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 112,
+                    height: 112,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.face_retouching_natural,
+                        size: 56, color: AppColors.primaryText),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Line your face up inside the oval guide in good light — it '
-                  'captures automatically. This becomes your profile photo and the '
-                  'face every future punch is verified against.',
-                  textAlign: TextAlign.center,
-                  style:
-                      TextStyle(fontSize: 13, color: AppColors.textSecondary),
-                ),
-                if (_error != null) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 24),
                   Text(
-                    _error!,
+                    _busy ? 'Registering your face…' : 'Register your face',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 13, color: Colors.red.shade700),
+                    style: AppTextStyles.headingLarge,
                   ),
-                ],
-                const SizedBox(height: 28),
-                if (_busy)
-                  const CircularProgressIndicator()
-                else
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _captureAndEnroll,
-                      icon: const Icon(Icons.camera_alt_outlined),
-                      label: Text(_error == null
-                          ? 'Capture & Register'
-                          : 'Try Again'),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Line your face up inside the oval guide in good light — it '
+                    'captures automatically. This becomes your profile photo and the '
+                    'face every future punch is verified against.',
+                    textAlign: TextAlign.center,
+                    style: AppTextStyles.bodySmall,
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: AppColors.errorBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.error_outline_rounded,
+                              size: 18, color: AppColors.error),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              _error!,
+                              style: AppTextStyles.bodySmall
+                                  .copyWith(color: AppColors.error),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-              ],
+                  ],
+                  const SizedBox(height: 32),
+                  if (_busy)
+                    const CircularProgressIndicator()
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: FilledButton.icon(
+                        onPressed: _captureAndEnroll,
+                        icon: const Icon(Icons.camera_alt_outlined),
+                        label: Text(_error == null
+                            ? 'Capture & Register'
+                            : 'Try Again'),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),

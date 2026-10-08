@@ -9,11 +9,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../models/loan_models.dart';
 import '../../services/loan_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/loan_math.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../widgets/app_card.dart';
 import 'loan_widgets.dart';
 
 class LoanApplyScreen extends StatefulWidget {
@@ -193,55 +195,48 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
   // ── Layout helpers ──
 
   Widget _label(String text, {bool required = true}) => Padding(
-        padding: const EdgeInsets.only(top: 14, bottom: 6),
+        padding: const EdgeInsets.only(top: 16, bottom: 8),
         child: Text.rich(TextSpan(children: [
-          TextSpan(text: text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.textPrimary)),
-          if (required) const TextSpan(text: ' *', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w800)),
+          TextSpan(text: text, style: AppTextStyles.label.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600)),
+          if (required) const TextSpan(text: ' *', style: TextStyle(color: AppColors.error, fontWeight: FontWeight.w600)),
         ])),
       );
 
+  // Fill, borders and focus colours come from the app InputDecorationTheme.
   InputDecoration _input({String? hint, Widget? prefix, String? helper}) => InputDecoration(
         hintText: hint,
         helperText: helper,
         helperMaxLines: 2,
         prefixIcon: prefix,
         isDense: true,
-        filled: true,
-        fillColor: Colors.white,
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: AppColors.brand, width: 1.4),
-        ),
       );
 
-  /// White card with a tinted header line, like the web form sections.
-  Widget _section(String title, List<Widget> children) => Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: AppColors.divider),
-        ),
+  /// White card with a header line, like the web form sections.
+  Widget _section(String title, List<Widget> children) => AppCard(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: EdgeInsets.zero,
+        border: Border.all(color: kLoanHairline),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
               decoration: const BoxDecoration(
-                color: AppColors.background,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-                border: Border(bottom: BorderSide(color: AppColors.divider)),
+                border: Border(bottom: BorderSide(color: kLoanHairline)),
               ),
-              child: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+              child: Row(children: [
+                Container(
+                  width: 4,
+                  height: 16,
+                  decoration: BoxDecoration(color: AppColors.primary, borderRadius: BorderRadius.circular(2)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text(title, style: AppTextStyles.headingSmall)),
+              ]),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 2, 16, 16),
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
             ),
           ],
@@ -255,7 +250,7 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
           hint: '0',
           prefix: const Padding(
             padding: EdgeInsets.only(left: 14, right: 6),
-            child: Text('₹', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            child: Text('₹', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
           ),
           helper: _maxAmount > 0 ? 'Maximum ${loanMoney(_maxAmount)}' : null,
         ).copyWith(prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0)),
@@ -269,38 +264,43 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(_isAdvance ? 'Salary Advance' : 'Request Loan', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: Text(_isAdvance ? 'Salary Advance' : 'Request Loan'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
         children: [
           if (_isAdvance) ..._advanceForm() else ..._loanForm(),
           if (problem != null && (_amountValue > 0 || _reason.text.isNotEmpty))
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: Text(problem, style: const TextStyle(fontSize: 12.5, color: AppColors.error)),
+            Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(color: AppColors.errorBg, borderRadius: BorderRadius.circular(12)),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.info_outline_rounded, size: 18, color: AppColors.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(problem, style: AppTextStyles.bodySmall.copyWith(color: AppColors.error)),
+                  ),
+                ],
+              ),
             ),
-          Align(
-            alignment: Alignment.centerRight,
+          SizedBox(
+            width: double.infinity,
+            height: 52,
             child: Opacity(
               opacity: problem == null ? 1 : 0.5,
               child: ElevatedButton.icon(
                 onPressed: _submitting || problem != null ? null : _submit,
                 icon: _submitting
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary))
                     : const Icon(Icons.send_rounded, size: 18),
-                label: Text(_isAdvance ? 'Submit' : 'Submit Request', style: const TextStyle(fontWeight: FontWeight.w800)),
+                label: Text(_isAdvance ? 'Submit' : 'Submit Request'),
+                // Keep the disabled state looking like a faded primary button (the Opacity above).
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.brand,
-                  foregroundColor: Colors.white,
-                  disabledBackgroundColor: AppColors.brand,
-                  disabledForegroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(30)),
+                  disabledBackgroundColor: AppColors.primary,
+                  disabledForegroundColor: AppColors.onPrimary,
                 ),
               ),
             ),
@@ -330,8 +330,8 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
         ),
         if (t != null && t.description.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text(t.description, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(t.description, style: AppTextStyles.bodySmall.copyWith(fontSize: 12)),
           ),
         _label('Loan Amount'),
         _amountField(),
@@ -348,19 +348,19 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
         _reasonField(),
         _label('Preferred EMI'),
         if (t == null)
-          const Text('Select a loan type first.', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary))
+          const Text('Select a loan type first.', style: AppTextStyles.bodySmall)
         else ...[
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [for (final n in t.tenureChoices) _emiOption(n)],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Text(
             t.interestMethod == 'None' || t.interestRate == 0
                 ? 'No interest'
                 : 'Interest ${t.interestRate.toStringAsFixed(t.interestRate % 1 == 0 ? 0 : 2)}% p.a. (${t.interestMethod}). The approver may change the final terms.',
-            style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
           ),
         ],
         _label('Requested Date'),
@@ -368,7 +368,7 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
           onTap: _pickDate,
           borderRadius: BorderRadius.circular(12),
           child: InputDecorator(
-            decoration: _input().copyWith(suffixIcon: const Icon(Icons.calendar_today_outlined, size: 18)),
+            decoration: _input().copyWith(suffixIcon: const Icon(Icons.calendar_today_outlined, size: 20)),
             child: Text(
               _requestedDate == null ? 'dd/mm/yyyy' : loanDate(_requestedDate),
               style: TextStyle(color: _requestedDate == null ? AppColors.textCaption : AppColors.textPrimary),
@@ -388,20 +388,24 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
     return InkWell(
       onTap: () => setState(() => _tenure = months),
       borderRadius: BorderRadius.circular(12),
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
         width: 104,
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 10),
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
         decoration: BoxDecoration(
-          color: selected ? AppColors.brandLight : Colors.white,
+          color: selected ? AppColors.primary.withValues(alpha: 0.12) : AppColors.surface,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? AppColors.brand : AppColors.divider, width: selected ? 1.5 : 1),
+          border: Border.all(color: selected ? AppColors.primary : kLoanHairline, width: selected ? 1.6 : 1),
         ),
         child: Column(
           children: [
-            Text('$months months', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 2),
+            Text('$months months', style: AppTextStyles.label.copyWith(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
             Text(q == null ? '—' : '${loanMoney(q.emi)}/mo',
-                style: TextStyle(fontSize: 11.5, color: selected ? AppColors.brandDark : AppColors.textSecondary)),
+                style: AppTextStyles.caption.copyWith(
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+                  color: selected ? AppColors.primaryText : AppColors.textSecondary,
+                )),
           ],
         ),
       ),
@@ -411,53 +415,60 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
   List<Widget> _documents(LoanTypePolicy t) => [
         _label('Supporting Documents', required: t.requiresDocuments),
         if (t.documentTypes.isNotEmpty)
-          Text('Needed: ${t.documentTypes.join(', ')}', style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
-        const Text('PDF or image, up to 6 files of 5 MB each.', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
-        const SizedBox(height: 6),
+          Text('Needed: ${t.documentTypes.join(', ')}', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+        Text('PDF or image, up to 6 files of 5 MB each.', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+        const SizedBox(height: 8),
         for (final d in _docs)
           Container(
-            margin: const EdgeInsets.only(bottom: 6),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(borderRadius: BorderRadius.circular(10), border: Border.all(color: AppColors.divider)),
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: kLoanHairline),
+            ),
             child: Row(children: [
-              const Icon(Icons.description_outlined, size: 18, color: AppColors.textSecondary),
-              const SizedBox(width: 8),
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(color: AppColors.surface, borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.description_outlined, size: 20, color: AppColors.textSecondary),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(d.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5)),
+                  Text(d.name,
+                      overflow: TextOverflow.ellipsis, style: AppTextStyles.label.copyWith(fontSize: 13, fontWeight: FontWeight.w600)),
                   if (t.documentTypes.length > 1)
                     DropdownButton<String>(
                       value: t.documentTypes.contains(d.type) ? d.type : t.documentTypes.first,
                       isDense: true,
                       underline: const SizedBox.shrink(),
-                      style: const TextStyle(fontSize: 11.5, color: AppColors.brandDark),
+                      style: AppTextStyles.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.primaryText),
                       items: [for (final l in t.documentTypes) DropdownMenuItem(value: l, child: Text(l))],
                       onChanged: (v) => setState(() => d.type = v ?? d.type),
                     ),
                 ]),
               ),
-              IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => setState(() => _docs.remove(d))),
+              IconButton(
+                tooltip: 'Remove',
+                icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.textSecondary),
+                onPressed: () => setState(() => _docs.remove(d)),
+              ),
             ]),
           ),
+        const SizedBox(height: 4),
         OutlinedButton.icon(
           onPressed: _pickDocs,
           icon: const Icon(Icons.attach_file_rounded, size: 18),
           label: const Text('Attach files'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.brandDark,
-            side: const BorderSide(color: AppColors.brandBorder),
-          ),
         ),
       ];
 
-  Widget _agreementCard() => Container(
-        margin: const EdgeInsets.only(bottom: 14),
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.divider),
-        ),
+  Widget _agreementCard() => AppCard(
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        border: Border.all(color: kLoanHairline),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -466,10 +477,9 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
-              activeColor: AppColors.brand,
-              title: const Text.rich(TextSpan(children: [
-                TextSpan(text: 'I agree with company policy', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                TextSpan(text: ' *', style: TextStyle(color: AppColors.error)),
+              title: Text.rich(TextSpan(children: [
+                TextSpan(text: 'I agree with company policy', style: AppTextStyles.label.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600)),
+                const TextSpan(text: ' *', style: TextStyle(color: AppColors.error)),
               ])),
               onChanged: (v) => setState(() => _agreed = v ?? false),
             ),
@@ -503,13 +513,20 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
             decoration: BoxDecoration(
               color: AppColors.background,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppColors.divider),
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label,
-                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.6, color: AppColors.textSecondary)),
-              const SizedBox(height: 6),
-              Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: color ?? AppColors.textPrimary)),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.sectionLabel.copyWith(letterSpacing: 0.6, color: AppColors.textSecondary)),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(value,
+                    style: AppTextStyles.headingMedium.copyWith(
+                        fontSize: 20, fontWeight: FontWeight.w700, color: color ?? AppColors.textPrimary)),
+              ),
             ]),
           ),
         );
@@ -517,12 +534,12 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
       LoanCard(
         padding: const EdgeInsets.all(12),
         child: Row(children: [
-          box('ELIGIBLE AMOUNT', loanMoney(_p.eligibility.maxAdvanceAmount), color: AppColors.brandDark),
-          const SizedBox(width: 10),
+          box('ELIGIBLE AMOUNT', loanMoney(_p.eligibility.maxAdvanceAmount), color: AppColors.primaryText),
+          const SizedBox(width: 12),
           box('MAXIMUM', '${sa.maxPctOfNet.toStringAsFixed(sa.maxPctOfNet % 1 == 0 ? 0 : 1)}% Salary'),
         ]),
       ),
-      const SizedBox(height: 14),
+      const SizedBox(height: 12),
       _section('Request', [
         _label('Requested Amount'),
         _amountField(),
@@ -536,15 +553,17 @@ class _LoanApplyScreenState extends State<LoanApplyScreen> {
         ),
         if (parts.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 8),
             child: Text('Deducted from salary: ${parts.map(loanMoney).join(' + ')} (no interest)',
-                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                style: AppTextStyles.bodySmall.copyWith(fontSize: 12)),
           ),
         if (afterCutoff)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
+          Container(
+            margin: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(color: AppColors.infoBg, borderRadius: BorderRadius.circular(10)),
             child: Text("Requests after the ${sa.cutoffDay}th are recovered from the following month's payroll.",
-                style: const TextStyle(fontSize: 12, color: AppColors.info)),
+                style: AppTextStyles.bodySmall.copyWith(fontSize: 12, color: AppColors.info)),
           ),
         _label('Reason'),
         _reasonField(),

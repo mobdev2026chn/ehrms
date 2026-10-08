@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'selfie_camera_screen.dart'
     show SelfieCameraScreen, useImagePickerFallback;
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../utils/face_enrollment_gate.dart';
 import '../../models/break_summary.dart';
@@ -19,6 +20,7 @@ import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/break_datetime_util.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../../widgets/break_status_card.dart';
 
@@ -504,6 +506,8 @@ class _BreakScreenState extends State<BreakScreen> {
     );
   }
 
+  static const Color _hairline = Color(0xFFECEEF1);
+
   /// Shows today's break balance: used / allowed / remaining (second precision).
   /// Hidden until the summary loads. When breaks are unlimited, shows only used.
   Widget _buildBalanceCard() {
@@ -518,73 +522,94 @@ class _BreakScreenState extends State<BreakScreen> {
     final remainingSec =
         allowedSec - usedSec > 0 ? allowedSec - usedSec : 0;
     final exhausted = !unlimited && remainingSec <= 0;
-    final accent = exhausted ? Colors.red.shade600 : AppColors.primary;
+    final accent = exhausted ? AppColors.error : AppColors.primaryText;
+    final accentTint =
+        exhausted ? AppColors.errorBg : AppColors.primary.withValues(alpha: 0.12);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              accent.withValues(alpha: 0.12),
-              accent.withValues(alpha: 0.04),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: accent.withValues(alpha: 0.3)),
+      child: AppCard(
+        border: Border.all(
+          color: exhausted ? const Color(0xFFFCA5A5) : _hairline,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Icon(Icons.coffee_rounded, size: 18, color: accent),
-                const SizedBox(width: 8),
-                const Text(
-                  'Break Balance Today',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: accentTint,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.coffee_outlined, size: 20, color: accent),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Break Balance Today',
+                    style: AppTextStyles.headingSmall,
+                  ),
                 ),
               ],
             ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                _balanceMetric(
-                  'Used',
-                  BreakSummary.formatDuration(usedSec),
-                  Colors.black87,
-                ),
-                if (!unlimited) ...[
-                  _balanceDivider(),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
                   _balanceMetric(
-                    'Allowed',
-                    BreakSummary.formatDuration(allowedSec),
-                    Colors.black87,
+                    'Used',
+                    BreakSummary.formatDuration(usedSec),
+                    AppColors.textPrimary,
                   ),
-                  _balanceDivider(),
-                  _balanceMetric(
-                    'Remaining',
-                    BreakSummary.formatDuration(remainingSec),
-                    accent,
-                  ),
-                ] else ...[
-                  _balanceDivider(),
-                  _balanceMetric('Limit', 'Unlimited', Colors.green.shade700),
+                  if (!unlimited) ...[
+                    _balanceDivider(),
+                    _balanceMetric(
+                      'Allowed',
+                      BreakSummary.formatDuration(allowedSec),
+                      AppColors.textPrimary,
+                    ),
+                    _balanceDivider(),
+                    _balanceMetric(
+                      'Remaining',
+                      BreakSummary.formatDuration(remainingSec),
+                      accent,
+                    ),
+                  ] else ...[
+                    _balanceDivider(),
+                    _balanceMetric('Limit', 'Unlimited', AppColors.success),
+                  ],
                 ],
-              ],
+              ),
             ),
             if (exhausted) ...[
-              const SizedBox(height: 10),
-              Text(
-                'You have used your full break time for today. Further break time may attract a fine.',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Colors.red.shade700,
-                  fontWeight: FontWeight.w500,
-                ),
+              const SizedBox(height: 12),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    size: 16,
+                    color: AppColors.error,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'You have used your full break time for today. Further break time may attract a fine.',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.error,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ],
@@ -601,12 +626,16 @@ class _BreakScreenState extends State<BreakScreen> {
             value,
             style: TextStyle(
               fontSize: 18,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w700,
               color: valueColor,
             ),
           ),
           const SizedBox(height: 2),
-          Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+          Text(
+            label,
+            style: AppTextStyles.caption
+                .copyWith(color: AppColors.textSecondary),
+          ),
         ],
       ),
     );
@@ -616,14 +645,18 @@ class _BreakScreenState extends State<BreakScreen> {
     return Container(
       width: 1,
       height: 32,
-      color: Colors.grey.withValues(alpha: 0.25),
+      color: AppColors.divider,
     );
   }
 
   Widget _buildSelfieCard() {
-    final primary = Theme.of(context).colorScheme.primary;
+    final primary = AppColors.primaryText;
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: _hairline),
+      ),
+      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: _imageFile != null
           ? Column(
@@ -637,10 +670,10 @@ class _BreakScreenState extends State<BreakScreen> {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(8),
                   child: IconButton(
                     onPressed: _isDetectingFace ? null : _takeSelfie,
-                    icon: Icon(Icons.refresh_rounded, color: primary, size: 28),
+                    icon: Icon(Icons.refresh_rounded, color: primary, size: 26),
                     tooltip: 'Retake',
                   ),
                 ),
@@ -650,7 +683,7 @@ class _BreakScreenState extends State<BreakScreen> {
               onTap: _isDetectingFace ? null : _takeSelfie,
               child: Padding(
                 padding: const EdgeInsets.symmetric(
-                  vertical: 28,
+                  vertical: 32,
                   horizontal: 16,
                 ),
                 child: Column(
@@ -658,11 +691,23 @@ class _BreakScreenState extends State<BreakScreen> {
                     if (_isDetectingFace)
                       const CircularProgressIndicator(strokeWidth: 2)
                     else
-                      Icon(Icons.camera_alt_rounded, size: 48, color: primary),
+                      Container(
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.camera_alt_outlined,
+                          size: 30,
+                          color: primary,
+                        ),
+                      ),
                     const SizedBox(height: 12),
                     Text(
                       _selfieLabel,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                     ),
                   ],
                 ),
@@ -672,16 +717,23 @@ class _BreakScreenState extends State<BreakScreen> {
   }
 
   Widget _buildLocationCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Theme.of(context).colorScheme.outline),
-      ),
+    return AppCard(
+      border: Border.all(color: _hairline),
       child: Row(
         children: [
-          Icon(Icons.location_on, color: AppColors.primary),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.location_on_outlined,
+              size: 20,
+              color: AppColors.primaryText,
+            ),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: _isLocationLoading
@@ -690,26 +742,32 @@ class _BreakScreenState extends State<BreakScreen> {
                     width: 18,
                     child: Text(
                         'Location Fetching...',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                   )
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Current Location',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                        style: AppTextStyles.caption
+                            .copyWith(color: AppColors.textSecondary),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Text(
                         _address ?? 'Unknown location',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: AppTextStyles.bodyMedium
+                            .copyWith(fontWeight: FontWeight.w600),
                       ),
                       if (_city != null || _pincode != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
                           child: Text(
                             '${_city ?? ''} ${_pincode ?? ''}'.trim(),
+                            style: AppTextStyles.bodySmall,
                           ),
                         ),
                     ],
@@ -717,7 +775,8 @@ class _BreakScreenState extends State<BreakScreen> {
           ),
           IconButton(
             onPressed: _determinePosition,
-            icon: Icon(Icons.refresh, color: AppColors.primary),
+            tooltip: 'Refresh location',
+            icon: Icon(Icons.refresh_rounded, color: AppColors.primaryText),
           ),
         ],
       ),
@@ -728,6 +787,7 @@ class _BreakScreenState extends State<BreakScreen> {
   Widget build(BuildContext context) {
     final startTime = _breakStartTime();
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(title: const Text('Break')),
       body: _isBreakLoading
           ? const Center(child: AppTabLoader())
@@ -741,7 +801,7 @@ class _BreakScreenState extends State<BreakScreen> {
               },
               child: SingleChildScrollView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -765,9 +825,26 @@ class _BreakScreenState extends State<BreakScreen> {
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(color: AppColors.brandBorder),
                           ),
-                          child: const Text(
-                            'You are already on break. End that break to start a new one.',
-                            style: TextStyle(fontWeight: FontWeight.w500),
+                          child: const Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.free_breakfast_outlined,
+                                size: 18,
+                                color: AppColors.brandDark,
+                              ),
+                              SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'You are already on break. End that break to start a new one.',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w500,
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       const SizedBox(height: 16),
@@ -786,12 +863,18 @@ class _BreakScreenState extends State<BreakScreen> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.info_outline, size: 16, color: AppColors.brandDark),
+                            const Icon(
+                              Icons.info_outline_rounded,
+                              size: 18,
+                              color: AppColors.brandDark,
+                            ),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 _breakInfoNotice!,
-                                style: TextStyle(
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  height: 1.4,
                                   fontWeight: FontWeight.w500,
                                   color: AppColors.brandDark,
                                 ),
@@ -804,7 +887,7 @@ class _BreakScreenState extends State<BreakScreen> {
                     ],
                     if (AppConstants.enableAttendanceSelfie) ...[
                       _buildSelfieCard(),
-                      const SizedBox(height: 20),
+                      const SizedBox(height: 16),
                     ],
                     _buildLocationCard(),
                     const SizedBox(height: 24),
@@ -813,29 +896,18 @@ class _BreakScreenState extends State<BreakScreen> {
                           ? null
                           : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        minimumSize: const Size.fromHeight(52),
                       ),
                       child: _isLoading
-                          ? const SizedBox(
+                          ? SizedBox(
                               height: 22,
                               width: 22,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
                               ),
                             )
-                          : Text(
-                              _submitLabel,
-                              style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                          : Text(_submitLabel),
                     ),
                   ],
                 ),

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../utils/salary_structure_calculator.dart';
 
 /// CTC / template breakdown aligned with web HRMS "Template earnings" + deductions + gross + net + full CTC.
@@ -37,20 +39,16 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
 
     final templateEarningsAnnual = m.grossSalary * 12;
     final deductionsAnnual = m.totalMonthlyDeductions * 12;
-    final fillPrimaryLight = AppColors.primary.withOpacity(0.12);
+    final fillPrimaryLight = AppColors.primary.withValues(alpha: 0.10);
     final fillWhite = AppColors.surface;
 
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text(
-          'CTC Details',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        centerTitle: true,
+        title: const Text('CTC Details'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           if (widget.nextEffectiveDate != null &&
               widget.onViewRevisionHistory != null) ...[
@@ -137,7 +135,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
               currency: currency,
               background: fillPrimaryLight,
             ),
-            const Divider(height: 24),
+            const SizedBox(height: 16),
           ],
           _AccordionHeader(
             title: 'Deductions',
@@ -173,7 +171,7 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
               currency: currency,
               background: fillWhite,
             ),
-            const Divider(height: 24),
+            const SizedBox(height: 16),
           ],
           const SizedBox(height: 8),
           _SummaryCard(
@@ -215,34 +213,55 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
   }) {
     final yearly = monthly * 12;
     final note = calculationNote ?? _calculationLabel(title, monthly, basic);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 13,
-              letterSpacing: 0.3,
+            style: AppTextStyles.label.copyWith(
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: _col('Monthly', currency.format(monthly)),
               ),
+              const SizedBox(width: 12),
               Expanded(
                 child: _col('Yearly', currency.format(yearly)),
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            'Calculation: $note',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: Icon(Icons.functions_rounded,
+                    size: 14, color: AppColors.textCaption),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'Calculation: $note',
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -255,11 +274,12 @@ class _CtcDetailsScreenState extends State<CtcDetailsScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
         ),
+        const SizedBox(height: 2),
         Text(
           value,
-          style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
         ),
       ],
     );
@@ -298,20 +318,20 @@ class _HighlightTotalRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            style: AppTextStyles.headingSmall,
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -335,7 +355,7 @@ class _HighlightTotalRow extends StatelessWidget {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
         ),
         const SizedBox(height: 2),
         FittedBox(
@@ -344,7 +364,11 @@ class _HighlightTotalRow extends StatelessWidget {
           child: Text(
             value,
             maxLines: 1,
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+              color: AppColors.textPrimary,
+            ),
           ),
         ),
       ],
@@ -362,11 +386,11 @@ class _Banner extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF9E6),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFFE082)),
+        color: AppColors.brandLight,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.brandBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -374,28 +398,37 @@ class _Banner extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, color: AppColors.brandDark, size: 20),
+              const Icon(Icons.info_outline_rounded,
+                  color: AppColors.brandDark, size: 20),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   text,
-                  style: const TextStyle(fontSize: 13, height: 1.35),
+                  style: AppTextStyles.bodyMedium.copyWith(fontSize: 13),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Padding(
             padding: const EdgeInsets.only(left: 28),
             child: GestureDetector(
               onTap: onLink,
-              child: Text(
-                'View Revision History',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.secondary,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'View Revision History',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.primaryText,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Icon(Icons.chevron_right_rounded,
+                      size: 18, color: AppColors.primaryText),
+                ],
               ),
             ),
           ),
@@ -423,35 +456,38 @@ class _AccordionHeader extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(10),
+        color: AppColors.surface,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: Color(0xFFECEEF1)),
+        ),
+        clipBehavior: Clip.antiAlias,
         child: InkWell(
-          borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
             child: Row(
               children: [
                 Expanded(
                   child: Text(
                     title,
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
+                    style: AppTextStyles.headingSmall,
                   ),
                 ),
                 Text(
                   trailingAmount,
-                  style: const TextStyle(
+                  style: AppTextStyles.bodyMedium.copyWith(
                     fontWeight: FontWeight.w600,
-                    fontSize: 13,
                   ),
                 ),
-                const SizedBox(width: 4),
-                Icon(
-                  expanded ? Icons.expand_less : Icons.expand_more,
-                  color: Colors.grey.shade600,
+                const SizedBox(width: 8),
+                AnimatedRotation(
+                  turns: expanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  child: const Icon(
+                    Icons.expand_more_rounded,
+                    color: AppColors.textSecondary,
+                  ),
                 ),
               ],
             ),
@@ -483,11 +519,12 @@ class _SummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: background,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -497,13 +534,14 @@ class _SummaryCard extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                  style: AppTextStyles.headingSmall,
                 ),
               ),
-              Icon(Icons.info_outline, size: 16, color: Colors.grey.shade700),
+              const Icon(Icons.info_outline_rounded,
+                  size: 18, color: AppColors.textSecondary),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
@@ -512,31 +550,48 @@ class _SummaryCard extends StatelessWidget {
                   children: [
                     Text(
                       'Monthly',
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                      style: AppTextStyles.caption
+                          .copyWith(color: AppColors.textSecondary),
                     ),
-                    Text(
-                      currency.format(monthly),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        currency.format(monthly),
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       'Annually',
-                      style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                      style: AppTextStyles.caption
+                          .copyWith(color: AppColors.textSecondary),
                     ),
-                    Text(
-                      currency.format(annually),
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 15,
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        currency.format(annually),
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                          color: AppColors.textPrimary,
+                        ),
                       ),
                     ),
                   ],
@@ -545,10 +600,12 @@ class _SummaryCard extends StatelessWidget {
             ],
           ),
           if (footnote != null) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Text(
               footnote!,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade700, height: 1.3),
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ],
         ],

@@ -162,18 +162,30 @@ class _AttendanceSuccessOverlayState extends State<AttendanceSuccessOverlay>
                     opacity: _emojiOpacity.value,
                     child: Transform.scale(scale: _emojiBounce.value, child: child),
                   ),
+                  // Outer hairline ring + tinted disc, echoing the brand orbit.
                   child: Container(
-                    width: 136,
-                    height: 136,
+                    width: 168,
+                    height: 168,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      color: AppColors.primary.withValues(alpha: 0.15),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.22),
+                      ),
                     ),
                     alignment: Alignment.center,
-                    child: Text(_emoji, style: const TextStyle(fontSize: 68)),
+                    child: Container(
+                      width: 136,
+                      height: 136,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.primary.withValues(alpha: 0.14),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(_emoji, style: const TextStyle(fontSize: 68)),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 28),
+                const SizedBox(height: 32),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 40),
                   child: Text(
@@ -181,22 +193,23 @@ class _AttendanceSuccessOverlayState extends State<AttendanceSuccessOverlay>
                     textAlign: TextAlign.center,
                     style: const TextStyle(
                       fontSize: 22,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w700,
                       color: AppColors.textPrimary,
                       height: 1.25,
+                      letterSpacing: -0.3,
                     ),
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 48),
                   child: Text(
                     message,
                     textAlign: TextAlign.center,
                     style: const TextStyle(
-                      fontSize: 14,
+                      fontSize: 15,
                       color: AppColors.textSecondary,
-                      height: 1.4,
+                      height: 1.45,
                     ),
                   ),
                 ),

@@ -13,6 +13,7 @@ import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_tab_loader.dart';
 import '../../loans/loan_detail_screen.dart';
 import '../../loans/loan_widgets.dart';
+import 'admin_loan_sheets.dart';
 
 class AdminLoanRequestScreen extends StatefulWidget {
   const AdminLoanRequestScreen({super.key, required this.requestId});
@@ -98,8 +99,7 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
     final terms = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      backgroundColor: AppColors.surface,
       builder: (_) => _ApproveSheet(request: r, policy: _policy),
     );
     if (terms == null) return;
@@ -122,20 +122,33 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(r?.requestNo ?? 'Loan request', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: Text(r?.requestNo ?? 'Loan request'),
       ),
       body: r == null
           ? Center(
               child: _error == null
                   ? const AppTabLoader()
-                  : Padding(padding: const EdgeInsets.all(24), child: Text(_error!, textAlign: TextAlign.center)),
+                  : Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+                            child: const Icon(Icons.error_outline_rounded, color: AppColors.error, size: 30),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(_error!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(fontSize: 14, color: AppColors.textSecondary, height: 1.4)),
+                        ],
+                      ),
+                    ),
             )
           : ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
                 LoanCard(
                   child: Column(
@@ -143,19 +156,45 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
                     children: [
                       Row(
                         children: [
-                          Expanded(
-                            child: Text(r.employee.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                          Container(
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              r.isAdvance ? Icons.payments_outlined : Icons.account_balance_wallet_outlined,
+                              color: AppColors.primaryText,
+                              size: 22,
+                            ),
                           ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(r.employee.name,
+                                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  [r.employee.employeeId, r.employee.designation, r.employee.department]
+                                      .where((s) => s.isNotEmpty)
+                                      .join(' · '),
+                                  style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
                           LoanStatusChip(r.status),
                         ],
                       ),
-                      Text(
-                        [r.employee.employeeId, r.employee.designation, r.employee.department]
-                            .where((s) => s.isNotEmpty)
-                            .join(' · '),
-                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
-                      ),
-                      const Divider(height: 20),
+                      const SizedBox(height: 16),
+                      Text(loanMoney(r.requestedAmount),
+                          style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                      const Divider(height: 28),
                       LoanInfoRow('Type', r.isAdvance ? 'Salary Advance' : r.loanType),
                       LoanInfoRow('Amount requested', loanMoney(r.requestedAmount)),
                       if (r.isAdvance)
@@ -181,19 +220,18 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
                 ..._loanTiles(_activeLoans, 'No active loans.'),
                 LoanSectionTitle('Loan history (${_history.length})'),
                 ..._loanTiles(_history, 'No previous loans.'),
-                const SizedBox(height: 18),
+                const SizedBox(height: 24),
                 if (_actionable) ...[
                   ElevatedButton(
                     onPressed: _busy ? null : _approve,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.success,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      minimumSize: const Size.fromHeight(52),
                     ),
-                    child: const Text('Approve', style: TextStyle(fontWeight: FontWeight.w800)),
+                    child: const Text('Approve'),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Expanded(
@@ -209,12 +247,12 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
                                   ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.info,
-                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            minimumSize: const Size.fromHeight(48),
                           ),
                           child: const Text('Ask clarification'),
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton(
                           onPressed: _busy
@@ -228,7 +266,8 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
                                   ),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppColors.error,
-                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            side: BorderSide(color: AppColors.error.withValues(alpha: 0.4), width: 1.2),
+                            minimumSize: const Size.fromHeight(48),
                           ),
                           child: const Text('Reject'),
                         ),
@@ -241,7 +280,7 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => LoanDetailScreen(loanId: r.loanId, admin: true)),
                     ),
-                    icon: const Icon(Icons.receipt_long_outlined),
+                    icon: const Icon(Icons.receipt_long_outlined, size: 20),
                     label: const Text('Open the loan'),
                   ),
               ],
@@ -251,12 +290,22 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
 
   List<Widget> _loanTiles(List<Loan> loans, String empty) {
     if (loans.isEmpty) {
-      return [LoanCard(child: Text(empty, style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)))];
+      return [
+        LoanCard(
+          child: Row(
+            children: [
+              const Icon(Icons.inbox_outlined, size: 20, color: AppColors.textCaption),
+              const SizedBox(width: 10),
+              Expanded(child: Text(empty, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary))),
+            ],
+          ),
+        ),
+      ];
     }
     return [
       for (final l in loans)
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: 12),
           child: LoanCard(
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => LoanDetailScreen(loanId: l.id, admin: true)),
@@ -268,13 +317,17 @@ class _AdminLoanRequestScreenState extends State<AdminLoanRequestScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('${l.isAdvance ? 'Salary Advance' : l.loanType} · ${l.loanNo}',
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      const SizedBox(height: 2),
                       Text('EMI ${loanMoney(l.emiAmount)} · outstanding ${loanMoney(l.outstanding)}',
-                          style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
+                          style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
                     ],
                   ),
                 ),
+                const SizedBox(width: 8),
                 LoanStatusChip(l.status),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right_rounded, color: AppColors.textCaption),
               ],
             ),
           ),
@@ -298,6 +351,8 @@ class _ApproveSheetState extends State<_ApproveSheet> {
   late String _method;
   late String _recovery;
   String _recoveryMode = 'Salary Deduction';
+  // YYYY-MM of the first recovery month (web DecisionCard default: next month).
+  String _recoveryStart = loanShiftMonth(loanMonthKey(DateTime.now()), 1);
 
   LoanRequest get _r => widget.request;
 
@@ -341,19 +396,19 @@ class _ApproveSheetState extends State<_ApproveSheet> {
     final quote = (!_r.isAdvance && _amountV > 0 && _tenureV > 0) ? buildSchedule(_amountV, _rateV, _tenureV, _method) : null;
     final problem = _problem();
     return Padding(
-      padding: EdgeInsets.fromLTRB(16, 16, 16, MediaQuery.of(context).viewInsets.bottom + 16),
+      padding: EdgeInsets.fromLTRB(20, 12, 20, MediaQuery.of(context).viewInsets.bottom + 20),
       child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Approve with terms', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 12),
+            adminLoanSheetHeader('Approve with terms'),
             TextField(
               controller: _amount,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'Approved amount (₹)'),
             ),
+            const SizedBox(height: 12),
             if (!_r.isAdvance) ...[
               DropdownButtonFormField<String>(
                 initialValue: _method,
@@ -365,16 +420,19 @@ class _ApproveSheetState extends State<_ApproveSheet> {
                 ],
                 onChanged: (v) => setState(() => _method = v ?? _method),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _rate,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: 'Interest rate (% per year)'),
               ),
+              const SizedBox(height: 12),
               TextField(
                 controller: _tenure,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Tenure (months)'),
               ),
+              const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: _recoveryMode,
                 decoration: const InputDecoration(labelText: 'Recovery mode'),
@@ -384,7 +442,8 @@ class _ApproveSheetState extends State<_ApproveSheet> {
                 ],
                 onChanged: (v) => setState(() => _recoveryMode = v ?? _recoveryMode),
               ),
-            ] else
+              const SizedBox(height: 12),
+            ] else ...[
               DropdownButtonFormField<String>(
                 initialValue: _recovery,
                 decoration: const InputDecoration(labelText: 'Recovery'),
@@ -395,13 +454,17 @@ class _ApproveSheetState extends State<_ApproveSheet> {
                 ],
                 onChanged: (v) => setState(() => _recovery = v ?? _recovery),
               ),
+              const SizedBox(height: 12),
+            ],
+            LoanMonthDropdown(value: _recoveryStart, onChanged: (v) => setState(() => _recoveryStart = v)),
+            const SizedBox(height: 12),
             TextField(controller: _remarks, decoration: const InputDecoration(labelText: 'Remarks (optional)')),
             if (quote != null) ...[
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               LoanCard(
                 child: Column(
                   children: [
-                    LoanInfoRow('EMI', loanMoney(quote.emi), valueColor: AppColors.brandDark),
+                    LoanInfoRow('EMI', loanMoney(quote.emi), valueColor: AppColors.primaryText),
                     LoanInfoRow('Total interest', loanMoney(quote.totalInterest)),
                     LoanInfoRow('Total payable', loanMoney(quote.totalPayable)),
                   ],
@@ -410,10 +473,17 @@ class _ApproveSheetState extends State<_ApproveSheet> {
             ],
             if (problem != null)
               Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(problem, style: const TextStyle(fontSize: 12.5, color: AppColors.error)),
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.error),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(problem, style: const TextStyle(fontSize: 12.5, color: AppColors.error))),
+                  ],
+                ),
               ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 24),
             ElevatedButton(
               onPressed: problem != null
                   ? null
@@ -424,14 +494,15 @@ class _ApproveSheetState extends State<_ApproveSheet> {
                         if (!_r.isAdvance) 'tenure': _tenureV,
                         if (!_r.isAdvance) 'recoveryMode': _recoveryMode,
                         if (_r.isAdvance) 'advanceRecovery': _recovery,
+                        'recoveryStart': '$_recoveryStart-01',
                         if (_remarks.text.trim().isNotEmpty) 'remarks': _remarks.text.trim(),
                       }),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.success,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 13),
+                minimumSize: const Size.fromHeight(52),
               ),
-              child: const Text('Approve', style: TextStyle(fontWeight: FontWeight.w800)),
+              child: const Text('Approve'),
             ),
           ],
         ),

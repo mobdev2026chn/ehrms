@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../models/holiday_model.dart';
 import '../../services/holiday_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/swr_cache.dart';
 import '../../widgets/app_bar_profile_avatar.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -175,11 +177,11 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         return Container(
           decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 24,
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 16,
                 offset: const Offset(0, -4),
               ),
             ],
@@ -194,7 +196,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                   height: 4,
                   decoration: BoxDecoration(
                     color: AppColors.divider,
-                    borderRadius: BorderRadius.circular(2),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 Padding(
@@ -203,11 +205,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'Select year',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ),
                 ),
@@ -236,7 +234,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                                     ? Icons.check_circle_rounded
                                     : Icons.circle_outlined,
                                 color: selected
-                                    ? AppColors.primary
+                                    ? AppColors.primaryText
                                     : AppColors.textSecondary,
                                 size: 22,
                               ),
@@ -276,11 +274,11 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         return Container(
           decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 24,
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 16,
                 offset: const Offset(0, -4),
               ),
             ],
@@ -295,7 +293,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                   height: 4,
                   decoration: BoxDecoration(
                     color: AppColors.divider,
-                    borderRadius: BorderRadius.circular(2),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 Padding(
@@ -304,11 +302,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'Select month',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ),
                 ),
@@ -341,7 +335,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                                         ? Icons.check_circle_rounded
                                         : Icons.circle_outlined,
                                     color: selected
-                                        ? AppColors.primary
+                                        ? AppColors.primaryText
                                         : AppColors.textSecondary,
                                     size: 22,
                                   ),
@@ -384,23 +378,17 @@ class _HolidaysScreenState extends State<HolidaysScreen>
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text('Holidays',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        elevation: 0,
-        centerTitle: false,
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('Holidays'),
         actions: [
           IconButton(
-            icon: Icon(Icons.notifications_none_rounded,
-                color: AppColors.textPrimary, size: 26),
+            tooltip: 'Notifications',
+            icon: const Icon(Icons.notifications_none_rounded, size: 24),
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const NotificationsScreen()),
             ),
           ),
           Padding(
-            padding: const EdgeInsets.only(right: 14, left: 4),
+            padding: const EdgeInsets.only(right: 16, left: 4),
             child: AppBarProfileAvatar(
               radius: 18,
               onTap: () => Navigator.of(context).push(
@@ -442,7 +430,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: AppColors.inputFill,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         children: [
@@ -464,23 +452,15 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           decoration: BoxDecoration(
             color: selected ? AppColors.surface : AppColors.inputFill,
             borderRadius: BorderRadius.circular(10),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.06),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ]
-                : null,
+            boxShadow: selected ? kSoftCardShadow : null,
           ),
           child: Text(
             label,
             textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: selected ? AppColors.primary : AppColors.textSecondary,
+              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+              color: selected ? AppColors.primaryText : AppColors.textSecondary,
             ),
           ),
         ),
@@ -508,11 +488,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                     const SizedBox(height: 24),
                     Text(
                       '${_monthNames[_selectedMonth - 1]} Holidays',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                     const SizedBox(height: 12),
                     if (_selectedMonthHolidays.isEmpty)
@@ -592,13 +568,20 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         // THIS MONTH
         GestureDetector(
           onTap: _goToToday,
-          child: Text(
-            'THIS MONTH',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-              color: AppColors.primary,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              'THIS MONTH',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+                color: AppColors.primaryText,
+              ),
             ),
           ),
         ),
@@ -619,7 +602,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.35),
+            color: AppColors.primary.withValues(alpha: 0.12),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -639,7 +622,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                 height: 160,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: Colors.white.withValues(alpha: 0.08),
+                  color: Colors.white.withValues(alpha: 0.12),
                 ),
               ),
             ),
@@ -651,11 +634,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                 children: [
                   Text(
                     'HOLIDAY BALANCE',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 1,
-                      color: Colors.white.withValues(alpha: 0.85),
+                    style: AppTextStyles.sectionLabel.copyWith(
+                      color: AppColors.onPrimary.withValues(alpha: 0.8),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -664,10 +644,9 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                     children: [
                       Text(
                         '$remaining',
-                        style: const TextStyle(
+                        style: AppTextStyles.displayLarge.copyWith(
                           fontSize: 40,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: AppColors.onPrimary,
                           height: 1,
                         ),
                       ),
@@ -676,10 +655,10 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Text(
                           'Days Remaining',
-                          style: TextStyle(
+                          style: AppTextStyles.bodyLarge.copyWith(
                             fontSize: 16,
                             fontWeight: FontWeight.w500,
-                            color: Colors.white.withValues(alpha: 0.95),
+                            color: AppColors.onPrimary.withValues(alpha: 0.9),
                           ),
                         ),
                       ),
@@ -709,23 +688,18 @@ class _HolidaysScreenState extends State<HolidaysScreen>
     final monthColor = isCompany
         ? AppColors.indigo
         : isNational
-            ? AppColors.primary
+            ? AppColors.primaryText
             : AppColors.textSecondary;
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Row(
           children: [
             // Date badge
@@ -768,11 +742,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                 children: [
                   Text(
                     holiday.name,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingSmall,
                   ),
                   const SizedBox(height: 6),
                   _buildTypeBadge(holiday.type),
@@ -821,12 +791,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
             children: [
               Text(
                 'CALENDAR VIEW',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 1,
-                  color: AppColors.textCaption,
-                ),
+                style: AppTextStyles.sectionLabel,
               ),
               const SizedBox(height: 4),
               GestureDetector(
@@ -865,7 +830,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
-                  color: AppColors.primary,
+                  color: AppColors.primaryText,
                   height: 1,
                 ),
               ),
@@ -876,7 +841,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                   fontSize: 9,
                   fontWeight: FontWeight.w600,
                   letterSpacing: 0.5,
-                  color: AppColors.primary,
+                  color: AppColors.primaryText,
                 ),
               ),
             ],
@@ -916,25 +881,15 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                 borderRadius: BorderRadius.circular(16),
                 border: isCurrentMonth
                     ? Border.all(color: AppColors.primary, width: 1.5)
-                    : null,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.03),
-                    blurRadius: 6,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                    : Border.all(color: const Color(0xFFECEEF1)),
+                boxShadow: kSoftCardShadow,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     DateFormat('MMM').format(DateTime(_selectedYear, month)),
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                   ),
                   const Spacer(),
                   Wrap(
@@ -975,11 +930,11 @@ class _HolidaysScreenState extends State<HolidaysScreen>
           ),
           decoration: BoxDecoration(
             color: AppColors.background,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.12),
-                blurRadius: 24,
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 16,
                 offset: const Offset(0, -4),
               ),
             ],
@@ -995,7 +950,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                   height: 4,
                   decoration: BoxDecoration(
                     color: AppColors.divider,
-                    borderRadius: BorderRadius.circular(2),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 Padding(
@@ -1004,11 +959,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                     children: [
                       Text(
                         '$monthName $_selectedYear',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w700,
-                          color: AppColors.textPrimary,
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                       const Spacer(),
                       Container(
@@ -1016,7 +967,7 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                             horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
                           color: AppColors.primaryLight,
-                          borderRadius: BorderRadius.circular(10),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           holidays.length == 1
@@ -1024,8 +975,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                               : '${holidays.length} days',
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.primary,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.primaryText,
                           ),
                         ),
                       ),
@@ -1038,16 +989,25 @@ class _HolidaysScreenState extends State<HolidaysScreen>
                           padding: const EdgeInsets.fromLTRB(20, 24, 20, 40),
                           child: Column(
                             children: [
-                              Icon(
-                                Icons.event_busy_rounded,
-                                size: 48,
-                                color: AppColors.textSecondary,
+                              Container(
+                                width: 64,
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color:
+                                      AppColors.primary.withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.event_busy_rounded,
+                                  size: 28,
+                                  color: AppColors.primaryText,
+                                ),
                               ),
                               const SizedBox(height: 12),
                               Text(
                                 'No holidays in $monthName',
-                                style:
-                                    TextStyle(color: AppColors.textSecondary),
+                                textAlign: TextAlign.center,
+                                style: AppTextStyles.headingSmall,
                               ),
                             ],
                           ),
@@ -1085,7 +1045,8 @@ class _HolidaysScreenState extends State<HolidaysScreen>
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
@@ -1149,21 +1110,16 @@ class _HolidaysScreenState extends State<HolidaysScreen>
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Text(
             next.name,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+            style: AppTextStyles.headingLarge.copyWith(color: Colors.white),
           ),
           const SizedBox(height: 6),
           Text(
             '${DateFormat('MMM d, yyyy').format(next.date)} • ${next.dayName}',
-            style: TextStyle(
-              fontSize: 14,
-              color: Colors.white.withValues(alpha: 0.7),
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: Colors.white.withValues(alpha: 0.72),
             ),
           ),
         ],
@@ -1197,26 +1153,26 @@ class _HolidaysScreenState extends State<HolidaysScreen>
         break;
       case 'regional':
         bgColor = AppColors.accent.withValues(alpha: 0.12);
-        textColor = AppColors.accent;
+        textColor = AppColors.brandDark;
         break;
       case 'national':
       default:
         bgColor = AppColors.primaryLight;
-        textColor = AppColors.primary;
+        textColor = AppColors.primaryText;
     }
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         type.toUpperCase(),
         style: TextStyle(
           color: textColor,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
           letterSpacing: 0.3,
         ),
       ),
@@ -1228,18 +1184,32 @@ class _HolidaysScreenState extends State<HolidaysScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.error_outline, size: 48, color: AppColors.error),
-          const SizedBox(height: 16),
-          Text(
-            _errorMessage!,
-            style: TextStyle(color: AppColors.textSecondary),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(
+              color: AppColors.errorBg,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.error_outline_rounded,
+              size: 28,
+              color: AppColors.error,
+            ),
           ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Text(
+              _errorMessage!,
+              textAlign: TextAlign.center,
+              style: AppTextStyles.bodySmall,
+            ),
+          ),
+          const SizedBox(height: 8),
           TextButton(
             onPressed: _fetchHolidays,
-            child: Text(
-              'Try Again',
-              style: TextStyle(color: AppColors.primary),
-            ),
+            child: const Text('Try Again'),
           ),
         ],
       ),
@@ -1251,15 +1221,24 @@ class _HolidaysScreenState extends State<HolidaysScreen>
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(
-            Icons.calendar_today_outlined,
-            size: 64,
-            color: AppColors.textSecondary,
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.calendar_today_outlined,
+              size: 28,
+              color: AppColors.primaryText,
+            ),
           ),
           const SizedBox(height: 16),
           Text(
             'No holidays found for $_selectedYear',
-            style: TextStyle(color: AppColors.textSecondary),
+            textAlign: TextAlign.center,
+            style: AppTextStyles.headingSmall,
           ),
         ],
       ),

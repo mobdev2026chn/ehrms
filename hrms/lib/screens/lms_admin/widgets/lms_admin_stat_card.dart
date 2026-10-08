@@ -1,10 +1,12 @@
 // hrms/lib/screens/lms_admin/widgets/lms_admin_stat_card.dart
-// Shared stat tile used across the admin LMS screens — premium card with a
-// glowing gradient icon chip, a soft watermark icon bleeding into the corner,
+// Shared stat tile used across the admin LMS screens — white card with a
+// tinted icon tile, a soft watermark icon bleeding into the corner,
 // value-first hierarchy, and an optional trend pill.
 
 import 'package:flutter/material.dart';
 import '../../../config/app_colors.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../widgets/app_card.dart';
 
 class LmsAdminStatCard extends StatelessWidget {
   final String label;
@@ -38,61 +40,37 @@ class LmsAdminStatCard extends StatelessWidget {
     return Container(
       width: 176,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [AppColors.surface, Color.alphaBlend(fg.withValues(alpha: 0.07), AppColors.surface)],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: fg.withValues(alpha: 0.16)),
-        boxShadow: [
-          BoxShadow(
-            color: fg.withValues(alpha: 0.14),
-            blurRadius: 18,
-            offset: const Offset(0, 8),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         child: Stack(
           children: [
             // ── Watermark icon bleeding into the bottom-right corner ────────
             Positioned(
               right: -14,
               bottom: -16,
-              child: Icon(icon, size: 84, color: fg.withValues(alpha: 0.06)),
+              child: Icon(icon, size: 84, color: fg.withValues(alpha: 0.05)),
             ),
 
             Padding(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // ── Glowing icon chip + optional trend pill ──────────────
+                  // ── Tinted icon tile + optional trend pill ───────────────
                   Row(
                     children: [
                       Container(
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                            colors: [
-                              Color.alphaBlend(fg.withValues(alpha: 0.10), bg),
-                              Color.alphaBlend(fg.withValues(alpha: 0.28), bg),
-                            ],
-                          ),
+                          color: Color.alphaBlend(fg.withValues(alpha: 0.12), bg),
                           borderRadius: BorderRadius.circular(12),
-                          boxShadow: [
-                            BoxShadow(
-                              color: fg.withValues(alpha: 0.22),
-                              blurRadius: 10,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
                         ),
                         child: Icon(icon, size: 20, color: fg),
                       ),
@@ -109,24 +87,21 @@ class LmsAdminStatCard extends StatelessWidget {
                         value,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 28,
+                        style: AppTextStyles.displayLarge.copyWith(
+                          fontSize: 26,
                           height: 1.0,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.6,
-                          color: AppColors.textPrimary,
+                          letterSpacing: -0.5,
                         ),
                       ),
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 6),
                       Text(
                         label.toUpperCase(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: AppTextStyles.sectionLabel.copyWith(
                           fontSize: 10.5,
-                          fontWeight: FontWeight.w600,
                           letterSpacing: 0.6,
-                          color: AppColors.textCaption,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                     ],
@@ -152,10 +127,10 @@ class _DeltaPill extends StatelessWidget {
     final fg = positive ? AppColors.success : AppColors.error;
     final bg = positive ? AppColors.successBg : AppColors.errorBg;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,

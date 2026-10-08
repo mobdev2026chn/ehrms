@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 
 class LmsAdminUtils {
   LmsAdminUtils._();
@@ -85,23 +86,9 @@ class LmsAdminUtils {
       decoration: InputDecoration(
         hintText: hint,
         hintStyle: const TextStyle(color: AppColors.textCaption, fontSize: 14),
-        prefixIcon: const Icon(Icons.search, size: 20, color: AppColors.textCaption),
-        filled: true,
-        fillColor: AppColors.surface,
+        prefixIcon: const Icon(Icons.search_rounded, size: 20),
         isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: AppColors.divider),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppColors.primary, width: 1.4),
-        ),
       ),
     );
   }
@@ -113,18 +100,19 @@ class LmsAdminUtils {
     required ValueChanged<String?> onChanged,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: AppColors.divider),
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E5EA)),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
           value: value,
           isExpanded: true,
           isDense: true,
-          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: AppColors.textSecondary),
+          borderRadius: BorderRadius.circular(12),
           hint: Text(hint,
               style: const TextStyle(fontSize: 13, color: AppColors.textCaption)),
           style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
@@ -151,20 +139,28 @@ class LmsAdminUtils {
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 20),
+        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.divider),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFECEEF1)),
         ),
         child: Column(
           children: [
-            Icon(icon, size: 48, color: AppColors.textHint),
-            const SizedBox(height: 14),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 28, color: AppColors.primaryText),
+            ),
+            const SizedBox(height: 16),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: AppTextStyles.bodySmall,
             ),
           ],
         ),
@@ -195,7 +191,7 @@ class LmsAdminUtils {
       ),
       child: Text(
         status.isEmpty ? '—' : status,
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: fg),
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
       ),
     );
   }

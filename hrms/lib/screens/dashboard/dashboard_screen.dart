@@ -10,6 +10,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../widgets/walking_turtle_emoji.dart';
 import '../../config/constants.dart';
 import '../../utils/face_enrollment_gate.dart';
@@ -192,7 +193,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                 child: CircularProgressIndicator(strokeWidth: 2),
               ),
               SizedBox(width: 16),
-              Flexible(child: Text('submitting attendance please wait..')),
+              Flexible(child: Text('submitting attendance please wait..', style: AppTextStyles.label)),
             ],
           ),
         ),
@@ -1566,7 +1567,7 @@ class _DashboardScreenState extends State<DashboardScreen>
               child: CircularProgressIndicator(strokeWidth: 2),
             ),
             const SizedBox(width: 16),
-            Text(isEnding ? 'Ending break…' : 'Starting break…'),
+            Flexible(child: Text(isEnding ? 'Ending break…' : 'Starting break…', style: AppTextStyles.label)),
           ],
         ),
       ),
@@ -2096,49 +2097,49 @@ class _DashboardScreenState extends State<DashboardScreen>
             child: Container(
               constraints: const BoxConstraints(maxWidth: 340),
               decoration: BoxDecoration(
-                color: const Color(0xFF2A2A2A).withOpacity(0.85),
+                color: AppColors.surfaceDark.withValues(alpha: 0.96),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xFF0D0D0D), width: 2),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 boxShadow: [
                   BoxShadow(
-                    color: colorScheme.shadow.withOpacity(0.2),
+                    color: colorScheme.shadow.withValues(alpha: 0.12),
                     blurRadius: 20,
                     offset: const Offset(0, 8),
                   ),
                 ],
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(16),
+                    width: 72,
+                    height: 72,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: iconColor.withOpacity(0.12),
+                      color: iconColor.withValues(alpha: 0.16),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(iconData, size: 48, color: iconColor),
+                    child: Icon(iconData, size: 36, color: iconColor),
                   ),
                   const SizedBox(height: 20),
                   Text(
                     title,
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white.withOpacity(0.9),
+                    style: AppTextStyles.headingMedium.copyWith(
+                      fontWeight: FontWeight.w700,
+                      color: Colors.white.withValues(alpha: 0.95),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 8),
                   Flexible(
                     child: SingleChildScrollView(
                       child: Text(
                         message,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          height: 1.4,
-                          color: Colors.white.withOpacity(0.8),
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          height: 1.45,
+                          color: Colors.white.withValues(alpha: 0.75),
                         ),
                       ),
                     ),
@@ -2152,15 +2153,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                       child: InkWell(
                         onTap: () => Navigator.of(context).pop(),
                         borderRadius: BorderRadius.circular(12),
-                        child: const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 14),
+                        child: Container(
+                          height: 48,
+                          alignment: Alignment.center,
                           child: Text(
                             'OK',
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
+                            style: AppTextStyles.button.copyWith(
+                              color: AppColors.onPrimary,
                             ),
                           ),
                         ),
@@ -2219,15 +2219,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                 Container(
                   constraints: const BoxConstraints(maxWidth: 340),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2A2A2A).withOpacity(0.85),
+                    color: AppColors.surfaceDark.withValues(alpha: 0.96),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                      color: const Color(0xFF0D0D0D),
-                      width: 2,
+                      color: Colors.white.withValues(alpha: 0.06),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: colorScheme.shadow.withOpacity(0.2),
+                        color: colorScheme.shadow.withValues(alpha: 0.12),
                         blurRadius: 20,
                         offset: const Offset(0, 8),
                       ),
@@ -2237,41 +2236,52 @@ class _DashboardScreenState extends State<DashboardScreen>
                     left: 24,
                     right: 24,
                     top: (isLate || isEarly) ? 48 : 28,
-                    bottom: 28,
+                    bottom: 24,
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (!isLate && !isEarly)
                         Container(
-                          padding: const EdgeInsets.all(16),
+                          width: 72,
+                          height: 72,
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: iconColor.withOpacity(0.12),
+                            color: iconColor.withValues(alpha: 0.16),
                             shape: BoxShape.circle,
                           ),
-                          child: Icon(iconData, size: 48, color: iconColor),
+                          child: Icon(iconData, size: 36, color: iconColor),
                         ),
                       if (!isLate && !isEarly) const SizedBox(height: 20),
                       Text(
                         title,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white.withOpacity(0.9),
+                        style: AppTextStyles.headingMedium.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white.withValues(alpha: 0.95),
                         ),
                       ),
                       if ((isLate || isEarly) &&
                           shiftTimingLine != null &&
                           shiftTimingLine.isNotEmpty) ...[
-                        const SizedBox(height: 14),
-                        Text(
-                          'shift $shiftTimingLine',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14,
-                            height: 1.35,
-                            color: Colors.white.withOpacity(0.88),
+                        const SizedBox(height: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: iconColor.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            'shift $shiftTimingLine',
+                            textAlign: TextAlign.center,
+                            style: AppTextStyles.label.copyWith(
+                              fontSize: 13,
+                              height: 1.35,
+                              color: iconColor,
+                            ),
                           ),
                         ),
                       ],
@@ -2281,10 +2291,9 @@ class _DashboardScreenState extends State<DashboardScreen>
                           child: Text(
                             fullMessage,
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 14,
-                              height: 1.4,
-                              color: Colors.white.withOpacity(0.8),
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              height: 1.45,
+                              color: Colors.white.withValues(alpha: 0.75),
                             ),
                           ),
                         ),
@@ -2298,15 +2307,14 @@ class _DashboardScreenState extends State<DashboardScreen>
                           child: InkWell(
                             onTap: () => Navigator.of(context).pop(true),
                             borderRadius: BorderRadius.circular(12),
-                            child: const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 14),
+                            child: Container(
+                              height: 48,
+                              alignment: Alignment.center,
                               child: Text(
                                 'OK',
                                 textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                                style: AppTextStyles.button.copyWith(
+                                  color: AppColors.onPrimary,
                                 ),
                               ),
                             ),
@@ -3954,7 +3962,7 @@ class _DashboardScreenState extends State<DashboardScreen>
                             child: CircularProgressIndicator(strokeWidth: 2),
                           ),
                           SizedBox(width: 16),
-                          Flexible(child: Text('Getting location…')),
+                          Flexible(child: Text('Getting location…', style: AppTextStyles.label)),
                         ],
                       ),
                     ),

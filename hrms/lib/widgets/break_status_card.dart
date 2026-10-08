@@ -159,16 +159,18 @@ class _BreakStatusCardState extends State<BreakStatusCard>
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: const [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.08),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: Color(0x0F000000),
+            blurRadius: 10,
+            offset: Offset(0, 3),
           ),
         ],
       ),
+      clipBehavior: Clip.antiAlias,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -177,15 +179,15 @@ class _BreakStatusCardState extends State<BreakStatusCard>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
               decoration: BoxDecoration(
-                color: const Color(0xFFE9DDFE),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                color: AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
               ),
               child: Text(
                 'Your break has started!',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: AppColors.primary,
-                  fontWeight: FontWeight.w700,
+                  color: AppColors.primaryText,
+                  fontWeight: FontWeight.w600,
                   fontSize: 13,
                 ),
               ),
@@ -201,19 +203,19 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                     onPressed: widget.isBusy ? null : widget.onEndBreak,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                      foregroundColor: AppColors.onPrimary,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(24),
+                        borderRadius: BorderRadius.circular(999),
                       ),
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
                     ),
                     icon: widget.isBusy
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 16,
                             height: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: AppColors.onPrimary,
                             ),
                           )
                         : const Icon(Icons.timer_off_rounded, size: 20),
@@ -225,25 +227,28 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                 // the running time always agree.
                 final startedFromStr =
                     DateFormat('hh:mm a').format(_anchorStart.toLocal());
-                final titleStyle = TextStyle(
-                  color: Colors.green.shade700,
-                  fontWeight: FontWeight.w700,
+                const titleStyle = TextStyle(
+                  color: AppColors.success,
+                  fontWeight: FontWeight.w600,
                   fontSize: 13,
                 );
                 const timerStyle = TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF1E293B),
+                  fontSize: 24,
+                  height: 1.2,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.3,
+                  color: AppColors.textPrimary,
+                  fontFeatures: [FontFeature.tabularFigures()],
                 );
                 final takenToday = _takenTodayText;
                 final takenTodayLabel = takenToday == null
                     ? null
                     : Text(
                         'Break taken today: $takenToday',
-                        style: TextStyle(
-                          fontSize: 11,
+                        style: const TextStyle(
+                          fontSize: 12,
                           fontWeight: FontWeight.w500,
-                          color: Colors.grey.shade600,
+                          color: AppColors.textSecondary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -256,11 +261,17 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                       width: 8,
                       height: 8,
                       decoration: BoxDecoration(
-                        color: Colors.green.shade500,
+                        color: AppColors.success,
                         shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppColors.success.withValues(alpha: 0.35),
+                            blurRadius: 6,
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Flexible(
                       child: Text(
                         'Break Ongoing',
@@ -272,18 +283,18 @@ class _BreakStatusCardState extends State<BreakStatusCard>
                     const SizedBox(width: 8),
                     Flexible(
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
-                          borderRadius: BorderRadius.circular(6),
+                          color: AppColors.brandLight,
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           'Started from $startedFromStr',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
                             color: AppColors.brandDark,
                           ),
                         ),

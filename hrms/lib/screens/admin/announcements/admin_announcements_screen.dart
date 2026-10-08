@@ -1,11 +1,19 @@
-// Admin Announcements: list every announcement (any status), post a new one, delete.
-// HRMSbackend /api/admin/announcements. Staff see published ones via their Announcements module.
+// Admin Announcements: the register with server-side status / audience / search filters and
+// paging (GET /admin/announcements), like the web admin. Tap a row for its detail and
+// engagement; New opens the create form. HRMSbackend /api/admin/announcements.
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 
+import '../../../config/app_colors.dart';
+import '../../../config/app_text_styles.dart';
 import '../../../services/admin_announcement_service.dart';
 import '../../../utils/snackbar_utils.dart';
+import '../../../widgets/app_tab_loader.dart';
+import 'admin_announcement_detail_screen.dart';
+import 'admin_announcement_form_screen.dart';
+import 'announcement_ui.dart';
 
 class AdminAnnouncementsScreen extends StatefulWidget {
   const AdminAnnouncementsScreen({super.key});
@@ -15,333 +23,380 @@ class AdminAnnouncementsScreen extends StatefulWidget {
 }
 
 class _AdminAnnouncementsScreenState extends State<AdminAnnouncementsScreen> {
-  static const _accent = Color(0xFFEFAA1F);
-  static const _ink = Color(0xFF0F172A);
-  static const _muted = Color(0xFF64748B);
+  static const _pageSize = 10;
+  static const _audienceFilters = ['All Staff', 'Individual Staff'];
+
+  final _svc = AdminAnnouncementService.instance;
+  final _searchCtrl = TextEditingController();
+  Timer? _debounce;
+
+  String _status = 'All';
+  String? _audience;
+  String _search = '';
 
   List<Map<String, dynamic>> _items = [];
+  int _page = 0;
+  int _totalPages = 1;
+  int _totalItems = 0;
   bool _loading = true;
+  bool _loadingMore = false;
   String? _error;
+  int _requestSeq = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _reload();
   }
 
-  Future<void> _load() async {
-    if (mounted) setState(() => _error = null);
-    final r = await AdminAnnouncementService.instance.list();
-    if (!mounted) return;
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Loads page 1 for the current filters, replacing the list once it succeeds.
+  Future<void> _reload() async {
+    final seq = ++_requestSeq;
+    setState(() {
+      _loading = _items.isEmpty;
+      _error = null;
+    });
+    final r = await _svc.fetchPage(status: _status, audience: _audience, search: _search, page: 1, limit: _pageSize);
+    if (!mounted || seq != _requestSeq) return;
     setState(() {
       _loading = false;
       if (r['success'] == true) {
         _items = List<Map<String, dynamic>>.from(r['data'] as List);
+        _page = 1;
+        _totalPages = r['totalPages'] as int;
+        _totalItems = r['totalItems'] as int;
       } else {
         _error = r['message']?.toString() ?? 'Could not load announcements.';
       }
     });
+    if (r['success'] != true && _items.isNotEmpty && mounted) {
+      SnackBarUtils.showSnackBar(context, _error!, isError: true);
+    }
   }
 
-  /// Same rule as the staff view: Draft → Expired → Scheduled → Published.
-  String _status(Map<String, dynamic> a) {
-    if (a['isDraft'] == true) return 'Draft';
-    final now = DateTime.now();
-    DateTime? d(dynamic v) => v == null ? null : DateTime.tryParse(v.toString());
-    final expiry = d(a['expiryDate']);
-    if (expiry != null && expiry.isBefore(DateTime(now.year, now.month, now.day))) return 'Expired';
-    final publish = d(a['publishDate']);
-    if (publish != null && publish.isAfter(now)) return 'Scheduled';
-    return 'Published';
+  Future<void> _loadMore() async {
+    if (_loadingMore || _page >= _totalPages) return;
+    final seq = _requestSeq;
+    setState(() => _loadingMore = true);
+    final r = await _svc.fetchPage(status: _status, audience: _audience, search: _search, page: _page + 1, limit: _pageSize);
+    if (!mounted) return;
+    if (seq != _requestSeq) {
+      setState(() => _loadingMore = false);
+      return;
+    }
+    setState(() {
+      _loadingMore = false;
+      if (r['success'] == true) {
+        final seen = _items.map(announcementId).toSet();
+        _items = [
+          ..._items,
+          ...List<Map<String, dynamic>>.from(r['data'] as List).where((a) => !seen.contains(announcementId(a))),
+        ];
+        _page = r['currentPage'] as int;
+        _totalPages = r['totalPages'] as int;
+        _totalItems = r['totalItems'] as int;
+      }
+    });
+    if (r['success'] != true && mounted) {
+      SnackBarUtils.showSnackBar(context, r['message']?.toString() ?? 'Could not load more.', isError: true);
+    }
+  }
+
+  void _onSearchChanged(String v) {
+    setState(() {}); // clear button visibility
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), () {
+      if (v.trim() == _search) return;
+      _search = v.trim();
+      _items = [];
+      _reload();
+    });
+  }
+
+  void _setStatus(String s) {
+    if (s == _status) return;
+    _status = s;
+    _items = [];
+    _reload();
+  }
+
+  void _setAudience(String? a) {
+    if (a == _audience) return;
+    _audience = a;
+    _items = [];
+    _reload();
+  }
+
+  Future<void> _create() async {
+    final created = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const AdminAnnouncementFormScreen()),
+    );
+    if (created == true) _reload();
+  }
+
+  Future<void> _open(Map<String, dynamic> a) async {
+    final id = announcementId(a);
+    if (id.isEmpty) return;
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => AdminAnnouncementDetailScreen(announcementId: id, initial: a)),
+    );
+    if (changed == true) _reload();
   }
 
   Future<void> _delete(Map<String, dynamic> a) async {
-    final id = (a['_id'] ?? a['id'] ?? '').toString();
+    final id = announcementId(a);
     if (id.isEmpty) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete announcement'),
-        content: Text('Delete “${a['title'] ?? 'this announcement'}”? This cannot be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
+    final ok = await confirmAnnouncementDelete(context, (a['title'] ?? '').toString());
     if (ok != true) return;
-    final r = await AdminAnnouncementService.instance.delete(id);
+    final r = await _svc.delete(id);
     if (!mounted) return;
     if (r['success'] == true) {
-      SnackBarUtils.showSnackBar(context, 'Announcement deleted.');
-      _load();
+      SnackBarUtils.showSnackBar(context, r['message']?.toString() ?? 'Announcement deleted.');
+      setState(() {
+        _items.removeWhere((e) => announcementId(e) == id);
+        if (_totalItems > 0) _totalItems--;
+      });
     } else {
       SnackBarUtils.showSnackBar(context, r['message']?.toString() ?? 'Could not delete.', isError: true);
     }
   }
 
-  Future<void> _create() async {
-    final created = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => const _CreateAnnouncementSheet(),
-    );
-    if (created == true) _load();
-  }
-
-  static const _statusColors = <String, (Color, Color)>{
-    'Published': (Color(0xFFDCFCE7), Color(0xFF15803D)),
-    'Scheduled': (Color(0xFFDBEAFE), Color(0xFF1D4ED8)),
-    'Draft': (Color(0xFFF1F5F9), Color(0xFF475569)),
-    'Expired': (Color(0xFFFEE2E2), Color(0xFFB91C1C)),
-  };
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: _ink,
-        title: const Text('Announcements', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        actions: [IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded))],
+        title: const Text('Announcements'),
+        actions: [IconButton(tooltip: 'Refresh', onPressed: _loading ? null : _reload, icon: const Icon(Icons.refresh_rounded))],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _create,
-        backgroundColor: _accent,
-        foregroundColor: Colors.white,
         icon: const Icon(Icons.add_rounded),
-        label: const Text('New', style: TextStyle(fontWeight: FontWeight.w800)),
+        label: const Text('New'),
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: (_error != null && _items.isEmpty)
-                  ? _center(Icons.wifi_off_rounded, 'Could not load', _error!)
-                  : _items.isEmpty
-                      ? _center(Icons.campaign_outlined, 'No announcements', 'Tap New to post one.')
-                      : ListView(
-                          padding: const EdgeInsets.fromLTRB(14, 12, 14, 90),
-                          children: _items.map(_card).toList(),
-                        ),
-            ),
-    );
-  }
-
-  Widget _card(Map<String, dynamic> a) {
-    final status = _status(a);
-    final (bg, fg) = _statusColors[status] ?? _statusColors['Draft']!;
-    final title = (a['title'] ?? 'Announcement').toString();
-    final subject = (a['subject'] ?? a['description'] ?? '').toString();
-    final audience = (a['audience'] ?? '').toString();
-    final pub = a['publishDate'];
-    final pubD = pub != null ? DateTime.tryParse(pub.toString()) : null;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 8, offset: Offset(0, 2))],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Icon(Icons.campaign_rounded, size: 16, color: _accent),
-          const SizedBox(width: 6),
-          Expanded(child: Text(audience.isNotEmpty ? audience : 'Announcement', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _muted))),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-            child: Text(status.toUpperCase(), style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: fg)),
-          ),
-        ]),
-        const SizedBox(height: 8),
-        Text(title, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: _ink, height: 1.3)),
-        if (subject.isNotEmpty) ...[
-          const SizedBox(height: 3),
-          Text(subject, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, color: _muted, height: 1.4)),
-        ],
-        const SizedBox(height: 8),
-        Row(children: [
-          const Icon(Icons.event_outlined, size: 14, color: _muted),
-          Text(' ${pubD != null ? DateFormat('d MMM yyyy').format(pubD) : '—'}', style: const TextStyle(fontSize: 12, color: _muted)),
-          const Spacer(),
-          TextButton.icon(
-            onPressed: () => _delete(a),
-            icon: const Icon(Icons.delete_outline_rounded, size: 16),
-            label: const Text('Delete'),
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFFDC2626), padding: const EdgeInsets.symmetric(horizontal: 8)),
-          ),
-        ]),
+      body: Column(children: [
+        _filters(),
+        Expanded(child: _body()),
       ]),
     );
   }
 
-  Widget _center(IconData icon, String title, String msg) => ListView(children: [
-        const SizedBox(height: 120),
-        Icon(icon, size: 40, color: _muted),
-        const SizedBox(height: 10),
-        Center(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _ink))),
-        const SizedBox(height: 4),
-        Center(child: Text(msg, style: const TextStyle(fontSize: 12.5, color: _muted))),
+  Widget _filters() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Column(children: [
+        Row(children: [
+          Expanded(
+            child: TextField(
+              controller: _searchCtrl,
+              onChanged: _onSearchChanged,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: 'Search title, subject or sender',
+                isDense: true,
+                prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                suffixIcon: _searchCtrl.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSearchChanged('');
+                          setState(() {});
+                        },
+                      ),
+                contentPadding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          PopupMenuButton<String>(
+            tooltip: 'Audience',
+            initialValue: _audience ?? '',
+            onSelected: (v) => _setAudience(v.isEmpty ? null : v),
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: '', child: Text('Any audience')),
+              for (final a in _audienceFilters) PopupMenuItem(value: a, child: Text(a)),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: BoxDecoration(
+                color: _audience == null ? const Color(0xFFF7F8FA) : AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _audience == null ? const Color(0xFFE2E5EA) : AppColors.primary.withValues(alpha: 0.5)),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.groups_2_outlined, size: 18, color: _audience == null ? AppColors.textSecondary : AppColors.primaryText),
+                const SizedBox(width: 6),
+                Text(
+                  _audience == null ? 'Audience' : (_audience == 'Individual Staff' ? 'Individual' : _audience!),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _audience == null ? AppColors.textSecondary : AppColors.primaryText),
+                ),
+              ]),
+            ),
+          ),
+        ]),
         const SizedBox(height: 12),
-        Center(child: OutlinedButton(onPressed: _load, child: const Text('Retry'))),
-      ]);
-}
-
-class _CreateAnnouncementSheet extends StatefulWidget {
-  const _CreateAnnouncementSheet();
-
-  @override
-  State<_CreateAnnouncementSheet> createState() => _CreateAnnouncementSheetState();
-}
-
-class _CreateAnnouncementSheetState extends State<_CreateAnnouncementSheet> {
-  static const _accent = Color(0xFFEFAA1F);
-  final _title = TextEditingController();
-  final _subject = TextEditingController();
-  final _body = TextEditingController();
-  String _audience = 'All Staff';
-  DateTime? _expiry;
-  bool _saving = false;
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _subject.dispose();
-    _body.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit({required bool draft}) async {
-    if (_title.text.trim().isEmpty) {
-      SnackBarUtils.showSnackBar(context, 'Title is required.', isError: true);
-      return;
-    }
-    setState(() => _saving = true);
-    final r = await AdminAnnouncementService.instance.create(
-      title: _title.text.trim(),
-      subject: _subject.text.trim(),
-      description: _body.text.trim(),
-      audience: _audience,
-      publishDate: DateTime.now(),
-      expiryDate: _expiry,
-      isDraft: draft,
+        SizedBox(
+          height: 34,
+          child: ListView(
+            scrollDirection: Axis.horizontal,
+            children: [
+              for (final s in ['All', ...AdminAnnouncementService.statuses])
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    selected: s == _status,
+                    onSelected: (_) => _setStatus(s),
+                    showCheckmark: false,
+                    selectedColor: AppColors.primary,
+                    visualDensity: VisualDensity.compact,
+                    label: Text(s, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: s == _status ? AppColors.onPrimary : AppColors.textSecondary)),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ]),
     );
-    if (!mounted) return;
-    setState(() => _saving = false);
-    if (r['success'] == true) {
-      SnackBarUtils.showSnackBar(context, draft ? 'Saved as draft.' : 'Announcement posted.');
-      Navigator.pop(context, true);
-    } else {
-      SnackBarUtils.showSnackBar(context, r['message']?.toString() ?? 'Could not save.', isError: true);
-    }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final bottom = MediaQuery.of(context).viewInsets.bottom;
+  Widget _body() {
+    if (_loading && _items.isEmpty) return const Center(child: AppTabLoader());
+    return RefreshIndicator(
+      color: AppColors.primary,
+      onRefresh: _reload,
+      child: (_error != null && _items.isEmpty)
+          ? announcementMessageView(icon: Icons.wifi_off_rounded, title: 'Could not load', message: _error!, onRetry: _reload)
+          : _items.isEmpty
+              ? announcementMessageView(
+                  icon: Icons.campaign_outlined,
+                  title: 'No announcements',
+                  message: (_search.isNotEmpty || _status != 'All' || _audience != null)
+                      ? 'Nothing matches these filters.'
+                      : 'Tap New to post one.',
+                )
+              : NotificationListener<ScrollNotification>(
+                  onNotification: (n) {
+                    if (n.metrics.pixels >= n.metrics.maxScrollExtent - 200) _loadMore();
+                    return false;
+                  },
+                  child: ListView.builder(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+                    itemCount: _items.length + 2,
+                    itemBuilder: (_, i) {
+                      if (i == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 12, left: 2),
+                          child: Text('$_totalItems announcement${_totalItems == 1 ? '' : 's'}',
+                              style: AppTextStyles.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                        );
+                      }
+                      if (i == _items.length + 1) return _footer();
+                      return _card(_items[i - 1]);
+                    },
+                  ),
+                ),
+    );
+  }
+
+  Widget _footer() {
+    if (_loadingMore) return const Padding(padding: EdgeInsets.all(16), child: Center(child: AppTabLoader()));
+    if (_page < _totalPages) {
+      return Center(child: TextButton(onPressed: _loadMore, child: const Text('Load more')));
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _card(Map<String, dynamic> a) {
+    final status = announcementStatus(a);
+    final title = (a['title'] ?? 'Announcement').toString();
+    final subject = (a['subject'] ?? a['description'] ?? '').toString();
+    final from = (a['from'] ?? '').toString();
+    final engagements = a['engagements'] is List ? (a['engagements'] as List).length : 0;
     return Padding(
-      padding: EdgeInsets.only(bottom: bottom),
-      child: Container(
-        decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-        padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-        child: SingleChildScrollView(
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(2)))),
-            const SizedBox(height: 14),
-            const Text('New announcement', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 14),
-            _field(_title, 'Title', 'e.g. Office closed on Friday'),
-            const SizedBox(height: 10),
-            _field(_subject, 'Subject', 'Short summary'),
-            const SizedBox(height: 10),
-            _field(_body, 'Message', 'Full announcement text', lines: 4),
-            const SizedBox(height: 10),
-            const Text('Audience', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-            const SizedBox(height: 6),
-            Wrap(spacing: 8, children: AdminAnnouncementService.audiences.map((a) {
-              final sel = a == _audience;
-              return ChoiceChip(
-                selected: sel,
-                onSelected: (_) => setState(() => _audience = a),
-                showCheckmark: false,
-                selectedColor: _accent,
-                backgroundColor: const Color(0xFFF1F5F9),
-                side: BorderSide.none,
-                label: Text(a, style: TextStyle(fontWeight: FontWeight.w700, color: sel ? Colors.white : const Color(0xFF0F172A))),
-              );
-            }).toList()),
-            const SizedBox(height: 12),
-            Row(children: [
-              const Icon(Icons.event_busy_outlined, size: 18, color: Color(0xFF64748B)),
-              const SizedBox(width: 8),
-              Text(_expiry == null ? 'No expiry' : 'Expires ${DateFormat('d MMM yyyy').format(_expiry!)}', style: const TextStyle(fontSize: 13)),
-              const Spacer(),
-              TextButton(
-                onPressed: () async {
-                  final now = DateTime.now();
-                  final picked = await showDatePicker(context: context, initialDate: now.add(const Duration(days: 7)), firstDate: now, lastDate: DateTime(now.year + 2));
-                  if (picked != null) setState(() => _expiry = picked);
-                },
-                child: Text(_expiry == null ? 'Set expiry' : 'Change'),
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => _open(a),
+          child: Ink(
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 4),
+            decoration: announcementCardDecoration,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Row(children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(Icons.campaign_outlined, size: 20, color: AppColors.primaryText),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(announcementAudienceLabel(a),
+                        style: AppTextStyles.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                  ),
+                  const SizedBox(width: 8),
+                  AnnouncementStatusBadge(status),
+                ]),
               ),
-              if (_expiry != null) IconButton(onPressed: () => setState(() => _expiry = null), icon: const Icon(Icons.close_rounded, size: 18)),
-            ]),
-            const SizedBox(height: 14),
-            Row(children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _saving ? null : () => _submit(draft: true),
-                  child: const Text('Save draft'),
+              const SizedBox(height: 12),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Text(title, style: AppTextStyles.headingSmall),
+              ),
+              if (subject.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text(subject, maxLines: 2, overflow: TextOverflow.ellipsis, style: AppTextStyles.bodySmall),
                 ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: _saving ? null : () => _submit(draft: false),
-                  style: ElevatedButton.styleFrom(backgroundColor: _accent, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 14)),
-                  child: _saving
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('Post', style: TextStyle(fontWeight: FontWeight.w800)),
+              ],
+              const SizedBox(height: 4),
+              Row(children: [
+                const Icon(Icons.event_outlined, size: 14, color: AppColors.textSecondary),
+                Text(' ${announcementDateLabel(a['publishDate'] ?? a['createdAt'])}', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+                if (from.isNotEmpty) ...[
+                  const SizedBox(width: 12),
+                  const Icon(Icons.person_outline_rounded, size: 14, color: AppColors.textSecondary),
+                  Flexible(child: Text(' $from', overflow: TextOverflow.ellipsis, style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary))),
+                ],
+                if (engagements > 0) ...[
+                  const SizedBox(width: 12),
+                  const Icon(Icons.forum_outlined, size: 14, color: AppColors.textSecondary),
+                  Text(' $engagements', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+                ],
+                const Spacer(),
+                IconButton(
+                  tooltip: 'Delete',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _delete(a),
+                  icon: const Icon(Icons.delete_outline_rounded, size: 19, color: AppColors.error),
                 ),
-              ),
+              ]),
             ]),
-          ]),
+          ),
         ),
       ),
     );
   }
-
-  Widget _field(TextEditingController c, String label, String hint, {int lines = 1}) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-          const SizedBox(height: 6),
-          TextField(
-            controller: c,
-            maxLines: lines,
-            decoration: InputDecoration(
-              hintText: hint,
-              isDense: true,
-              filled: true,
-              fillColor: const Color(0xFFF8FAFC),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _accent, width: 1.5)),
-            ),
-          ),
-        ],
-      );
 }

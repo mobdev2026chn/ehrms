@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/performance_service.dart';
 import 'self_assessment_form_screen.dart';
@@ -79,16 +81,10 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Performance Review Details',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('Performance Review Details'),
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
       body: _isLoading
@@ -96,9 +92,10 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
           : _error != null
           ? _buildErrorState()
           : _review == null
-          ? const Center(child: Text('Review not found'))
+          ? const Center(
+              child: Text('Review not found', style: AppTextStyles.bodySmall))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: _buildReviewContent(),
             ),
     );
@@ -111,21 +108,27 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, size: 64, color: AppColors.error),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 32, color: AppColors.error),
+            ),
             const SizedBox(height: 16),
             Text(
               _error ?? 'Failed to load review',
               textAlign: TextAlign.center,
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _fetchReview,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
             ),
           ],
         ),
@@ -153,12 +156,14 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
       } catch (_) {}
     }
 
+    final statusColor = _getStatusColor(status);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Header: cycle • type, status badge
         Padding(
-          padding: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.only(bottom: 16, left: 4, right: 4),
           child: Row(
             children: [
               Expanded(
@@ -167,27 +172,24 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
                   children: [
                     Text(
                       '${r['reviewCycle'] ?? 'Review'} • ${r['reviewType'] ?? ''}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        color: AppColors.textSecondary,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: _getStatusColor(status).withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8),
+                        color: statusColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         _formatStatus(status),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
-                          color: _getStatusColor(status),
+                          color: statusColor,
                         ),
                       ),
                     ),
@@ -199,17 +201,17 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
         ),
         // Review Period card
         _buildInfoCard(
-          icon: Icons.calendar_today_rounded,
+          icon: Icons.calendar_today_outlined,
           title: 'Review Period',
           child: Text(
             periodStr,
-            style: TextStyle(fontSize: 14, color: AppColors.textPrimary),
+            style: AppTextStyles.bodyMedium,
           ),
         ),
         if (r['finalRating'] != null) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildInfoCard(
-            icon: Icons.emoji_events_rounded,
+            icon: Icons.emoji_events_outlined,
             title: 'Final Rating',
             child: Row(
               children: [
@@ -217,20 +219,16 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
                 const SizedBox(width: 8),
                 Text(
                   '${(r['finalRating'] as num).toStringAsFixed(1)}/5.0',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
+                  style: AppTextStyles.displayLarge.copyWith(fontSize: 24),
                 ),
               ],
             ),
           ),
         ],
         if (r['selfReview'] != null) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildReviewSectionCard(
-            icon: Icons.person_rounded,
+            icon: Icons.person_outline_rounded,
             title: 'Your Self Review',
             child: _buildSelfReviewContent(
               r['selfReview'] as Map<String, dynamic>,
@@ -238,9 +236,9 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
           ),
         ],
         if (r['managerReview'] != null) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildReviewSectionCard(
-            icon: Icons.groups_rounded,
+            icon: Icons.groups_outlined,
             title: 'Manager Review',
             subtitle: managerId != null
                 ? 'by ${managerId['name'] ?? ''}'
@@ -251,22 +249,24 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
           ),
         ],
         if (r['hrReview'] != null) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildReviewSectionCard(
-            icon: Icons.workspace_premium_rounded,
+            icon: Icons.workspace_premium_outlined,
             title: 'HR Review',
             child: _buildHrReviewContent(r['hrReview'] as Map<String, dynamic>),
           ),
         ],
         if (r['finalComments'] != null &&
             (r['finalComments'] as String).isNotEmpty) ...[
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildInfoCard(
-            icon: Icons.comment_rounded,
+            icon: Icons.chat_bubble_outline_rounded,
             title: 'Final Comments',
             child: Text(
               r['finalComments'] as String,
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
         ],
@@ -274,12 +274,11 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
         // Action buttons
         Row(
           children: [
-            Flexible(
+            Expanded(
               child: OutlinedButton(
                 onPressed: () => Navigator.pop(context),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  side: BorderSide(color: AppColors.primary),
+                  minimumSize: const Size(0, 48),
                 ),
                 child: const Text(
                   'Back to Reviews',
@@ -290,7 +289,7 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
             ),
             if (canSubmitSelfReview) ...[
               const SizedBox(width: 12),
-              Flexible(
+              Expanded(
                 child: ElevatedButton.icon(
                   onPressed: () {
                     Navigator.push(
@@ -320,36 +319,49 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
     );
   }
 
+  Widget _buildCardHeader(IconData icon, String title, {String? subtitle}) {
+    return Row(
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(icon, size: 20, color: AppColors.primaryText),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: AppTextStyles.headingSmall),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(subtitle, style: AppTextStyles.bodySmall),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildInfoCard({
     required IconData icon,
     required String title,
     required Widget child,
   }) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 0),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return AppCard(
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: SizedBox(
+        width: double.infinity,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(icon, size: 20, color: AppColors.primary),
-                const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
+            _buildCardHeader(icon, title),
+            const SizedBox(height: 16),
             child,
           ],
         ),
@@ -363,41 +375,17 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
     String? subtitle,
     required Widget child,
   }) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 0),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return AppCard(
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: SizedBox(
+        width: double.infinity,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(icon, size: 20, color: AppColors.primary),
-                const SizedBox(width: 8),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                if (subtitle != null) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 12),
+            _buildCardHeader(icon, title, subtitle: subtitle),
+            const SizedBox(height: 16),
+            const Divider(height: 1),
+            const SizedBox(height: 16),
             child,
           ],
         ),
@@ -490,31 +478,31 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            label,
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-          ),
-          const SizedBox(height: 4),
           Row(
             children: [
               Expanded(
-                child: LinearProgressIndicator(
-                  value: pct / 100,
-                  backgroundColor: AppColors.divider,
-                  valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-                  minHeight: 8,
-                  borderRadius: BorderRadius.circular(4),
+                child: Text(
+                  label,
+                  style: AppTextStyles.bodySmall,
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 '$v/5.0',
-                style: TextStyle(
-                  fontSize: 13,
+                style: AppTextStyles.bodySmall.copyWith(
                   fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 6),
+          LinearProgressIndicator(
+            value: pct / 100,
+            backgroundColor: AppColors.inputFill,
+            valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+            minHeight: 8,
+            borderRadius: BorderRadius.circular(999),
           ),
         ],
       ),
@@ -523,39 +511,36 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
 
   Widget _buildListBlock(String label, List list) {
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           ...list
               .where((e) => e != null && e.toString().trim().isNotEmpty)
               .map(
                 (e) => Padding(
-                  padding: const EdgeInsets.only(left: 8, bottom: 2),
+                  padding: const EdgeInsets.only(left: 4, bottom: 4),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '• ',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: AppColors.textSecondary,
+                      Container(
+                        width: 6,
+                        height: 6,
+                        margin: const EdgeInsets.only(top: 7, right: 10),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          shape: BoxShape.circle,
                         ),
                       ),
                       Expanded(
                         child: Text(
                           e.toString(),
-                          style: TextStyle(
-                            fontSize: 14,
+                          style: AppTextStyles.bodyMedium.copyWith(
                             color: AppColors.textSecondary,
                           ),
                         ),
@@ -571,22 +556,28 @@ class _ReviewDetailScreenState extends State<ReviewDetailScreen> {
 
   Widget _buildFeedbackBlock(String label, String text) {
     return Padding(
-      padding: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.only(top: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 4),
-          Text(
-            text,
-            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              text,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
           ),
         ],
       ),

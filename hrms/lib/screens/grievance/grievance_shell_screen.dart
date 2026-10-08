@@ -27,16 +27,10 @@ class _GrievanceShellScreenState extends State<GrievanceShellScreen> {
         DashboardScreen.goToTab(context, 0);
       },
       child: Scaffold(
-        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
           leading: const MenuIconButton(),
-          title: const Text(
-            'My Grievances',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
-          elevation: 0,
+          title: const Text('My Grievances'),
         ),
         drawer: const AppDrawer(),
         body: MyGrievancesScreen(
@@ -50,11 +44,14 @@ class _GrievanceShellScreenState extends State<GrievanceShellScreen> {
   }
 
   Widget _buildFab() {
-    const style = TextStyle(fontSize: 13, fontWeight: FontWeight.bold);
+    const style = TextStyle(fontSize: 14, fontWeight: FontWeight.w600);
     return SizedBox(
-      height: 40,
+      height: 48,
       child: FloatingActionButton.extended(
-        foregroundColor: Colors.white,
+        foregroundColor: AppColors.onPrimary,
+        elevation: 2,
+        highlightElevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         onPressed: () async {
           final result = await Navigator.of(context).push<bool>(
             MaterialPageRoute(
@@ -66,7 +63,7 @@ class _GrievanceShellScreenState extends State<GrievanceShellScreen> {
           }
         },
         label: const Text('Raise Grievance', style: style),
-        icon: const Icon(Icons.add, size: 18),
+        icon: const Icon(Icons.add_rounded, size: 20),
         backgroundColor: AppColors.primary,
       ),
     );

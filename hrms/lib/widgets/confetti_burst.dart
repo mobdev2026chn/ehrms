@@ -17,7 +17,7 @@ class ConfettiBurst extends StatefulWidget {
     this.maxSize = 14,
     this.repeat = false,
     this.colors = const [
-      Color(0xFFEFAA1F), // amber gold (brand)
+      Color(0xFFF9B824), // amber gold (brand)
       Color(0xFF6366F1), // indigo
       Color(0xFF059669), // green
       Color(0xFFFF6F91), // pink

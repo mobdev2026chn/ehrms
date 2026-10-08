@@ -1,10 +1,12 @@
 // lib/screens/admin/approvals/admin_approvals_screen.dart
 import 'package:flutter/material.dart';
 import '../../../config/app_colors.dart';
+import '../../../config/app_text_styles.dart';
 import '../../../services/admin_approvals_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
+import 'approval_shared_widgets.dart';
 
 class AdminApprovalsScreen extends StatefulWidget {
   final String initialType; // 'leave' | 'permission' | 'punch' | 'fine' | 'expense' | 'payslip'
@@ -31,6 +33,7 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
 
   late String _currentType;
   bool _isLoading = true;
+  String? _loadError;
   String _statusFilter = 'All'; // 'All' | 'Pending' | 'Approved' | 'Rejected'
   String _searchQuery = '';
 
@@ -40,15 +43,18 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
   @override
   void initState() {
     super.initState();
-    _currentType = widget.initialType;
     int initialIdx = _approvalTabs.indexWhere((t) => t['type'] == widget.initialType);
     if (initialIdx < 0) initialIdx = 0;
+    _currentType = _approvalTabs[initialIdx]['type']!;
 
     _tabController = TabController(length: _approvalTabs.length, vsync: this, initialIndex: initialIdx);
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) return;
+      final next = _approvalTabs[_tabController.index]['type']!;
+      if (next == _currentType) return;
       setState(() {
-        _currentType = _approvalTabs[_tabController.index]['type']!;
+        _currentType = next;
+        _requests = [];
       });
       _fetchApprovals();
     });
@@ -62,147 +68,174 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
     super.dispose();
   }
 
+  /// Normalised status for a hub row. Punch rows carry `isPendingApproval`; fine rows use
+  /// 'Approval Pending' / 'Saved' / 'Edited'.
+  String _statusOf(Map<String, dynamic> r) {
+    if (_currentType == 'punch') {
+      return r['isPendingApproval'] == true ? 'Pending' : 'Approved';
+    }
+    final s = (r['status'] ?? 'Pending').toString();
+    if (_currentType == 'fine') {
+      if (s == 'Saved') return 'Approved';
+      if (s == 'Edited') return 'Rejected';
+      return 'Pending';
+    }
+    return s;
+  }
+
   Future<void> _fetchApprovals({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
+    final type = _currentType;
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
+    }
 
     try {
-      final res = await _approvalsService.getApprovalsList(
-        type: _currentType,
+      final page = await _approvalsService.getApprovalsList(
+        type: type,
         status: _statusFilter,
         search: _searchQuery,
       );
+      if (!mounted || type != _currentType) return;
 
-      if (res['success'] == true && res['data'] != null) {
-        final rawReqs = (res['data']['requests'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        final rawSummary = res['data']['summary'] is Map ? Map<String, dynamic>.from(res['data']['summary']) : null;
-
-        if (mounted) {
-          setState(() {
-            _requests = rawReqs;
-            if (rawSummary != null) {
-              _summary = rawSummary;
-            } else {
-              int p = 0, a = 0, r = 0;
-              for (final x in rawReqs) {
-                final st = (x['status'] ?? '').toString().toLowerCase();
-                if (st == 'pending') p++;
-                if (st == 'approved') a++;
-                if (st == 'rejected') r++;
-              }
-              _summary = {'total': rawReqs.length, 'pending': p, 'approved': a, 'rejected': r};
-            }
-          });
+      var reqs = page.requests;
+      // Punch and fine lists have no server-side status/search filters or summary.
+      if (AdminApprovalsService.batchTypes.contains(type)) {
+        int p = 0, a = 0, r = 0;
+        for (final x in reqs) {
+          final st = _statusOf(x).toLowerCase();
+          if (st == 'pending') p++;
+          if (st == 'approved') a++;
+          if (st == 'rejected') r++;
         }
+        final summary = {'total': reqs.length, 'pending': p, 'approved': a, 'rejected': r};
+        final q = _searchQuery.trim().toLowerCase();
+        reqs = reqs.where((x) {
+          final matchesStatus = _statusFilter == 'All' || _statusOf(x) == _statusFilter;
+          final name = (x['staffName'] ?? x['employeeName'] ?? '').toString().toLowerCase();
+          final empId = (x['employeeId'] ?? '').toString().toLowerCase();
+          final matchesSearch = q.isEmpty || name.contains(q) || empId.contains(q);
+          return matchesStatus && matchesSearch;
+        }).toList();
+        setState(() {
+          _requests = reqs;
+          _summary = summary;
+          _loadError = null;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _requests = reqs;
+          _summary = page.summary.isNotEmpty ? page.summary : {'total': reqs.length, 'pending': 0, 'approved': 0, 'rejected': 0};
+          _loadError = null;
+          _isLoading = false;
+        });
       }
-    } catch (_) {}
-
-    if (showLoader && mounted) setState(() => _isLoading = false);
+    } catch (e) {
+      if (!mounted || type != _currentType) return;
+      final msg = AdminApprovalsService.messageOf(e, fallback: 'Failed to load approvals');
+      setState(() {
+        _loadError = msg;
+        _isLoading = false;
+      });
+      if (!showLoader) SnackBarUtils.showSnackBar(context, msg, isError: true);
+    }
   }
 
   Future<void> _handleApprove(Map<String, dynamic> req) async {
     final reqId = (req['id'] ?? req['_id'] ?? '').toString();
-    final res = await _approvalsService.approveRequest(type: _currentType, requestId: reqId);
-    if (res['success'] == true) {
-      if (mounted) {
-        SnackBarUtils.showSnackBar(context, 'Request approved successfully');
-        _fetchApprovals(showLoader: false);
-      }
-    } else {
-      if (mounted) {
-        SnackBarUtils.showSnackBar(context, res['message'] ?? 'Failed to approve', isError: true);
-      }
+
+    // A reimbursement needs its payout route (payroll month, or account details + proof).
+    if (_currentType == 'expense') {
+      final ok = await showReimbursementPayoutSheet(
+        context,
+        expenseId: reqId,
+        staffId: (req['staffId'] ?? '').toString(),
+        staffName: (req['name'] ?? 'Staff Member').toString(),
+        amount: double.tryParse((req['amount'] ?? 0).toString()) ?? 0,
+        claimUpiId: req['upiId']?.toString(),
+        claimAccountNo: req['accountNo']?.toString(),
+        claimIfscCode: req['ifscCode']?.toString(),
+      );
+      if (ok && mounted) _fetchApprovals(showLoader: false);
+      return;
+    }
+
+    try {
+      final msg = await _approvalsService.approveRequest(type: _currentType, requestId: reqId, remarks: 'Approved');
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _fetchApprovals(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to approve');
     }
   }
 
-  void _showRejectDialog(Map<String, dynamic> req) {
+  Future<void> _showRejectDialog(Map<String, dynamic> req) async {
     final reqId = (req['id'] ?? req['_id'] ?? '').toString();
-    final reasonCtrl = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Reject Request', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Please provide a reason for rejecting this request:', style: TextStyle(fontSize: 12, color: Color(0xFF64748B))),
-              const SizedBox(height: 10),
-              TextField(
-                controller: reasonCtrl,
-                maxLines: 3,
-                style: const TextStyle(fontSize: 13),
-                decoration: InputDecoration(
-                  hintText: 'Enter reason...',
-                  hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFEFAA1F))),
-                ),
-              ),
-            ],
+    final isBatch = AdminApprovalsService.batchTypes.contains(_currentType);
+    final String? reason;
+    if (isBatch) {
+      // Punch/fine rejects take no reason on the backend; just confirm.
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Reject Request', style: AppTextStyles.headingMedium),
+          content: Text(
+            _currentType == 'punch' ? 'Rejecting marks this attendance as absent. Continue?' : 'Reject this fine adjustment?',
+            style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B))),
-            ),
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary))),
             ElevatedButton(
-              onPressed: () async {
-                if (reasonCtrl.text.trim().isEmpty) {
-                  SnackBarUtils.showSnackBar(context, 'Please enter a reason', isError: true);
-                  return;
-                }
-                Navigator.pop(ctx);
-                final res = await _approvalsService.rejectRequest(type: _currentType, requestId: reqId, reason: reasonCtrl.text.trim());
-                if (res['success'] == true) {
-                  if (mounted) {
-                    SnackBarUtils.showSnackBar(context, 'Request rejected');
-                    _fetchApprovals(showLoader: false);
-                  }
-                } else {
-                  if (mounted) {
-                    SnackBarUtils.showSnackBar(context, res['message'] ?? 'Failed to reject', isError: true);
-                  }
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFFEF4444),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.error, foregroundColor: Colors.white, minimumSize: const Size(96, 44)),
               child: const Text('Reject'),
             ),
           ],
-        );
-      },
-    );
+        ),
+      );
+      if (confirmed != true) return;
+      reason = '';
+    } else {
+      reason = await showApprovalReasonDialog(
+        context,
+        title: 'Reject Request',
+        subtitle: 'Please provide a reason for rejecting this request:',
+      );
+      if (reason == null) return;
+    }
+    if (!mounted) return;
+    try {
+      final msg = await _approvalsService.rejectRequest(type: _currentType, requestId: reqId, reason: reason);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _fetchApprovals(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to reject');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          icon: const Icon(Icons.menu_rounded),
+          tooltip: 'Open menu',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Approvals Hub',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Approvals Hub'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF64748B), size: 22),
+            icon: const Icon(Icons.refresh_rounded),
             onPressed: () => _fetchApprovals(),
             tooltip: 'Refresh',
           ),
@@ -211,17 +244,11 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
           child: Container(
-            color: Colors.white,
+            color: AppColors.surface,
             child: TabBar(
               controller: _tabController,
               isScrollable: true,
               tabAlignment: TabAlignment.start,
-              labelColor: AppColors.brandDark,
-              unselectedLabelColor: const Color(0xFF64748B),
-              indicatorColor: AppColors.brandDark,
-              indicatorWeight: 3,
-              labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
-              unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
               tabs: _approvalTabs.map((t) => Tab(text: t['label'])).toList(),
             ),
           ),
@@ -237,31 +264,22 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
                 children: [
                   // ── Summary Stats Pill Bar ──
                   _buildSummaryStats(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
 
                   // ── Search and Status Filter Row ──
                   _buildSearchAndFilters(),
                   const SizedBox(height: 16),
 
                   // ── Requests List ──
-                  if (_requests.isEmpty)
+                  if (_loadError != null)
+                    ApprovalErrorView(message: _loadError!, onRetry: () => _fetchApprovals())
+                  else if (_requests.isEmpty)
                     Container(
-                      padding: const EdgeInsets.all(36),
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: const Color(0xFFF1F5F9)),
-                      ),
-                      child: Column(
-                        children: const [
-                          Icon(Icons.assignment_turned_in_outlined, size: 40, color: Color(0xFF94A3B8)),
-                          SizedBox(height: 10),
-                          Text(
-                            'No pending requests found',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF475569)),
-                          ),
-                        ],
+                      decoration: approvalCardDecoration(),
+                      child: const ApprovalEmptyView(
+                        icon: Icons.assignment_turned_in_outlined,
+                        title: 'No requests found',
                       ),
                     )
                   else
@@ -275,30 +293,30 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
   Widget _buildSummaryStats() {
     return Row(
       children: [
-        Expanded(child: _summaryBox('Total', '${_summary['total'] ?? 0}', const Color(0xFF64748B))),
+        Expanded(child: _summaryBox('Total', '${_summary['total'] ?? 0}', AppColors.textPrimary)),
         const SizedBox(width: 8),
-        Expanded(child: _summaryBox('Pending', '${_summary['pending'] ?? 0}', AppColors.brandDark)),
+        Expanded(child: _summaryBox('Pending', '${_summary['pending'] ?? 0}', AppColors.warning)),
         const SizedBox(width: 8),
-        Expanded(child: _summaryBox('Approved', '${_summary['approved'] ?? 0}', const Color(0xFF10B981))),
+        Expanded(child: _summaryBox('Approved', '${_summary['approved'] ?? 0}', AppColors.success)),
         const SizedBox(width: 8),
-        Expanded(child: _summaryBox('Rejected', '${_summary['rejected'] ?? 0}', const Color(0xFFEF4444))),
+        Expanded(child: _summaryBox('Rejected', '${_summary['rejected'] ?? 0}', AppColors.error)),
       ],
     );
   }
 
   Widget _summaryBox(String label, String count, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        border: Border.all(color: kApprovalBorder),
       ),
       child: Column(
         children: [
-          Text(count, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: color)),
-          const SizedBox(height: 1),
-          Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8))),
+          Text(count, style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: color)),
+          const SizedBox(height: 2),
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
         ],
       ),
     );
@@ -309,41 +327,46 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
       children: [
         Expanded(
           child: Container(
-            height: 42,
+            height: 48,
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E5EA)),
             ),
             child: TextField(
               onChanged: (v) {
                 _searchQuery = v;
                 _fetchApprovals(showLoader: false);
               },
+              style: AppTextStyles.bodyMedium,
               decoration: const InputDecoration(
                 hintText: 'Search requests...',
-                hintStyle: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                prefixIcon: Icon(Icons.search_rounded, size: 18, color: Color(0xFF94A3B8)),
+                hintStyle: TextStyle(fontSize: 14, color: AppColors.textCaption),
+                prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.textCaption),
+                filled: false,
                 border: InputBorder.none,
-                contentPadding: EdgeInsets.symmetric(vertical: 11),
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: EdgeInsets.symmetric(vertical: 14),
               ),
             ),
           ),
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Container(
-          height: 42,
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE2E5EA)),
           ),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: _statusFilter,
-              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+              borderRadius: BorderRadius.circular(12),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: AppColors.textSecondary),
+              style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
               items: ['All', 'Pending', 'Approved', 'Rejected'].map((s) {
                 return DropdownMenuItem(value: s, child: Text(s));
               }).toList(),
@@ -361,140 +384,122 @@ class _AdminApprovalsScreenState extends State<AdminApprovalsScreen> with Single
   }
 
   Widget _buildRequestCard(Map<String, dynamic> r) {
-    final name = (r['name'] ?? r['employeeName'] ?? 'Staff Member').toString();
+    final name = (r['name'] ?? r['employeeName'] ?? r['staffName'] ?? 'Staff Member').toString();
     final empId = (r['employeeId'] ?? '—').toString();
-    final dept = (r['department'] ?? 'Engineering').toString();
-    final reqType = (r['leaveType'] ?? r['type'] ?? r['category'] ?? _currentType).toString();
-    final status = (r['status'] ?? 'Pending').toString();
-    final reason = (r['reason'] ?? r['remarks'] ?? '').toString();
-    final date = (r['startDate'] != null ? '${r['startDate']} → ${r['endDate'] ?? ''}' : (r['date'] ?? '')).toString();
+    final dept = (r['department'] ?? r['role'] ?? r['designation'] ?? r['shiftName'] ?? '—').toString();
+    final String reqType;
+    final String date;
+    final String reason;
+    switch (_currentType) {
+      case 'leave':
+        reqType = '${r['leaveType'] ?? 'Leave'} • ${r['days'] ?? 1} day(s)';
+        final s = formatApprovalDate(r['startDate']);
+        final e = formatApprovalDate(r['endDate']);
+        date = s == e ? s : '$s → $e';
+        reason = (r['reason'] ?? '').toString();
+        break;
+      case 'permission':
+        reqType = '${r['type'] ?? 'Permission'} • ${r['durationMins'] ?? 0} mins';
+        date = formatApprovalDate(r['date']);
+        reason = (r['reason'] ?? '').toString();
+        break;
+      case 'punch':
+        reqType = 'In ${r['punchInTime'] ?? '—'} / Out ${r['punchOutTime'] ?? '—'}';
+        date = (r['punchInLocation'] ?? '').toString() == '—' ? '' : (r['punchInLocation'] ?? '').toString();
+        reason = '';
+        break;
+      case 'fine':
+        reqType = 'Fine ₹${r['fineAmountCurrent'] ?? 0}';
+        date = (r['date'] ?? '').toString();
+        reason = 'Late ₹${r['lateFineAmount'] ?? 0} • Early exit ₹${r['earlyFineAmount'] ?? 0}';
+        break;
+      case 'expense':
+        reqType = '${r['category'] ?? 'Expense'} • ₹${r['amount'] ?? 0}';
+        date = formatApprovalDate(r['date']);
+        reason = (r['description'] ?? '').toString();
+        break;
+      default:
+        reqType = 'Payslip • ${r['targetMonth'] ?? ''}';
+        date = (r['requestDate'] ?? '').toString();
+        reason = (r['purpose'] ?? '').toString();
+    }
+    final status = _statusOf(r);
 
     final isPending = status.toLowerCase() == 'pending';
-
-    Color stBg;
-    Color stFg;
-    if (status.toLowerCase() == 'approved') {
-      stBg = const Color(0xFFDCFCE7);
-      stFg = const Color(0xFF16A34A);
-    } else if (status.toLowerCase() == 'rejected') {
-      stBg = const Color(0xFFFEE2E2);
-      stFg = const Color(0xFFDC2626);
-    } else {
-      stBg = const Color(0xFFFEF3C7);
-      stFg = AppColors.brandDark;
-    }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x04000000), blurRadius: 6, offset: Offset(0, 2)),
-        ],
-      ),
+      decoration: approvalCardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '$empId • $dept',
-                      style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w500),
-                    ),
-                  ],
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: stBg, borderRadius: BorderRadius.circular(20)),
-                child: Text(
-                  status.toUpperCase(),
-                  style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: stFg),
-                ),
-              ),
-            ],
+          ApprovalCardHeader(
+            leading: ApprovalAvatar(name: name),
+            title: name,
+            subtitle: '$empId • $dept',
+            trailing: ApprovalStatusPill(status: status, label: status.toUpperCase()),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Container(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('TYPE', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8))),
-                      const SizedBox(height: 1),
-                      Text(reqType, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
+                      const Text('TYPE', style: AppTextStyles.sectionLabel),
+                      const SizedBox(height: 4),
+                      Text(reqType, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
-                if (date.isNotEmpty)
+                if (date.isNotEmpty) ...[
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('DATE / PERIOD', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8))),
-                        const SizedBox(height: 1),
-                        Text(date, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
+                        const Text('DATE / PERIOD', style: AppTextStyles.sectionLabel),
+                        const SizedBox(height: 4),
+                        Text(date, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
                       ],
                     ),
                   ),
+                ],
               ],
             ),
           ),
           if (reason.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               'Reason: $reason',
-              style: const TextStyle(fontSize: 11, color: Color(0xFF475569), fontStyle: FontStyle.italic),
+              style: AppTextStyles.bodySmall.copyWith(fontStyle: FontStyle.italic),
             ),
           ],
           if (isPending) ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () => _showRejectDialog(r),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: const Color(0xFFEF4444),
-                      side: const BorderSide(color: Color(0xFFFCA5A5)),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                    child: const Text('Reject', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    style: approvalRejectStyle(),
+                    child: const Text('Reject'),
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () => _handleApprove(r),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF10B981),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                    child: const Text('Approve', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                    style: approvalApproveStyle(),
+                    child: const Text('Approve'),
                   ),
                 ),
               ],

@@ -1,6 +1,8 @@
 // Task Completed screen – success confirmation, task details, track timeline.
 import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/completed_task_detail_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
@@ -238,7 +240,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
         title: 'Task Started',
         subtitle: 'Started journey',
         icon: Icons.play_circle_filled_rounded,
-        iconColor: AppColors.secondary,
+        iconColor: AppColors.info,
       ),
     );
 
@@ -252,7 +254,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           subtitle:
               '${_formatDistanceKm(widget.drivingDistanceKm!)} covered',
           icon: Icons.directions_car_rounded,
-          iconColor: Colors.red.shade400,
+          iconColor: AppColors.indigo,
         ),
       );
     }
@@ -280,7 +282,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           title: 'Travel (${_formatDuration(_displayDuration)})',
           subtitle: '${_formatDistanceKm(_displayDistanceKm)} covered',
           icon: Icons.route_rounded,
-          iconColor: AppColors.secondary,
+          iconColor: AppColors.info,
         ),
       );
     }
@@ -291,7 +293,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
         title: 'Arrived at Location',
         subtitle: 'Within geo-fence',
         icon: Icons.location_on_rounded,
-        iconColor: Colors.pink.shade400,
+        iconColor: AppColors.error,
       ),
     );
 
@@ -303,7 +305,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           title: 'Form Submitted',
           subtitle: 'Customer details captured',
           icon: Icons.description_rounded,
-          iconColor: Colors.brown.shade400,
+          iconColor: AppColors.warning,
         ),
       );
     }
@@ -317,7 +319,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
               ? 'Customer confirmed (${widget.verifiedOtp})'
               : 'Customer confirmed',
           icon: Icons.verified_user_rounded,
-          iconColor: AppColors.secondary,
+          iconColor: AppColors.info,
         ),
       );
     }
@@ -328,7 +330,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
         title: 'Task Completed',
         subtitle: '',
         icon: Icons.check_circle_rounded,
-        iconColor: AppColors.primary,
+        iconColor: AppColors.success,
       ),
     );
 
@@ -349,16 +351,9 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
 
     if (_loading) {
       return Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
-          backgroundColor: AppColors.background,
-          foregroundColor: AppColors.textPrimary,
-          title: const Text(
-            'Task Completed',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
-          elevation: 0,
+          title: const Text('Task Completed'),
         ),
         body: const Center(child: AppTabLoader()),
       );
@@ -371,21 +366,16 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
         _goToMyTasks(context);
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
-          backgroundColor: AppColors.background,
-          foregroundColor: AppColors.textPrimary,
           leading: const SizedBox.shrink(),
           title: Text(
             _isWaitingForApproval ? 'Waiting for Approval' : 'Task Completed',
-            style: const TextStyle(fontWeight: FontWeight.bold),
           ),
-          centerTitle: true,
-          elevation: 0,
         ),
         body: SafeArea(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -422,7 +412,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.primary.withValues(alpha: 0.4),
+                                color: AppColors.primary.withValues(alpha: 0.12),
                                 blurRadius: 18,
                                 offset: const Offset(0, 8),
                               ),
@@ -430,7 +420,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                           ),
                           child: Icon(
                             Icons.check_rounded,
-                            color: AppColors.surfaceDark,
+                            color: AppColors.onPrimary,
                             size: 52,
                           ),
                         ),
@@ -450,7 +440,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                           child: _accentBadge(
                             Icons.auto_awesome_rounded,
                             AppColors.primaryLight,
-                            AppColors.primary,
+                            AppColors.primaryText,
                           ),
                         ),
                       ],
@@ -463,11 +453,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                       ? 'Waiting for Approval'
                       : 'Task Completed!',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
+                  style: AppTextStyles.headingLarge.copyWith(fontSize: 24),
                 ),
                 const SizedBox(height: 8),
                 Text(
@@ -475,43 +461,28 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                       ? 'Your task completion has been submitted. Awaiting admin approval.'
                       : 'Excellent work! The task has been successfully completed.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
-                ),
-                const SizedBox(height: 28),
-                // Task details card
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textSecondary,
                   ),
+                ),
+                const SizedBox(height: 24),
+                // Task details card
+                AppCard(
+                  padding: const EdgeInsets.all(20),
+                  border: Border.all(color: const Color(0xFFECEEF1)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         'Task #${widget.taskId}',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey.shade800,
-                        ),
+                        style: AppTextStyles.headingSmall,
                       ),
                       const SizedBox(height: 4),
                       Text(
                         '$taskTitle - $customerName',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
-                        ),
+                        style: AppTextStyles.bodySmall,
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       _detailRow(
                         'Started At',
                         DateDisplayUtil.formatTime(widget.startedAt),
@@ -581,31 +552,17 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                 ),
                 const SizedBox(height: 24),
                 // Track details timeline
-                Text(
+                const Text(
                   'Track Details',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey.shade800,
-                  ),
+                  style: AppTextStyles.headingSmall,
                 ),
                 const SizedBox(height: 12),
-                Container(
+                AppCard(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 20,
                   ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.06),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
+                  border: Border.all(color: const Color(0xFFECEEF1)),
                   child: _buildTimeline(context),
                 ),
                 const SizedBox(height: 24),
@@ -616,7 +573,9 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                     horizontal: 16,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
+                    color: _isWaitingForApproval
+                        ? AppColors.warningBg
+                        : AppColors.successBg,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Row(
@@ -626,7 +585,9 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                         width: 28,
                         height: 28,
                         decoration: BoxDecoration(
-                          color: AppColors.secondary,
+                          color: _isWaitingForApproval
+                              ? AppColors.warning
+                              : AppColors.success,
                           shape: BoxShape.circle,
                         ),
                         child: const Center(
@@ -634,8 +595,8 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                             '8',
                             style: TextStyle(
                               color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13,
                             ),
                           ),
                         ),
@@ -647,10 +608,11 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                               ? 'Awaiting Admin Approval'
                               : 'Task Completed Successfully',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14,
+                          style: AppTextStyles.label.copyWith(
                             fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade800,
+                            color: _isWaitingForApproval
+                                ? AppColors.warning
+                                : AppColors.success,
                           ),
                         ),
                       ),
@@ -661,6 +623,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                 if (_task != null && !_isWaitingForApproval)
                   SizedBox(
                     width: double.infinity,
+                    height: 52,
                     child: OutlinedButton.icon(
                       onPressed: () {
                         Navigator.of(context).pushReplacement(
@@ -670,33 +633,22 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                           ),
                         );
                       },
-                      icon: const Icon(Icons.timeline_rounded, size: 22),
+                      icon: const Icon(Icons.timeline_rounded, size: 20),
                       label: const Text('View Full Report & Timeline'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: BorderSide(color: AppColors.primary),
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+                        foregroundColor: AppColors.primaryText,
+                        side: BorderSide(color: AppColors.primary, width: 1.2),
                       ),
                     ),
                   ),
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
+                  height: 52,
                   child: ElevatedButton.icon(
                     onPressed: () => _goToMyTasks(context),
-                    icon: const Icon(Icons.home_rounded, size: 22),
+                    icon: const Icon(Icons.home_outlined, size: 20),
                     label: const Text('Return to Tasks'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
                   ),
                 ),
               ],
@@ -735,7 +687,9 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
           Flexible(
             child: Text(
               label,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -743,10 +697,8 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
             child: Text(
               value,
               textAlign: TextAlign.end,
-              style: TextStyle(
-                fontSize: 14,
+              style: AppTextStyles.bodyMedium.copyWith(
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade800,
               ),
             ),
           ),
@@ -763,22 +715,31 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+            ),
           ),
-          Row(
-            children: [
-              if (done)
-                Icon(Icons.check_rounded, size: 18, color: AppColors.primary),
-              if (done) const SizedBox(width: 4),
-              Text(
-                value ?? (done ? 'Yes' : 'No'),
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: done ? AppColors.primary : Colors.grey.shade600,
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: done ? AppColors.successBg : AppColors.inputFill,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (done)
+                  const Icon(Icons.check_rounded, size: 14, color: AppColors.success),
+                if (done) const SizedBox(width: 4),
+                Text(
+                  value ?? (done ? 'Yes' : 'No'),
+                  style: AppTextStyles.caption.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: done ? AppColors.success : AppColors.textSecondary,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -786,7 +747,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
   }
 
   Widget _divider() {
-    return Divider(height: 1, color: Colors.grey.shade200);
+    return const Divider(height: 1);
   }
 
   Widget _buildTimeline(BuildContext context) {
@@ -803,9 +764,10 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                 decoration: BoxDecoration(
                   color: events[i].iconColor,
                   shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.surface, width: 2),
                   boxShadow: [
                     BoxShadow(
-                      color: events[i].iconColor.withOpacity(0.4),
+                      color: events[i].iconColor.withValues(alpha: 0.4),
                       blurRadius: 4,
                       offset: const Offset(0, 1),
                     ),
@@ -813,7 +775,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                 ),
               ),
               if (i < events.length - 1)
-                Container(width: 2, height: 56, color: Colors.grey.shade300),
+                Container(width: 2, height: 56, color: AppColors.divider),
             ],
           ],
         ),
@@ -827,23 +789,16 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                   margin: const EdgeInsets.only(bottom: 8),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.background,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade200),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.04),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
+                    border: Border.all(color: const Color(0xFFECEEF1)),
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Icon(
                         events[i].icon,
-                        size: 22,
+                        size: 20,
                         color: events[i].iconColor,
                       ),
                       const SizedBox(width: 12),
@@ -853,28 +808,22 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
                           children: [
                             Text(
                               DateDisplayUtil.formatTime(events[i].time),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade600,
+                              style: AppTextStyles.caption.copyWith(
+                                color: AppColors.textSecondary,
                               ),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               events[i].title,
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey.shade800,
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                             if (events[i].subtitle.isNotEmpty) ...[
                               const SizedBox(height: 2),
                               Text(
                                 events[i].subtitle,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey.shade600,
-                                ),
+                                style: AppTextStyles.bodySmall,
                               ),
                             ],
                           ],

@@ -28,6 +28,21 @@ Future<void> clearStoredAuthSession() async {
   DioClient().clearAuthToken();
 }
 
+/// HRMSbackend's 401 `code` when this phone's session was replaced by a sign-in on
+/// another phone (only one mobile session per account).
+const kSessionReplacedCode = 'SESSION_REPLACED';
+
+/// True when [err] says the account signed in on another phone.
+bool isSessionReplacedError(DioException err) {
+  if (err.response?.statusCode != 401) return false;
+  final data = err.response?.data;
+  return data is Map && data['code'] == kSessionReplacedCode;
+}
+
+/// Signs this phone out after its session was replaced. Set by
+/// DeactivationCheckWrapper; called once per replaced session with the backend message.
+Future<void> Function(String message)? onSessionReplaced;
+
 /// Verbose per-request Dio logs (options, URLs, bodies). Off by default — very chatty.
 const _kLogDioTraffic = false;
 
@@ -100,6 +115,8 @@ class TokenRefreshInterceptor extends Interceptor {
 
   bool _shouldAttemptRefresh(DioException err) {
     if (err.response?.statusCode != 401) return false;
+    // A replaced session cannot be refreshed back; the session-expiry interceptor signs out.
+    if (isSessionReplacedError(err)) return false;
     final ro = err.requestOptions;
     if (ro.extra['_skip_token_refresh'] == true) return false;
     if (ro.extra['_retried_after_refresh'] == true) return false;
@@ -246,8 +263,34 @@ class SessionExpiryInterceptor extends Interceptor {
     await clearStoredAuthSession();
   }
 
+  static bool _handlingReplaced = false;
+
+  /// The account signed in on another phone: this session is gone for good, so clear it
+  /// and let the app sign out to the login screen with the backend's message.
+  Future<void> _handleSessionReplaced(DioException err) async {
+    if (_handlingReplaced) return;
+    _handlingReplaced = true;
+    try {
+      final data = err.response?.data;
+      final message = (data is Map ? data['message']?.toString() : null) ??
+          'You have been logged out because your account was signed in on another device.';
+      await clearStoredAuthSession();
+      final handler = onSessionReplaced;
+      if (handler != null) await handler(message);
+    } catch (e) {
+      if (kDebugMode) debugPrint('[SessionExpiryInterceptor] session replaced sign-out failed: $e');
+    } finally {
+      _handlingReplaced = false;
+    }
+  }
+
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
+    if (isSessionReplacedError(err)) {
+      // Not awaited: the sign-out navigates away, the failed request just completes.
+      unawaited(_handleSessionReplaced(err));
+      return handler.next(err);
+    }
     if (_isExpiredTokenError(err) && !_handlingExpiry) {
       final prefs = await SharedPreferences.getInstance();
       var rt = prefs.getString(AppConstants.refreshTokenPrefsKey);

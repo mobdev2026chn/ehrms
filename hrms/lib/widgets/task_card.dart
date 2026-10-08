@@ -1,4 +1,5 @@
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'package:flutter/material.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/utils/date_display_util.dart';
@@ -11,86 +12,85 @@ class TaskCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     Color statusColor;
     String statusText;
     switch (task.status) {
       case TaskStatus.assigned:
-        statusColor = Colors.green;
+        statusColor = AppColors.success;
         statusText = 'Assigned';
         break;
       case TaskStatus.pending:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Pending';
         break;
       case TaskStatus.scheduled:
-        statusColor = Colors.blue;
+        statusColor = AppColors.info;
         statusText = 'Scheduled';
         break;
       case TaskStatus.approved:
       case TaskStatus.staffapproved:
-        statusColor = Colors.teal;
+        statusColor = const Color(0xFF0F766E);
         statusText = 'Approved';
         break;
       case TaskStatus.inProgress:
-        statusColor = Colors.blue;
+        statusColor = AppColors.info;
         statusText = 'In Progress';
         break;
       case TaskStatus.arrived:
-        statusColor = Colors.indigo;
+        statusColor = AppColors.indigo;
         statusText = 'Arrived';
         break;
       case TaskStatus.exited:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Exited';
         break;
       case TaskStatus.exitedOnArrival:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Exited on Arrival';
         break;
       case TaskStatus.holdOnArrival:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Hold on Arrival';
         break;
       case TaskStatus.reopenedOnArrival:
-        statusColor = Colors.teal;
+        statusColor = const Color(0xFF0F766E);
         statusText = 'Reopened on Arrival';
         break;
       case TaskStatus.waitingForApproval:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Waiting for Approval';
         break;
       case TaskStatus.completed:
-        statusColor = Colors.green;
+        statusColor = AppColors.success;
         statusText = 'Completed';
         break;
       case TaskStatus.rejected:
-        statusColor = Colors.red;
+        statusColor = AppColors.error;
         statusText = 'Rejected';
         break;
       case TaskStatus.cancelled:
-        statusColor = Colors.grey;
+        statusColor = AppColors.textSecondary;
         statusText = 'Cancelled';
         break;
       case TaskStatus.reopened:
-        statusColor = Colors.teal;
+        statusColor = const Color(0xFF0F766E);
         statusText = 'Reopened';
         break;
       case TaskStatus.hold:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Hold';
         break;
       case TaskStatus.onlineReady:
-        statusColor = Colors.grey;
+        statusColor = AppColors.textSecondary;
         statusText = 'Ready';
         break;
       case TaskStatus.requested:
-        statusColor = AppColors.brand;
+        statusColor = AppColors.brandDark;
         statusText = 'Requested';
         break;
       // Any status added later must not break the build (switch must be exhaustive).
       default:
-        statusColor = Colors.grey;
+        statusColor = AppColors.textSecondary;
         statusText = task.status.name;
     }
 
@@ -100,205 +100,153 @@ class TaskCard extends StatelessWidget {
         task.status == TaskStatus.approved ||
         task.status == TaskStatus.staffapproved;
 
-    return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: isTaskActionable
-            ? BorderSide(color: Theme.of(context).primaryColor, width: 1.5)
-            : BorderSide.none,
+    return Container(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isTaskActionable
+              ? AppColors.primary.withValues(alpha: 0.55)
+              : const Color(0xFFECEEF1),
+          width: isTaskActionable ? 1.4 : 1,
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0F000000),
+            blurRadius: 10,
+            offset: Offset(0, 3),
+          ),
+        ],
       ),
-      elevation: 2,
-      shadowColor: Colors.black.withOpacity(0.08),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  children: [
-                    Text('🆔', style: TextStyle(fontSize: 14)),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Task #${task.taskId}',
-                      style: TextStyle(
-                        color: colorScheme.onSurface,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                Chip(
-                  label: Text(
-                    statusText,
-                    style: TextStyle(color: Colors.white, fontSize: 10),
-                  ),
-                  backgroundColor: statusColor,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 0,
-                  ),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('📄', style: TextStyle(fontSize: 14)),
-                const SizedBox(width: 8),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Text(
-                        'Description',
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
+                      const Icon(
+                        Icons.tag_rounded,
+                        size: 16,
+                        color: AppColors.textSecondary,
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        task.taskTitle,
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                      if (task.description.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2),
-                          child: Text(
-                            task.description,
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontSize: 12,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          'Task #${task.taskId}',
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
+                      ),
                     ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    statusText,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
+            Text(
+              'Description',
+              style: AppTextStyles.sectionLabel,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              task.taskTitle,
+              style: AppTextStyles.headingSmall,
+            ),
+            if (task.description.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  task.description,
+                  style: AppTextStyles.bodySmall,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.trip_origin_rounded,
+              color: AppColors.info,
+              label: 'Source',
+              value: task.sourceLocation?.displayAddress ??
+                  'Current location',
+            ),
+            const SizedBox(height: 12),
+            _buildInfoRow(
+              icon: Icons.location_on_outlined,
+              color: AppColors.error,
+              label: 'Destination',
+              value: task.destinationLocation?.displayAddress ??
+                  (task.customer != null
+                      ? '${task.customer!.address}, ${task.customer!.city}, ${task.customer!.pincode}'
+                      : '—'),
+            ),
+            const SizedBox(height: 12),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('📍', style: TextStyle(fontSize: 14)),
-                const SizedBox(width: 8),
+                _buildIconTile(Icons.schedule_rounded, AppColors.brandDark),
+                const SizedBox(width: 12),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Source',
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        task.sourceLocation?.displayAddress ??
-                            'Current location',
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontSize: 12,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                  child: Text(
+                    _formatCompletionDate(task.expectedCompletionDate),
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text('🎯', style: TextStyle(fontSize: 14)),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Destination',
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        task.destinationLocation?.displayAddress ??
-                            (task.customer != null
-                                ? '${task.customer!.address}, ${task.customer!.city}, ${task.customer!.pincode}'
-                                : '—'),
-                        style: TextStyle(
-                          color: colorScheme.onSurface,
-                          fontSize: 12,
-                        ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Text('🕒', style: TextStyle(fontSize: 14)),
-                const SizedBox(width: 8),
-                Text(
-                  _formatCompletionDate(task.expectedCompletionDate),
-                  style: TextStyle(
-                    color: colorScheme.onSurface,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
             Wrap(
               spacing: 6,
-              runSpacing: 4,
+              runSpacing: 6,
               children: [
                 if (task.isOtpRequired)
                   _buildRequirementChip(
                     'OTP',
-                    Colors.blue.shade100,
-                    Colors.blue.shade800,
+                    AppColors.infoBg,
+                    AppColors.info,
                   ),
                 if (task.isGeoFenceRequired)
                   _buildRequirementChip(
                     'Geo',
-                    Colors.green.shade100,
-                    Colors.green.shade800,
+                    AppColors.successBg,
+                    AppColors.success,
                   ),
                 if (task.isPhotoRequired)
                   _buildRequirementChip(
                     'Photo',
-                    Colors.purple.shade100,
-                    Colors.purple.shade800,
+                    const Color(0xFFEDE9FE),
+                    const Color(0xFF7C3AED),
                   ),
                 if (task.isFormRequired)
                   _buildRequirementChip(
@@ -310,42 +258,24 @@ class TaskCard extends StatelessWidget {
             ),
             if (task.completedDate != null)
               Padding(
-                padding: const EdgeInsets.only(top: 10),
+                padding: const EdgeInsets.only(top: 12),
                 child: Text(
                   'Completed: ${DateDisplayUtil.formatDateOnly(task.completedDate!)}',
-                  style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
-                    fontSize: 10,
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
                   ),
                 ),
               ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             if (isTaskActionable)
               SizedBox(
                 width: double.infinity,
+                height: 48,
                 child: ElevatedButton.icon(
                   onPressed: onStartTask,
-                  icon: Icon(
-                    Icons.rocket_launch,
-                    color: colorScheme.onPrimary,
-                    size: 18,
-                  ),
-                  label: Text(
-                    'Start Task',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: colorScheme.onPrimary,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: colorScheme.primary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    padding: const EdgeInsets.symmetric(vertical: 10),
-                    elevation: 2,
-                  ),
+                  icon: const Icon(Icons.rocket_launch_outlined, size: 18),
+                  label: const Text('Start Task'),
                 ),
               ),
           ],
@@ -354,16 +284,67 @@ class TaskCard extends StatelessWidget {
     );
   }
 
+  Widget _buildIconTile(IconData icon, Color color) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, size: 18, color: color),
+    );
+  }
+
+  Widget _buildInfoRow({
+    required IconData icon,
+    required Color color,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildIconTile(icon, color),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: AppTextStyles.caption),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: AppTextStyles.bodyMedium,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildRequirementChip(
     String label,
     Color backgroundColor,
     Color textColor,
   ) {
-    return Chip(
-      label: Text(label, style: TextStyle(color: textColor, fontSize: 10)),
-      backgroundColor: backgroundColor,
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: textColor,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 

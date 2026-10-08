@@ -10,7 +10,10 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/payslip_service.dart';
+import '../../widgets/app_card.dart';
 import 'all_payslips_screen.dart' show openPayslipStatementPdf;
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
@@ -112,20 +115,15 @@ class _PayslipScreenState extends State<PayslipScreen> {
   Widget build(BuildContext context) {
     final p = _p;
     return Scaffold(
-      backgroundColor: const Color(0xFFE2E8F0),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: _ink,
         title: Text(
           p != null ? 'Payslip · ${p.month}' : (widget.period?.isNotEmpty == true ? 'Payslip · ${widget.period}' : 'Payslip'),
-          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17),
         ),
         actions: [
           if (p != null)
-            IconButton(onPressed: _busy ? null : _share, icon: const Icon(Icons.share_rounded), tooltip: 'Share'),
+            IconButton(onPressed: _busy ? null : _share, icon: const Icon(Icons.share_outlined), tooltip: 'Share'),
+          const SizedBox(width: 4),
         ],
       ),
       body: _error != null
@@ -133,40 +131,53 @@ class _PayslipScreenState extends State<PayslipScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.receipt_long_outlined, size: 40, color: _muted),
-                  const SizedBox(height: 10),
-                  Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: _muted)),
-                  const SizedBox(height: 10),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.receipt_long_outlined, size: 30, color: AppColors.primaryText),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodySmall),
+                  const SizedBox(height: 16),
                   OutlinedButton(onPressed: _load, child: const Text('Retry')),
                 ]),
               ),
             )
           : p == null
-              ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
+              ? Center(child: CircularProgressIndicator(strokeWidth: 2.5, color: AppColors.primary))
               : InteractiveViewer(
                   // Pinch to zoom the sheet like a document.
                   maxScale: 3,
                   child: ListView(
-                    padding: const EdgeInsets.fromLTRB(10, 14, 10, 24),
+                    padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
                     children: [_sheet(p)],
                   ),
                 ),
       bottomNavigationBar: p == null
           ? null
-          : SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-                child: ElevatedButton.icon(
-                  onPressed: _busy ? null : _download,
-                  icon: _busy
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.download_rounded),
-                  label: const Text('Download PDF', style: TextStyle(fontWeight: FontWeight.w800)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _ink,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          : Container(
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
+              ),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  child: ElevatedButton.icon(
+                    onPressed: _busy ? null : _download,
+                    icon: _busy
+                        ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.download_rounded, size: 20),
+                    label: const Text('Download PDF'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.ink,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size(double.infinity, 52),
+                    ),
                   ),
                 ),
               ),
@@ -184,15 +195,16 @@ class _PayslipScreenState extends State<PayslipScreen> {
       padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: const [BoxShadow(color: Color(0x26000000), blurRadius: 12, offset: Offset(0, 4))],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         // Company + logo
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(p.companyName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: _ink)),
+              Text(p.companyName, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _ink)),
               if (p.companyAddress.isNotEmpty)
                 Text(p.companyAddress, style: const TextStyle(fontSize: 10, color: _muted, height: 1.35)),
             ]),
@@ -206,7 +218,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
         // Title
         Center(
           child: Text('PAYSLIP FOR ${p.month.toUpperCase()}',
-              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: _ink, letterSpacing: 0.6)),
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink, letterSpacing: 0.6)),
         ),
         if (p.duration.isNotEmpty)
           Center(child: Text(p.duration, style: const TextStyle(fontSize: 10, color: _muted))),
@@ -237,9 +249,9 @@ class _PayslipScreenState extends State<PayslipScreen> {
           decoration: BoxDecoration(color: _ink, borderRadius: BorderRadius.circular(3)),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
-              const Text('NET PAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: _accent, letterSpacing: 0.6)),
+              const Text('NET PAY', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _accent, letterSpacing: 0.6)),
               const Spacer(),
-              Text(formatInr(p.netPay), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white)),
+              Text(formatInr(p.netPay), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
             ]),
             const SizedBox(height: 3),
             Text(rupeesInWords(p.netPay), style: const TextStyle(fontSize: 9.5, color: Color(0xFFCBD5E1))),
@@ -266,7 +278,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
         child: Text(
           text,
           textAlign: right ? TextAlign.right : TextAlign.left,
-          style: TextStyle(fontSize: size, fontWeight: bold ? FontWeight.w800 : FontWeight.w500, color: color ?? _ink),
+          style: TextStyle(fontSize: size, fontWeight: bold ? FontWeight.w700 : FontWeight.w500, color: color ?? _ink),
         ),
       );
 
@@ -307,7 +319,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Column(children: [
-                Text(v.isEmpty ? '0' : v, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: _ink)),
+                Text(v.isEmpty ? '0' : v, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink)),
                 Text(k, style: const TextStyle(fontSize: 8.5, color: _muted)),
               ]),
             ),
@@ -316,7 +328,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
       Container(
         color: _head,
         padding: _cellPad,
-        child: const Text('ATTENDANCE', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: _ink, letterSpacing: 0.5)),
+        child: const Text('ATTENDANCE', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: _ink, letterSpacing: 0.5)),
       ),
       Table(
         border: TableBorder.all(color: _line, width: 0.8),

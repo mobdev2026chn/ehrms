@@ -28,7 +28,7 @@ class GrievanceBottomNavBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final barBg = Colors.black;
+    const barBg = AppColors.ink;
     const unselectedColor = Color(0xFF94A3B8);
     final selectedColor = AppColors.primary;
 
@@ -37,10 +37,10 @@ class GrievanceBottomNavBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: barBg,
         borderRadius: BorderRadius.circular(32),
-        border: Border.all(color: const Color(0xFF222222), width: 1),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06), width: 1),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, -2),
           ),
@@ -56,7 +56,7 @@ class GrievanceBottomNavBar extends StatelessWidget {
             children: List.generate(_items.length, (i) {
               final item = _items[i];
               final selected = currentIndex == i;
-              final iconColor = selected ? Colors.white : unselectedColor;
+              final iconColor = selected ? AppColors.onPrimary : unselectedColor;
               return Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
@@ -73,7 +73,7 @@ class GrievanceBottomNavBar extends StatelessWidget {
                       boxShadow: selected
                           ? [
                               BoxShadow(
-                                color: selectedColor.withOpacity(0.4),
+                                color: selectedColor.withValues(alpha: 0.3),
                                 blurRadius: 10,
                                 offset: const Offset(0, 2),
                               ),

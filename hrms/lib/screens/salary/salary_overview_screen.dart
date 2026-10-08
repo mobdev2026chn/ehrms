@@ -10,6 +10,8 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../config/constants.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/app_tab_loader.dart';
@@ -477,7 +479,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   (Color, Color) _payrollStatusChipColors(String status) {
     final s = status.trim().toLowerCase();
     if (s == 'paid' || s == 'processed') {
-      return (Colors.green.shade50, Colors.green.shade800);
+      return (AppColors.successBg, AppColors.success);
     }
     if (s.contains('hold')) {
       return (AppColors.brandLight, AppColors.brandDark);
@@ -485,7 +487,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     if (s == 'pending') {
       return (AppColors.brandLight, AppColors.brandDark);
     }
-    return (Colors.grey.shade100, Colors.grey.shade800);
+    return (AppColors.inputFill, AppColors.textSecondary);
   }
 
   Future<void> _loadPayrollHistory() async {
@@ -1861,17 +1863,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text(
-          'Salary Overview',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-        ),
+        title: const Text('Salary Overview'),
         actions: [
           if (!_salaryAccessDenied)
             IconButton(
               tooltip: 'Salary structure',
               icon: Icon(
                 Icons.account_tree_outlined,
-                color: Theme.of(context).colorScheme.primary,
+                color: AppColors.primaryText,
               ),
               onPressed: () {
                 Navigator.of(context).push<void>(
@@ -1884,20 +1883,21 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           if (_currentPayroll != null &&
               (_currentPayroll!['status'] == 'Processed' ||
                   _currentPayroll!['status'] == 'Paid'))
-            Container(
-              margin: const EdgeInsets.only(right: 16),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.2),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: AppColors.success),
-              ),
-              child: Text(
-                'Processed',
-                style: TextStyle(
-                  color: AppColors.success,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(right: 16),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.successBg,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'Processed',
+                  style: TextStyle(
+                    color: AppColors.success,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -1916,28 +1916,21 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.lock_outline,
-                      size: 64,
-                      color: Colors.grey.shade500,
+                    _stateIcon(
+                      Icons.lock_outline_rounded,
+                      AppColors.textSecondary,
+                      AppColors.inputFill,
                     ),
                     const SizedBox(height: 16),
                     Text(
                       'Salary overview access is disabled for your profile.',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
+                      style: AppTextStyles.headingSmall,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Please contact HR.',
-                      style: TextStyle(
-                        color: Colors.grey.shade600,
-                        fontSize: 13,
-                      ),
+                      style: AppTextStyles.bodySmall,
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -1951,31 +1944,22 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.error_outline,
-                      size: 64,
-                      color: Colors.grey.shade500,
+                    _stateIcon(
+                      Icons.error_outline_rounded,
+                      AppColors.error,
+                      AppColors.errorBg,
                     ),
                     const SizedBox(height: 16),
                     Text(
                       _error,
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: AppTextStyles.bodySmall,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: _fetchSalaryData,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 12,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
                       ),
                       child: const Text('Retry'),
                     ),
@@ -1993,37 +1977,28 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.error_outline,
-                      size: 64,
-                      color: Colors.grey.shade500,
+                    _stateIcon(
+                      Icons.account_balance_wallet_outlined,
+                      AppColors.primaryText,
+                      AppColors.primary.withValues(alpha: 0.12),
                     ),
                     const SizedBox(height: 16),
                     Text(
                       'Your salary not updated',
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+                      style: AppTextStyles.headingSmall,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 8),
                     const Text(
                       'Please contact HR to set up your salary structure.',
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
+                      style: AppTextStyles.bodySmall,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: _fetchSalaryData,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 32,
-                          vertical: 12,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
                       ),
                       child: const Text('Retry'),
                     ),
@@ -2032,7 +2007,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               ),
             )
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(12.0),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2079,49 +2054,61 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   // Download Payslip: when payslips are auto-generated, or this month's
                   // payroll already has an issued payslip.
                   if (_isPayslipAutoGenerated ||
                       _payrollHasPayslip(_payrollDocumentForSelectedPeriod)) ...[
                     _buildDownloadPayslipButton(),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                   ],
                   if (_isCurrentCycleBlocked) ...[
-                    Card(
-                      margin: EdgeInsets.zero,
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Text(
-                          'Current month salary cycle is restricted for your profile. '
-                          'Previous month payroll history is still available below.',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: Colors.grey.shade700,
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16.0),
+                      decoration: BoxDecoration(
+                        color: AppColors.brandLight,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: AppColors.brandBorder),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.info_outline_rounded,
+                              size: 20, color: AppColors.brandDark),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Current month salary cycle is restricted for your profile. '
+                              'Previous month payroll history is still available below.',
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                fontSize: 13,
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                   ],
                   _buildSummaryCards(),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   if (!_salaryAccessDenied &&
                       (!_isSelectedCurrentMonth || !_isCurrentCycleBlocked)) ...[
                     _buildAttendanceSummary(),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                   ],
                   _buildSalaryComponentBreakdown(),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   if (!_salaryAccessDenied &&
                       (!_isSelectedCurrentMonth || !_isCurrentCycleBlocked)) ...[
                     _buildDailyBreakdownOverview(),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                   ],
                   if (_calculatedSalary != null &&
                       (_payrollHistoryLoading ||
                           _visiblePayrollHistory.isNotEmpty)) ...[
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     _buildPayrollHistoryCard(),
                   ],
                 ],
@@ -2134,13 +2121,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   Widget _buildDownloadPayslipButton() {
     final payroll = _pastMonthPayroll ?? _currentPayroll;
     if (payroll == null) {
-      return OutlinedButton.icon(
-        onPressed: null,
-        icon: const Icon(Icons.download, size: 20),
-        label: const Text('Payslip not available'),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: Colors.grey,
-          side: const BorderSide(color: Colors.grey),
+      return SizedBox(
+        width: double.infinity,
+        child: OutlinedButton.icon(
+          onPressed: null,
+          icon: const Icon(Icons.download_rounded, size: 20),
+          label: const Text('Payslip not available'),
         ),
       );
     }
@@ -2158,23 +2144,18 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             icon: const Icon(Icons.ios_share_rounded, size: 20),
             label: const Text('Share'),
             style: OutlinedButton.styleFrom(
-              foregroundColor: canOpen ? AppColors.primary : Colors.grey,
-              side: BorderSide(color: canOpen ? AppColors.primary : Colors.grey),
+              backgroundColor: AppColors.surface,
             ),
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 12),
         Expanded(
-          child: OutlinedButton.icon(
+          child: ElevatedButton.icon(
             onPressed: canOpen
                 ? () => _openPayslipFromPayroll(payroll, download: true)
                 : null,
-            icon: const Icon(Icons.download, size: 20),
+            icon: const Icon(Icons.download_rounded, size: 20),
             label: const Text('Download'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: canOpen ? AppColors.primary : Colors.grey,
-              side: BorderSide(color: canOpen ? AppColors.primary : Colors.grey),
-            ),
           ),
         ),
       ],
@@ -2573,57 +2554,49 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
-                Icon(Icons.history, color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
+                _sectionIconTile(Icons.history_rounded),
+                const SizedBox(width: 12),
                 const Text(
                   'Payroll History',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
+                  style: AppTextStyles.headingSmall,
                 ),
                 const Spacer(),
                 if (!_payrollHistoryLoading)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(12),
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       '${visible.length} records',
                       style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.primary,
+                        fontSize: 12,
+                        color: AppColors.primaryText,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
-                const SizedBox(width: 8),
                 if (_payrollHistoryLoading)
-                  const SizedBox(
+                  SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.primary,
+                    ),
                   ),
               ],
             ),
@@ -2631,15 +2604,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           const Divider(height: 1),
           if (visible.isEmpty && !_payrollHistoryLoading)
             Padding(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(16),
               child: Text(
                 'No payroll records in this view.',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                style: AppTextStyles.bodySmall,
               ),
             )
           else
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
               child: Column(
                 children: visible.map((p) {
                   final m = (p['month'] as num?)?.toInt() ?? 1;
@@ -2654,12 +2627,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
                   return Container(
                     width: double.infinity,
-                    margin: const EdgeInsets.only(bottom: 10),
-                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Colors.grey.shade200),
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFECEEF1)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2672,23 +2645,23 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                                 style: const TextStyle(
                                   fontSize: 14,
                                   fontWeight: FontWeight.w700,
-                                  color: Colors.black87,
+                                  color: AppColors.textPrimary,
                                 ),
                               ),
                             ),
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
+                                horizontal: 10,
                                 vertical: 4,
                               ),
                               decoration: BoxDecoration(
                                 color: chipBg,
-                                borderRadius: BorderRadius.circular(10),
+                                borderRadius: BorderRadius.circular(999),
                               ),
                               child: Text(
                                 status,
                                 style: TextStyle(
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                   color: chipFg,
                                 ),
@@ -2696,7 +2669,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                             ),
                           ],
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
                         _buildComponentRow(
                           'Gross',
                           (p['grossSalary'] as num?)?.toDouble() ?? 0,
@@ -2728,7 +2701,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                                 icon: const Icon(Icons.ios_share_rounded, size: 18),
                                 label: const Text('Share'),
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.primary,
+                                  foregroundColor: AppColors.primaryText,
+                                  backgroundColor: AppColors.surface,
                                   visualDensity: VisualDensity.compact,
                                 ),
                               ),
@@ -2747,7 +2721,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                                 icon: const Icon(Icons.download_outlined, size: 18),
                                 label: const Text('Download'),
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: AppColors.primary,
+                                  foregroundColor: AppColors.primaryText,
+                                  backgroundColor: AppColors.surface,
                                   visualDensity: VisualDensity.compact,
                                 ),
                               ),
@@ -2760,7 +2735,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                                 : 'Payslip not available yet',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Colors.grey.shade600,
+                              color: AppColors.textSecondary,
                             ),
                           ),
                       ],
@@ -2778,7 +2753,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   Expanded(
                     child: Text(
                       'Page $page of $pages · $total total',
-                      style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                      style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -3025,58 +3000,45 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         (previewBasis?['payableDaysForRate'] as num?)?.toInt() ?? 0;
 
     return Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-              ),
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(Icons.account_balance_wallet, color: AppColors.primary, size: 18),
-                    const SizedBox(width: 8),
+                    _sectionIconTile(Icons.account_balance_wallet_outlined),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         'Salary Breakdown — $_selectedMonth $_selectedYear',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
-                        ),
+                        style: AppTextStyles.headingSmall,
                       ),
                     ),
                   ],
                 ),
                 if (_isPayslipAutoGenerated) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Builder(
                     builder: (context) {
                       final sel = selectedPayroll;
                       if (sel != null && _payrollHasPayslip(sel)) {
                         return Wrap(
                           spacing: 8,
-                          runSpacing: 4,
+                          runSpacing: 8,
                           children: [
                             OutlinedButton.icon(
                               onPressed: () => _sharePayslipForPayroll(
@@ -3087,7 +3049,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                               icon: const Icon(Icons.ios_share_rounded, size: 18),
                               label: const Text('Share'),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.primary,
+                                foregroundColor: AppColors.primaryText,
                                 visualDensity: VisualDensity.compact,
                               ),
                             ),
@@ -3096,10 +3058,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                                 sel,
                                 download: true,
                               ),
-                              icon: const Icon(Icons.download, size: 18),
+                              icon: const Icon(Icons.download_rounded, size: 18),
                               label: const Text('Download PDF'),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: AppColors.primary,
+                                foregroundColor: AppColors.primaryText,
                                 visualDensity: VisualDensity.compact,
                               ),
                             ),
@@ -3109,10 +3071,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       if (sel != null) {
                         return Text(
                           'Payslip not generated yet',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade700,
-                          ),
+                          style: AppTextStyles.bodySmall,
                         );
                       }
                       return const SizedBox.shrink();
@@ -3123,7 +3082,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             ),
           ),
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -3133,7 +3092,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     useWebStyleStructure) ...[
                   const Text(
                     'Earnings',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 8),
                   if (canUseSelectedPayrollMtd && payrollEarnings.isNotEmpty)
@@ -3339,10 +3298,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       _backendThisMonthGross!,
                       currencyFormat,
                     ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 16),
                   const Text(
                     'Deductions',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 8),
                   if (payrollDeductions.isNotEmpty)
@@ -3545,30 +3504,29 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 if (selectedPayroll != null &&
                     selectedPayroll['status'] != null &&
                     selectedPayroll['status'].toString().trim().isNotEmpty) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade200.withOpacity(0.45),
-                      borderRadius: BorderRadius.circular(8),
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       children: [
                         Text(
                           'Payroll status',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade700,
-                          ),
+                          style: AppTextStyles.bodySmall,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             selectedPayroll['status'].toString(),
+                            textAlign: TextAlign.right,
                             style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
                             ),
                           ),
                         ),
@@ -3580,9 +3538,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   const SizedBox(height: 8),
                   Text(
                     '* Figures from your payroll record for this month. Final once the status is Paid.',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.blueGrey.shade800,
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
                     ),
                   ),
                 ],
@@ -3595,33 +3552,33 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   const SizedBox(height: 8),
                   Text(
                     '* This is an estimated calculation. Final amount will be based on processed payroll.',
-                    style: TextStyle(
-                      fontSize: 11,
+                    style: AppTextStyles.caption.copyWith(
                       color: AppColors.brandDark,
                     ),
                   ),
                 ],
                 if (payrollLocked) ...[
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(10),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8),
+                      color: AppColors.primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppColors.primary.withValues(alpha: 0.2),
+                      ),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Total CTC (Annual)',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.grey.shade800,
+                          style: AppTextStyles.label.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
-                        const SizedBox(height: 6),
+                        const SizedBox(height: 8),
                         _buildMiniRow(
                           'Annual Gross Salary',
                           yearly?.annualGrossSalary ?? 0.0,
@@ -3650,17 +3607,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           children: [
                             const Text(
                               'Total CTC',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 13,
-                              ),
+                              style: AppTextStyles.headingSmall,
                             ),
                             Text(
                               currencyFormat.format(salary?.totalCTC ?? 0.0),
                               style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                                color: AppColors.primary,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 18,
+                                color: AppColors.primaryText,
                               ),
                             ),
                           ],
@@ -3685,11 +3639,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(10),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -3697,17 +3650,21 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           Expanded(
             child: Text(
               label,
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: AppColors.textPrimary,
+              ),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: 8),
           Text(
             currencyFormat.format(amount),
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: Colors.black87,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: isDeduction ? AppColors.error : AppColors.textPrimary,
             ),
           ),
         ],
@@ -3729,14 +3686,18 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           Expanded(
             child: Text(
               label,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
               overflow: TextOverflow.ellipsis,
             ),
           ),
           const SizedBox(width: 8),
           Text(
             valueText ?? currencyFormat.format(amount),
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
+            ),
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.right,
           ),
@@ -3846,14 +3807,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               'This Month Gross',
               currencyFormat.format(selectedMonthGross),
               mtdSubtitle,
-              Colors.black,
+              AppColors.surfaceDark,
               textColor: Colors.white,
             ),
             _buildStatCard(
               'This Month Net',
               currencyFormat.format(selectedMonthNet),
               mtdSubtitle,
-              Colors.black,
+              AppColors.surfaceDark,
               textColor: Colors.white,
             ),
             _buildStatCard(
@@ -3862,7 +3823,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               rateDaysPast > 0
                   ? 'Gross ÷ $rateDaysPast payable days'
                   : 'Daily gross estimate',
-              Colors.black,
+              AppColors.surfaceDark,
               textColor: Colors.white,
             ),
             _buildStatCard(
@@ -3871,7 +3832,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               rateDaysPast > 0
                   ? 'Net ÷ $rateDaysPast payable days'
                   : 'Daily net estimate',
-              Colors.black,
+              AppColors.surfaceDark,
               textColor: Colors.white,
             ),
           ];
@@ -3880,8 +3841,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             childAspectRatio: isWide ? 2.4 : 1.5,
-            crossAxisSpacing: 8,
-            mainAxisSpacing: 8,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
             children: cards,
           );
         },
@@ -4120,7 +4081,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                         (_workingDaysInfo != null || _payrollPreview != null)
                     ? '${attendancePercentForCards.toStringAsFixed(1)}% attendance'
                     : 'Pro-rated'),
-            Colors.black,
+            AppColors.surfaceDark,
             textColor: Colors.white,
           ),
           _buildStatCard(
@@ -4128,7 +4089,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             currencyFormat.format(displayThisMonthNet),
             netCardExtra.toString(),
 
-            Colors.black,
+            AppColors.surfaceDark,
             textColor: Colors.white,
           ),
           _buildStatCard(
@@ -4137,7 +4098,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             rateDaysCurrent > 0
                 ? 'Gross ÷ $rateDaysCurrent payable days'
                 : 'Daily gross estimate',
-            Colors.black,
+            AppColors.surfaceDark,
             textColor: Colors.white,
           ),
           _buildStatCard(
@@ -4146,7 +4107,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             rateDaysCurrent > 0
                 ? 'Net ÷ $rateDaysCurrent payable days'
                 : 'Daily net estimate',
-            Colors.black,
+            AppColors.surfaceDark,
             textColor: Colors.white,
           ),
         ];
@@ -4156,8 +4117,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
           childAspectRatio: isWide ? 1.6 : 1.5,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
+          crossAxisSpacing: 10,
+          mainAxisSpacing: 10,
           children: cards,
         );
       },
@@ -4304,15 +4265,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        color: AppColors.surfaceDark,
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4343,16 +4297,16 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             children: [
               _buildOverviewStatChip(
                 'Present: ${_formatDayChip(_displayChipPresentDays)}',
-                Colors.green,
+                AppColors.success,
               ),
               if (_displayChipPaidLeaveDays > 0)
                 _buildOverviewStatChip(
                   'Paid Leave: ${_formatDayChip(_displayChipPaidLeaveDays)}',
-                  Colors.blue,
+                  AppColors.info,
                 ),
               _buildOverviewStatChip(
                 'Half Day: $_halfDayPaidLeaveCount',
-                Colors.blue,
+                AppColors.info,
               ),
               _buildOverviewStatChip(
                 'Leave: ${_formatDayChip(_leaveDays)}',
@@ -4360,7 +4314,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               ),
               _buildOverviewStatChip(
                 'Absent: ${_formatDayChip(absentForChips)}',
-                Colors.red,
+                AppColors.error,
               ),
               if (pendingDaysCount > 0)
                 _buildOverviewStatChip(
@@ -4376,7 +4330,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               child: Text(
                 'Leave = approved leave days this month (from attendance).',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.85),
+                  color: Colors.white.withValues(alpha: 0.85),
                   fontSize: 11,
                 ),
               ),
@@ -4394,19 +4348,30 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
   Widget _buildOverviewStatChip(String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.3)),
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4419,8 +4384,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     Color? textColor,
     bool usePrimaryGradient = false,
   }) {
+    // Gold tiles need dark-on-gold text (white on gold fails contrast).
+    final fg = usePrimaryGradient
+        ? AppColors.onPrimary
+        : (textColor ?? AppColors.textPrimary);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         gradient: usePrimaryGradient
             ? LinearGradient(
@@ -4430,19 +4399,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               )
             : null,
         color: usePrimaryGradient ? null : bgColor,
-        borderRadius: BorderRadius.circular(12),
-        border: usePrimaryGradient
-            ? null
-            : Border.all(color: Colors.grey.shade200, width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: usePrimaryGradient
-                ? AppColors.primary.withOpacity(0.3)
-                : Colors.black.withOpacity(0.05),
-            blurRadius: usePrimaryGradient ? 8 : 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4452,23 +4410,26 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           Text(
             title,
             style: TextStyle(
-              color: textColor ?? Colors.black,
+              color: fg.withValues(alpha: 0.8),
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
               value,
               style: TextStyle(
-                color: textColor ?? AppColors.success,
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
+                color: textColor == null && !usePrimaryGradient
+                    ? AppColors.success
+                    : fg,
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.2,
               ),
             ),
           ),
@@ -4476,7 +4437,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           Flexible(
             child: Text(
               subtitle,
-              style: TextStyle(color: textColor ?? Colors.black, fontSize: 9),
+              style: TextStyle(
+                color: fg.withValues(alpha: 0.7),
+                fontSize: 10,
+                height: 1.25,
+              ),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
@@ -4575,21 +4540,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         : _monthGrossCardAttendancePercent();
 
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4597,41 +4553,40 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
+              _sectionIconTile(Icons.event_available_outlined),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'Attendance Summary',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color: Colors.white,
-                  ),
+                  style: AppTextStyles.headingSmall,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.3),
-                  borderRadius: BorderRadius.circular(4),
+                  color: AppColors.successBg,
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   '${percent.toStringAsFixed(1)}%',
                   style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.success,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
               final narrow = constraints.maxWidth < 320;
               return Wrap(
-                spacing: narrow ? 6 : 12,
-                runSpacing: 6,
+                spacing: narrow ? 8 : 12,
+                runSpacing: 8,
                 children: [
                   _buildAttStat(
                     'Working Days',
@@ -4641,20 +4596,20 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   _buildAttStat(
                     'Present',
                     '$present',
-                    color: Colors.green,
+                    color: AppColors.success,
                     isPrimaryCard: true,
                   ),
                   if (paidLeaveForSummary > 0)
                     _buildAttStat(
                       'Paid Leave',
                       _formatDayChip(paidLeaveForSummary),
-                      color: Colors.blue,
+                      color: AppColors.info,
                       isPrimaryCard: true,
                     ),
                   _buildAttStat(
                     'Absent Days',
                     absentStr,
-                    color: Colors.red,
+                    color: AppColors.error,
                     isPrimaryCard: true,
                   ),
                   if (_halfDayPaidLeaveCount > 0)
@@ -4681,13 +4636,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               );
             },
           ),
-          Divider(height: 16, color: Colors.white.withOpacity(0.5)),
-          const SizedBox(height: 4),
+          const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 16),
           const Text(
             'Attendance Breakdown',
             style: TextStyle(
-              color: Colors.white,
-              fontSize: 11,
+              color: AppColors.textSecondary,
+              fontSize: 13,
               fontWeight: FontWeight.w600,
             ),
           ),
@@ -4699,20 +4655,20 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               _buildBreakdownPill(
                 'Full Day Present',
                 '$_fullDayPresentCount',
-                Colors.green.shade100,
-                Colors.green.shade900,
+                AppColors.successBg,
+                AppColors.success,
               ),
               _buildBreakdownPill(
                 'Half Day Present',
                 '$_halfDayPresentCount',
-                Colors.blue.shade100,
-                Colors.blue.shade900,
+                AppColors.infoBg,
+                AppColors.info,
               ),
               _buildBreakdownPill(
                 'Paid Leaves',
                 '${_formatDayChip(_webPaidLeaves)} days',
-                Colors.purple.shade100,
-                Colors.purple.shade900,
+                const Color(0xFFEDE9FE),
+                const Color(0xFF7C3AED),
               ),
               _buildBreakdownPill(
                 'Unpaid Leaves',
@@ -4723,16 +4679,16 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             ],
           ),
           if (_webLeaveTypeBreakdown.isNotEmpty) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 16),
             const Text(
               'Leave Type Breakdown',
               style: TextStyle(
-                color: Colors.white,
-                fontSize: 11,
+                color: AppColors.textSecondary,
+                fontSize: 13,
                 fontWeight: FontWeight.w600,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             ..._webLeaveTypeBreakdown.entries.map((entry) {
               final paid = entry.value['paid'] ?? 0.0;
               final unpaid = entry.value['unpaid'] ?? 0.0;
@@ -4740,19 +4696,26 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               if (paid > 0) parts.add('${_formatDayChip(paid)} paid');
               if (unpaid > 0) parts.add('${_formatDayChip(unpaid)} unpaid');
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 1),
+                padding: const EdgeInsets.symmetric(vertical: 3),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Expanded(
                       child: Text(
                         '${entry.key}:',
-                        style: const TextStyle(color: Colors.white, fontSize: 11),
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                     Text(
                       parts.join('  '),
-                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ],
                 ),
@@ -4770,26 +4733,37 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     Color? color,
     bool isPrimaryCard = false,
   }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            color: isPrimaryCard ? Colors.white : Colors.grey,
+    final accent = color ?? AppColors.textPrimary;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color != null
+            ? color.withValues(alpha: 0.08)
+            : AppColors.background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppColors.textSecondary,
+            ),
           ),
-        ),
-        const SizedBox(height: 2),
-        Text(
-          val,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 12,
-            color: isPrimaryCard ? Colors.white : (color ?? Colors.black87),
+          const SizedBox(height: 2),
+          Text(
+            val,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 16,
+              color: accent == AppColors.brand ? AppColors.brandDark : accent,
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -4801,11 +4775,10 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
   ) {
     return Container(
       constraints: const BoxConstraints(minWidth: 150),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withOpacity(0.25)),
+        color: bg,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -4813,15 +4786,16 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           Expanded(
             child: Text(
               '$label:',
-              style: const TextStyle(fontSize: 11, color: Colors.white),
+              style: TextStyle(fontSize: 12, color: fg),
             ),
           ),
+          const SizedBox(width: 6),
           Text(
             value,
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: fg,
             ),
           ),
         ],
@@ -4998,7 +4972,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           fontSize: 7,
                           height: 1.0,
                           fontWeight: FontWeight.w600,
-                          color: textColor.withOpacity(0.9),
+                          color: textColor.withValues(alpha: 0.9),
                         ),
                       ),
                     ],
@@ -5015,7 +4989,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 width: 6,
                 height: 6,
                 decoration: const BoxDecoration(
-                  color: Colors.red,
+                  color: AppColors.error,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -5143,9 +5117,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5161,7 +5135,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           const SizedBox(height: 2),
           Text(
             '$_selectedMonth $_selectedYear',
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 10),
           Row(
@@ -5195,11 +5169,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             children: [
               _calendarLegendItem(
                 'Present Days (${_formatDayChip(_displayChipPresentDays)})',
-                Colors.green.shade100,
+                AppColors.successBg,
               ),
               _calendarLegendItem(
                 'Absent Days (${_formatDayChip(_displayChipAbsentDays)})',
-                Colors.red.shade100,
+                AppColors.errorBg,
               ),
               _calendarLegendItem(
                 'Leave ($leaveDaysColored)',
@@ -5207,7 +5181,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               ),
               _calendarLegendItem(
                 'Holidays ($holidayCount)',
-                Colors.yellow.shade100,
+                AppColors.warningBg,
               ),
               _calendarLegendItem(
                 'Working Day',
@@ -5226,7 +5200,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     decoration: BoxDecoration(
                       color: const Color(0xFFDCFCE7),
                       borderRadius: BorderRadius.circular(3),
-                      border: Border.all(color: Colors.grey.shade300),
+                      border: Border.all(color: AppColors.textHint),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -5235,7 +5209,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     height: 6,
                     margin: const EdgeInsets.only(right: 4),
                     decoration: const BoxDecoration(
-                      color: Colors.red,
+                      color: AppColors.error,
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -5259,7 +5233,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                         d,
                         style: const TextStyle(
                           fontSize: 12,
-                          color: Colors.black,
+                          color: AppColors.textPrimary,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -5607,7 +5581,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(3),
-            border: Border.all(color: Colors.grey.shade300),
+            border: Border.all(color: AppColors.textHint),
           ),
         ),
         const SizedBox(width: 4),
@@ -5729,41 +5703,28 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         .toSet();
 
     return Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(12),
-                topRight: Radius.circular(12),
-              ),
+            padding: const EdgeInsets.all(16),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
             ),
             child: Row(
               children: [
-                Icon(Icons.calendar_today, color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
+                _sectionIconTile(Icons.calendar_today_outlined),
+                const SizedBox(width: 12),
                 Text(
                   'Daily Breakdown',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
+                  style: AppTextStyles.headingSmall,
                 ),
               ],
             ),
@@ -5773,7 +5734,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             physics: const NeverScrollableScrollPhysics(),
             itemCount: lastDay,
             separatorBuilder: (context, index) =>
-                Divider(height: 1, color: Colors.grey.shade200),
+                Divider(height: 1, color: const Color(0xFFECEEF1)),
             itemBuilder: (context, index) {
               final day = index + 1;
               final date = DateTime(year, monthIndex + 1, day);
@@ -5853,7 +5814,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     final dateStr = DateFormat('dd MMM').format(date);
 
     String status = 'Not Marked';
-    Color statusColor = Colors.grey;
+    Color statusColor = AppColors.textCaption;
     double salaryForDay = 0;
     double fineAmount = 0;
     int fineMinutes = 0;
@@ -5862,11 +5823,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     // Scheduled holiday / week-off before raw row — avoids Sundays showing as "On Leave".
     if (isHoliday) {
       status = 'Holiday';
-      statusColor = AppColors.brand;
+      statusColor = AppColors.warning;
       statusIcon = Icons.celebration;
     } else if (isWeekOff) {
       status = 'Week Off';
-      statusColor = Colors.purple;
+      statusColor = const Color(0xFF7C3AED);
       statusIcon = Icons.weekend;
     } else if (record != null) {
       // Salary: only when (status Present/Approved) OR (On Leave AND isPaidLeave). Include fine for Present.
@@ -5885,11 +5846,11 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           recordStatus == 'approved' ||
           recordStatus == 'half day') {
         if (isHalfDay) {
-          statusColor = Colors.blue;
+          statusColor = AppColors.info;
           statusIcon = Icons.schedule;
           salaryForDay = dailySalary * 0.5;
         } else {
-          statusColor = Colors.green;
+          statusColor = AppColors.success;
           statusIcon = Icons.check_circle;
           salaryForDay = dailySalary;
         }
@@ -5905,17 +5866,17 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
             : ((record['lateMinutes'] as num?)?.toInt() ?? 0);
       } else if (recordStatus == 'on leave') {
         if (status == 'Comp Off') {
-          statusColor = Colors.purple;
+          statusColor = const Color(0xFF7C3AED);
           statusIcon = Icons.event_busy;
         } else if (status == 'Week Off') {
-          statusColor = Colors.purple;
+          statusColor = const Color(0xFF7C3AED);
           statusIcon = Icons.weekend;
         } else if (isPaidLeave) {
-          statusColor = Colors.blue;
+          statusColor = AppColors.info;
           statusIcon = Icons.event_busy;
           salaryForDay = dailySalary;
         } else {
-          statusColor = Colors.blue;
+          statusColor = AppColors.info;
           statusIcon = Icons.event_busy;
         }
         if (!isPaidLeave) {
@@ -5923,25 +5884,25 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
         }
         fineAmount = 0;
       } else if (recordStatus == 'absent' || recordStatus == 'rejected') {
-        statusColor = Colors.red;
+        statusColor = AppColors.error;
         statusIcon = Icons.cancel;
         salaryForDay = 0;
         fineAmount = 0;
       } else if (recordStatus == 'pending') {
-        statusColor = AppColors.brand;
+        statusColor = AppColors.warning;
         statusIcon = Icons.pending;
         salaryForDay = 0;
         fineAmount = 0;
       }
     } else if (isLeave) {
       status = 'On Leave';
-      statusColor = Colors.blue;
+      statusColor = AppColors.info;
       statusIcon = Icons.event_busy;
     } else {
       final now = DateTime.now();
       if (date.isAfter(DateTime(now.year, now.month, now.day))) {
         status = 'Future';
-        statusColor = Colors.grey;
+        statusColor = AppColors.textCaption;
         statusIcon = Icons.schedule;
       }
     }
@@ -5954,7 +5915,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
 
     final content = Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      color: record != null ? Colors.transparent : Colors.grey.shade50,
+      color: record != null ? Colors.transparent : AppColors.background,
       child: Row(
         children: [
           SizedBox(
@@ -5965,21 +5926,22 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 Text(
                   dateStr,
                   style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
                   ),
                 ),
+                const SizedBox(height: 2),
                 Text(
                   dayName,
-                  style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
                 ),
                 if (isWorkingDay)
                   Text(
                     'Working Day',
                     style: TextStyle(
-                      fontSize: 9,
-                      color: Colors.green.shade700,
+                      fontSize: 10,
+                      color: AppColors.success,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -5988,22 +5950,35 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Row(
-              children: [
-                Icon(statusIcon, size: 16, color: statusColor),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    centerStatusText,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: statusColor,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    overflow: TextOverflow.ellipsis,
-                  ),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
                 ),
-              ],
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(statusIcon, size: 14, color: statusColor),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        centerStatusText,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: statusColor == AppColors.textCaption
+                              ? AppColors.textSecondary
+                              : statusColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
           Column(
@@ -6015,7 +5990,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.bold,
-                    color: Colors.green,
+                    color: AppColors.success,
                   ),
                 ),
               if (fineAmount > 0) ...[
@@ -6023,7 +5998,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.schedule, size: 11, color: Colors.red.shade700),
+                    Icon(Icons.schedule, size: 11, color: AppColors.error),
                     const SizedBox(width: 4),
                     Flexible(
                       child: Text(
@@ -6033,7 +6008,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: Colors.red.shade700,
+                          color: AppColors.error,
                         ),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -6050,15 +6025,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(4),
+                    color: AppColors.inputFill,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     'Net: ${currencyFormat.format(salaryForDay - fineAmount)}',
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade700,
+                      color: AppColors.textSecondary,
                     ),
                   ),
                 ),
@@ -6067,7 +6042,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
           ),
           if (canShowDetails) ...[
             const SizedBox(width: 8),
-            Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
+            const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.textCaption),
           ],
         ],
       ),
@@ -6165,11 +6140,12 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         height: MediaQuery.of(context).size.height * 0.75,
+        clipBehavior: Clip.antiAlias,
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
           ),
         ),
         child: Column(
@@ -6179,37 +6155,32 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: AppColors.textHint,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     dateStr,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                    ),
+                    style: AppTextStyles.headingMedium,
                   ),
                   const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+                      horizontal: 10,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.green),
+                      color: AppColors.successBg,
+                      borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       AttendanceDisplayUtil.formatAttendanceDisplayStatus(
@@ -6218,8 +6189,8 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                       ),
                       style: const TextStyle(
                         fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.success,
                       ),
                     ),
                   ),
@@ -6234,7 +6205,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   children: [
                     _buildDayDetailSection(
                       'Salary Information',
-                      Icons.account_balance_wallet,
+                      Icons.account_balance_wallet_outlined,
                       [
                         _buildDayDetailRow(
                           'Daily Salary Rate',
@@ -6244,7 +6215,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           _buildDayDetailRow(
                             'Salary Earned',
                             currencyFormat.format(salaryForDay),
-                            valueColor: Colors.green,
+                            valueColor: AppColors.success,
                             isBold: true,
                           ),
                         if (actualFineAmount > 0) ...[
@@ -6252,14 +6223,14 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           _buildDayDetailRow(
                             'Attendance Fine',
                             '- ${currencyFormat.format(actualFineAmount)}',
-                            valueColor: Colors.red,
+                            valueColor: AppColors.error,
                             isBold: true,
                           ),
                           if (actualLateMinutes > 0)
                             _buildDayDetailRow(
                               'Fine Minutes',
                               '$actualLateMinutes minutes',
-                              valueColor: Colors.red.shade600,
+                              valueColor: AppColors.error,
                             ),
                         ],
                         if (salaryForDay > 0) ...[
@@ -6269,7 +6240,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                             currencyFormat.format(
                               salaryForDay - actualFineAmount,
                             ),
-                            valueColor: Colors.green.shade700,
+                            valueColor: AppColors.success,
                             isBold: true,
                           ),
                         ],
@@ -6280,7 +6251,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           _buildDayDetailRow(
                             'Note',
                             'No salary for ${status.toLowerCase()} status',
-                            valueColor: Colors.grey.shade700,
+                            valueColor: AppColors.textSecondary,
                             isFullWidth: true,
                           ),
                         ],
@@ -6289,7 +6260,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     const SizedBox(height: 20),
                     _buildDayDetailSection(
                       'Attendance Details',
-                      Icons.access_time,
+                      Icons.access_time_rounded,
                       [
                         _buildDayDetailRow('Status', status.toString()),
                         _buildDayDetailRow(
@@ -6312,7 +6283,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                           _buildDayDetailRow(
                             'Fine Amount',
                             currencyFormat.format(actualFineAmount),
-                            valueColor: Colors.red,
+                            valueColor: AppColors.error,
                             isBold: true,
                           ),
                         if (actualLateMinutes > 0)
@@ -6331,7 +6302,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                     ),
                     if (address != null) ...[
                       const SizedBox(height: 20),
-                      _buildDayDetailSection('Location', Icons.location_on, [
+                      _buildDayDetailSection('Location', Icons.location_on_outlined, [
                         _buildDayDetailRow(
                           'Address',
                           address,
@@ -6359,25 +6330,21 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
       children: [
         Row(
           children: [
-            Icon(icon, size: 18, color: AppColors.primary),
+            Icon(icon, size: 18, color: AppColors.primaryText),
             const SizedBox(width: 8),
             Text(
               title,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-              ),
+              style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
             ),
           ],
         ),
         const SizedBox(height: 12),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFECEEF1)),
           ),
           child: Column(children: children),
         ),
@@ -6400,15 +6367,15 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
               children: [
                 Text(
                   label,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   value,
                   style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
-                    color: valueColor ?? Colors.black87,
+                    fontSize: 13,
+                    fontWeight: isBold ? FontWeight.w700 : FontWeight.w500,
+                    color: valueColor ?? AppColors.textPrimary,
                   ),
                 ),
               ],
@@ -6420,7 +6387,7 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                 Expanded(
                   child: Text(
                     label,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -6428,9 +6395,9 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
                   child: Text(
                     value,
                     style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
-                      color: valueColor ?? Colors.black87,
+                      fontSize: 13,
+                      fontWeight: isBold ? FontWeight.w700 : FontWeight.w500,
+                      color: valueColor ?? AppColors.textPrimary,
                     ),
                     textAlign: TextAlign.right,
                   ),
@@ -6446,30 +6413,67 @@ class _SalaryOverviewScreenState extends State<SalaryOverviewScreen>
     ValueChanged<String?> onChanged,
   ) {
     return Container(
-      height: 40,
+      height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E5EA)),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: items.toSet().contains(value)
               ? value
               : (items.isNotEmpty ? items.first : null),
+          isExpanded: true,
+          borderRadius: BorderRadius.circular(12),
+          icon: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 20,
+            color: AppColors.textSecondary,
+          ),
           items: items
               .toSet()
               .map(
                 (e) => DropdownMenuItem(
                   value: e,
-                  child: Text(e, style: const TextStyle(fontSize: 12)),
+                  child: Text(
+                    e,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
                 ),
               )
               .toList(),
           onChanged: onChanged,
         ),
       ),
+    );
+  }
+
+  /// 36px gold-tinted icon tile used in section card headers.
+  Widget _sectionIconTile(IconData icon) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, size: 18, color: AppColors.primaryText),
+    );
+  }
+
+  /// 64px tinted circle used by the full-screen empty / error states.
+  Widget _stateIcon(IconData icon, Color fg, Color bg) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+      child: Icon(icon, size: 30, color: fg),
     );
   }
 }

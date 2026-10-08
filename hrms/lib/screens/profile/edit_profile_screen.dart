@@ -6,11 +6,16 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/auth_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/face_detection_helper.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../widgets/app_card.dart';
 import '../attendance/selfie_camera_screen.dart';
+
+/// Hairline border used on cards and the bottom action bar.
+const Color _kHairline = Color(0xFFECEEF1);
 
 /// Full-screen Edit Profile matching the Figma design:
 /// Cancel / Edit Profile header, avatar with camera button, editable
@@ -105,10 +110,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: true,
         automaticallyImplyLeading: false,
         leading: TextButton(
           onPressed: _saving ? null : () => Navigator.of(context).maybePop(),
@@ -122,14 +123,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           ),
         ),
         leadingWidth: 84,
-        title: const Text(
-          'Edit Profile',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: AppColors.textPrimary,
-          ),
-        ),
+        title: const Text('Edit Profile'),
       ),
       body: SafeArea(
         top: false,
@@ -137,40 +131,53 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           children: [
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildAvatar(),
-                      const SizedBox(height: 12),
-                      Text(
-                        name,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      if (empId.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          'Employee ID: #$empId',
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: AppColors.textSecondary,
+                padding: const EdgeInsets.fromLTRB(20, 24, 20, 24),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Form(
+                      key: _formKey,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _buildAvatar(),
+                          const SizedBox(height: 16),
+                          Text(
+                            name,
+                            textAlign: TextAlign.center,
+                            style: AppTextStyles.headingMedium,
                           ),
-                        ),
-                      ],
-                      const SizedBox(height: 24),
-                      _buildPersonalDetailsCard(),
-                      const SizedBox(height: 20),
-                      _buildBankDetailsCard(),
-                      const SizedBox(height: 20),
-                    ],
+                          if (empId.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 10, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary
+                                      .withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Text(
+                                  'Employee ID: #$empId',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.primaryText,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 24),
+                          _buildPersonalDetailsCard(),
+                          const SizedBox(height: 16),
+                          _buildBankDetailsCard(),
+                          const SizedBox(height: 8),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -207,8 +214,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       initial,
                       style: TextStyle(
                         fontSize: 34,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.primary,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryText,
                       ),
                     ),
             ),
@@ -222,8 +229,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   shape: BoxShape.circle,
                   border: Border.all(color: AppColors.background, width: 3),
                 ),
-                child: const Icon(Icons.camera_alt,
-                    size: 16, color: Colors.white),
+                child: Icon(Icons.camera_alt_rounded,
+                    size: 16, color: AppColors.onPrimary),
               ),
             ),
           ],
@@ -237,7 +244,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _cardHeader(Icons.person_outline, 'Personal Details'),
+          _cardHeader(Icons.person_outline_rounded, 'Personal Details'),
           const SizedBox(height: 20),
           _field(
             label: 'FULL NAME',
@@ -284,23 +291,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(Icons.account_balance_outlined,
-                  color: AppColors.primary, size: 20),
-              const SizedBox(width: 10),
-              const Text(
-                'Bank Details',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const Spacer(),
-              Icon(Icons.lock_outline,
-                  size: 18, color: AppColors.textSecondary),
-            ],
+          _cardHeader(
+            Icons.account_balance_outlined,
+            'Bank Details',
+            trailing: const Icon(Icons.lock_outline_rounded,
+                size: 18, color: AppColors.textSecondary),
           ),
           const SizedBox(height: 20),
           Row(
@@ -313,13 +308,27 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
           const SizedBox(height: 18),
           _readOnly('ACCOUNT NUMBER', account),
           const SizedBox(height: 16),
-          Text(
-            'To update bank details, please contact the HR department directly.',
-            style: TextStyle(
-              fontSize: 12,
-              fontStyle: FontStyle.italic,
-              color: AppColors.textSecondary,
-              height: 1.4,
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(Icons.info_outline_rounded,
+                    size: 16, color: AppColors.textSecondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'To update bank details, please contact the HR department directly.',
+                    style: AppTextStyles.caption
+                        .copyWith(color: AppColors.textSecondary, height: 1.4),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
@@ -330,46 +339,29 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   Widget _buildSaveBar() {
     return Container(
       padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, -2),
-          ),
-        ],
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: _kHairline)),
       ),
       child: SizedBox(
         width: double.infinity,
-        height: 54,
+        height: 52,
         child: ElevatedButton.icon(
           onPressed: _saving ? null : _handleSave,
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.primary,
             disabledBackgroundColor:
                 AppColors.primary.withValues(alpha: 0.6),
-            elevation: 0,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(28),
-            ),
+            disabledForegroundColor: AppColors.onPrimary,
           ),
           icon: _saving
-              ? const SizedBox(
+              ? SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
+                      strokeWidth: 2, color: AppColors.onPrimary),
                 )
-              : const Icon(Icons.save_outlined, color: Colors.white, size: 20),
-          label: Text(
-            _saving ? 'Saving...' : 'Save Changes',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
+              : const Icon(Icons.save_outlined, size: 20),
+          label: Text(_saving ? 'Saving...' : 'Save Changes'),
         ),
       ),
     );
@@ -378,37 +370,30 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   // ── Reusable bits ────────────────────────────────────────────────────────
 
   Widget _card({required Widget child}) {
-    return Container(
-      width: double.infinity,
+    return AppCard(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
+      border: Border.all(color: _kHairline),
       child: child,
     );
   }
 
-  Widget _cardHeader(IconData icon, String title) {
+  Widget _cardHeader(IconData icon, String title, {Widget? trailing}) {
     return Row(
       children: [
-        Icon(icon, color: AppColors.primary, size: 20),
-        const SizedBox(width: 10),
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(12),
           ),
+          child: Icon(icon, color: AppColors.primaryText, size: 20),
         ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(title, style: AppTextStyles.headingSmall),
+        ),
+        if (trailing != null) trailing,
       ],
     );
   }
@@ -443,32 +428,9 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
             color: AppColors.textPrimary,
             fontWeight: FontWeight.w500,
           ),
-          decoration: InputDecoration(
-            isDense: true,
-            filled: true,
-            fillColor: AppColors.inputFill,
+          decoration: const InputDecoration(
             contentPadding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-            ),
-            errorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.error, width: 1.5),
-            ),
-            focusedErrorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.error, width: 1.5),
-            ),
+                EdgeInsets.symmetric(horizontal: 14, vertical: 14),
           ),
         ),
       ],

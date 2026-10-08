@@ -7,6 +7,7 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
@@ -436,21 +437,17 @@ class _StartRideScreenState extends State<StartRideScreen> {
         Navigator.of(context).pop();
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
             onPressed: () => Navigator.of(context).pop(),
           ),
-          title: const Text(
-            'Start Ride',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
-          elevation: 0,
+          title: const Text('Start Ride'),
           actions: [
             IconButton(
-              icon: Icon(Icons.assignment_rounded, color: AppColors.primary),
+              icon: Icon(Icons.assignment_outlined, color: AppColors.primaryText),
               tooltip: 'Task details',
               onPressed: () {
                 Navigator.push(
@@ -463,7 +460,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
               },
             ),
             IconButton(
-              icon: Icon(Icons.call_rounded, color: AppColors.primary),
+              icon: Icon(Icons.call_outlined, color: AppColors.primaryText),
               tooltip: 'Call customer',
               onPressed: () async {
                 final number = _customer?.customerNumber?.trim();
@@ -561,12 +558,12 @@ class _StartRideScreenState extends State<StartRideScreen> {
   Widget _buildBottomSheet() {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        color: AppColors.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 12,
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 16,
             offset: const Offset(0, -4),
           ),
         ],
@@ -574,14 +571,14 @@ class _StartRideScreenState extends State<StartRideScreen> {
       child: SafeArea(
         top: false,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Source (staff location – auto, read-only).
               _buildLocationRow(
                 icon: Icons.gps_fixed_rounded,
-                iconColor: AppColors.primary,
+                iconColor: AppColors.primaryText,
                 label: 'Source',
                 value: _sourceAddress,
                 subtitle: 'Your current location',
@@ -607,82 +604,68 @@ class _StartRideScreenState extends State<StartRideScreen> {
               const SizedBox(height: 16),
               // Distance & ETA.
               if (_distanceKm != null) ...[
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    Icon(
+                    _metricPill(
                       Icons.straighten_rounded,
-                      size: 18,
-                      color: Colors.grey.shade600,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
                       '${_distanceKm!.toStringAsFixed(1)} km',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
                     ),
-                    const SizedBox(width: 16),
-                    if (_durationText != null) ...[
-                      Icon(
-                        Icons.schedule_rounded,
-                        size: 18,
-                        color: Colors.grey.shade600,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        _durationText!,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade700,
-                        ),
-                      ),
-                    ],
+                    if (_durationText != null)
+                      _metricPill(Icons.schedule_rounded, _durationText!),
                   ],
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
               ],
               // Start Ride button – enabled when destination is set.
               SizedBox(
                 width: double.infinity,
+                height: 52,
                 child: ElevatedButton.icon(
                   onPressed: _canStartRide ? _onStartRide : null,
                   icon: _startingRide
-                      ? const SizedBox(
-                          width: 22,
-                          height: 22,
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: AppColors.onPrimary,
                           ),
                         )
                       : const Icon(
                           Icons.directions_car_rounded,
-                          color: Colors.white,
-                          size: 22,
+                          size: 20,
                         ),
                   label: Text(
                     _startingRide ? 'Starting...' : 'Start Ride',
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 2,
                   ),
                 ),
               ),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _metricPill(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.inputFill,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: AppColors.textSecondary),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -698,14 +681,22 @@ class _StartRideScreenState extends State<StartRideScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: iconColor, size: 24),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: iconColor, size: 20),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -713,19 +704,16 @@ class _StartRideScreenState extends State<StartRideScreen> {
               children: [
                 Text(
                   label,
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppTextStyles.caption.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade600,
+                    color: AppColors.textSecondary,
                   ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   value,
-                  style: TextStyle(
-                    fontSize: 14,
+                  style: AppTextStyles.bodyMedium.copyWith(
                     fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -734,7 +722,9 @@ class _StartRideScreenState extends State<StartRideScreen> {
                   const SizedBox(height: 2),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ],
               ],

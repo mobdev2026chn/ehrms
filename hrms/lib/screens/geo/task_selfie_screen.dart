@@ -4,6 +4,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/geo/accurate_location_helper.dart';
@@ -202,9 +204,9 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
   }
 
   Widget _buildSelfieCard() {
-    final primary = Theme.of(context).colorScheme.primary;
+    final primary = AppColors.primaryText;
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: _imageFile != null
           ? Column(
@@ -233,14 +235,26 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 16),
                 child: Column(
                   children: [
-                    if (_isDetectingFace)
-                      const CircularProgressIndicator(strokeWidth: 2)
-                    else
-                      Icon(Icons.camera_alt_rounded, size: 48, color: primary),
-                    const SizedBox(height: 12),
+                    Container(
+                      width: 64,
+                      height: 64,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: _isDetectingFace
+                          ? const SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : Icon(Icons.camera_alt_outlined, size: 28, color: primary),
+                    ),
+                    const SizedBox(height: 16),
                     Text(
                       'Take $_title',
-                      style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                      style: AppTextStyles.headingSmall,
                     ),
                   ],
                 ),
@@ -250,16 +264,19 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
   }
 
   Widget _buildLocationCard() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerLowest,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Theme.of(context).colorScheme.outline),
-      ),
+    return AppCard(
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Row(
         children: [
-          Icon(Icons.location_on, color: AppColors.primary),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.location_on_outlined, color: AppColors.primaryText, size: 20),
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: _isLocationLoading
@@ -271,19 +288,22 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
                 : Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         'Current Location',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       Text(
                         _address ?? 'Unknown location',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
                       ),
                       if (_city != null || _pincode != null)
                         Padding(
                           padding: const EdgeInsets.only(top: 4),
-                          child: Text('${_city ?? ''} ${_pincode ?? ''}'.trim()),
+                          child: Text(
+                            '${_city ?? ''} ${_pincode ?? ''}'.trim(),
+                            style: AppTextStyles.bodySmall,
+                          ),
                         ),
                     ],
                   ),
@@ -292,7 +312,8 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
             onPressed: () {
               if (!_uploading && !_isDetectingFace) _determinePosition();
             },
-            icon: Icon(Icons.refresh, color: AppColors.primary),
+            tooltip: 'Refresh location',
+            icon: Icon(Icons.refresh_rounded, color: AppColors.primaryText),
           ),
         ],
       ),
@@ -302,6 +323,7 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(title: Text(_title)),
       body: _isLocationLoading
           ? Center(
@@ -312,19 +334,15 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
                   children: [
                     const AppTabLoader(),
                     const SizedBox(height: 20),
-                    Text(
+                    const Text(
                       'Getting your location…',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade800,
-                      ),
+                      style: AppTextStyles.headingSmall,
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 8),
-                    Text(
+                    const SizedBox(height: 4),
+                    const Text(
                       'Opening camera with location next.',
-                      style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                      style: AppTextStyles.bodySmall,
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -337,29 +355,21 @@ class _TaskSelfieScreenState extends State<TaskSelfieScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _buildSelfieCard(),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
                   _buildLocationCard(),
                   const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: _uploading || _imageFile == null ? null : _uploadSelfie,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton(
+                      onPressed: _uploading || _imageFile == null ? null : _uploadSelfie,
+                      child: _uploading
+                          ? SizedBox(
+                              height: 22,
+                              width: 22,
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
+                            )
+                          : Text(_submitLabel),
                     ),
-                    child: _uploading
-                        ? const SizedBox(
-                            height: 22,
-                            width: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                          )
-                        : Text(
-                            _submitLabel,
-                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
                   ),
                 ],
               ),

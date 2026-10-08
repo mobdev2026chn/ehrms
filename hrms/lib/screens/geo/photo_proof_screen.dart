@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/services/task_service.dart';
@@ -114,24 +116,18 @@ class _PhotoProofScreenState extends State<PhotoProofScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text(
-          'Photo Proof',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-        elevation: 0,
+        title: const Text('Photo Proof'),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -143,31 +139,32 @@ class _PhotoProofScreenState extends State<PhotoProofScreen> {
                   decoration: BoxDecoration(
                     color: _photo != null
                         ? Colors.transparent
-                        : Colors.grey.shade100,
+                        : AppColors.surface,
                     borderRadius: BorderRadius.circular(16),
                     border: Border.all(
                       color: _photo != null
-                          ? AppColors.primary.withOpacity(0.3)
-                          : Colors.grey.shade300,
-                      width: 2,
+                          ? AppColors.primary.withValues(alpha: 0.4)
+                          : const Color(0xFFE2E5EA),
+                      width: 1.5,
                     ),
+                    boxShadow: _photo != null ? null : kSoftCardShadow,
                   ),
                   child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(15),
                     child: _photo != null
                         ? Stack(
                             fit: StackFit.expand,
                             children: [
                               OrientedImage.file(_photo!, fit: BoxFit.cover),
                               Positioned(
-                                bottom: 8,
-                                right: 8,
+                                bottom: 12,
+                                right: 12,
                                 child: Material(
                                   color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(999),
                                   child: InkWell(
                                     onTap: _uploading ? null : _takePhoto,
-                                    borderRadius: BorderRadius.circular(8),
+                                    borderRadius: BorderRadius.circular(999),
                                     child: Padding(
                                       padding: const EdgeInsets.symmetric(
                                         horizontal: 12,
@@ -201,27 +198,29 @@ class _PhotoProofScreenState extends State<PhotoProofScreen> {
                         : Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.camera_alt_rounded,
-                                size: 64,
-                                color: Colors.grey.shade400,
+                              Container(
+                                width: 64,
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary
+                                      .withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.camera_alt_outlined,
+                                  size: 28,
+                                  color: AppColors.primaryText,
+                                ),
                               ),
-                              const SizedBox(height: 12),
-                              Text(
+                              const SizedBox(height: 16),
+                              const Text(
                                 'Upload proof',
-                                style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w600,
-                                  color: Colors.grey.shade700,
-                                ),
+                                style: AppTextStyles.headingSmall,
                               ),
-                              const SizedBox(height: 6),
-                              Text(
+                              const SizedBox(height: 4),
+                              const Text(
                                 'Tap to take photo',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.grey.shade600,
-                                ),
+                                style: AppTextStyles.bodySmall,
                               ),
                             ],
                           ),
@@ -235,20 +234,9 @@ class _PhotoProofScreenState extends State<PhotoProofScreen> {
                 onChanged: (_) {
                   if (mounted) setState(() {});
                 },
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Description',
                   hintText: 'Add a description for this photo...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: Colors.grey.shade300),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(color: AppColors.primary, width: 2),
-                  ),
                 ),
                 enabled: !_uploading,
               ),
@@ -256,38 +244,53 @@ class _PhotoProofScreenState extends State<PhotoProofScreen> {
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Text(
-                    _error!,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppColors.error,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.errorBg,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(
+                          Icons.error_outline_rounded,
+                          size: 18,
+                          color: AppColors.error,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _error!,
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: AppColors.error,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
               if (_photo != null && _descriptionController.text.trim().isNotEmpty)
                 SizedBox(
                   width: double.infinity,
+                  height: 52,
                   child: ElevatedButton.icon(
                     onPressed: _uploading ? null : _uploadPhoto,
                     icon: _uploading
-                        ? const SizedBox(
+                        ? SizedBox(
                             width: 20,
                             height: 20,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: AppColors.onPrimary,
                             ),
                           )
-                        : const Icon(Icons.cloud_upload_rounded, size: 20),
+                        : const Icon(Icons.cloud_upload_outlined, size: 20),
                     label: Text(_uploading ? 'Uploading...' : 'Upload Proof'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
                   ),
                 ),
             ],

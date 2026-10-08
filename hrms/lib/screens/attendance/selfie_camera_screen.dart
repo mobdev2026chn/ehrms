@@ -752,9 +752,12 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       color: _ovalColor,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 15,
-                      letterSpacing: 0.5,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      letterSpacing: 0.3,
+                      shadows: const [
+                        Shadow(color: Colors.black54, blurRadius: 6),
+                      ],
                     ),
                   ),
                 ),
@@ -808,16 +811,21 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       decoration: BoxDecoration(
         color: warn
-            ? Colors.red.shade700.withValues(alpha: 0.92)
-            : Colors.black.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: AppColors.primary.withValues(alpha: 0.5)),
+            ? AppColors.error.withValues(alpha: 0.92)
+            : Colors.black.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: warn
+              ? Colors.white.withValues(alpha: 0.3)
+              : AppColors.primary.withValues(alpha: 0.6),
+        ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           warn
-              ? const Icon(Icons.error_outline, color: Colors.white, size: 16)
+              ? const Icon(Icons.error_outline_rounded,
+                  color: Colors.white, size: 16)
               : Container(
                   width: 8,
                   height: 8,
@@ -834,7 +842,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 11,
-                fontWeight: FontWeight.w800,
+                fontWeight: FontWeight.w700,
                 letterSpacing: 1,
               ),
             ),
@@ -848,20 +856,20 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.85),
-        borderRadius: BorderRadius.circular(20),
+        color: AppColors.primary.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.coffee_rounded, color: Colors.white, size: 14),
-          const SizedBox(width: 7),
+          Icon(Icons.coffee_outlined, color: AppColors.onPrimary, size: 14),
+          const SizedBox(width: 8),
           Text(
             text,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w700,
+            style: TextStyle(
+              color: AppColors.onPrimary,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
               letterSpacing: 0.2,
             ),
           ),
@@ -1003,15 +1011,15 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                         ),
                         decoration: BoxDecoration(
                           color: Colors.black.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.check_circle_rounded,
                               size: 14,
-                              color: AppColors.primary,
+                              color: Color(0xFF34D399),
                             ),
                             const SizedBox(width: 6),
                             const Text(
@@ -1038,7 +1046,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                         ),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(20),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           timeStr,
@@ -1072,12 +1080,21 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                           ),
                           child: Row(
                             children: [
-                              Icon(
-                                Icons.location_on_rounded,
-                                size: 18,
-                                color: AppColors.primary,
+                              Container(
+                                width: 32,
+                                height: 32,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary
+                                      .withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Icon(
+                                  Icons.location_on_outlined,
+                                  size: 18,
+                                  color: AppColors.primaryText,
+                                ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1086,10 +1103,10 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                                     Text(
                                       'CURRENT LOCATION',
                                       style: TextStyle(
-                                        fontSize: 9,
+                                        fontSize: 10,
                                         fontWeight: FontWeight.w700,
-                                        letterSpacing: 0.6,
-                                        color: AppColors.textCaption,
+                                        letterSpacing: 0.8,
+                                        color: AppColors.textSecondary,
                                       ),
                                     ),
                                     const SizedBox(height: 1),
@@ -1114,12 +1131,12 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                 ),
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             Text(
               'Review your selfie',
               style: TextStyle(
                 fontSize: 20,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w700,
                 color: AppColors.textPrimary,
               ),
             ),
@@ -1129,7 +1146,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
@@ -1144,13 +1161,8 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                     icon: const Icon(Icons.camera_alt_outlined),
                     label: const Text('Retake'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.textPrimary,
-                      backgroundColor: AppColors.inputFill,
-                      side: BorderSide.none,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      backgroundColor: AppColors.surface,
+                      minimumSize: const Size(0, 52),
                     ),
                   ),
                 ),
@@ -1158,14 +1170,12 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                 Expanded(
                   child: FilledButton.icon(
                     onPressed: () => Navigator.of(context).pop(File(path)),
-                    icon: const Icon(Icons.check),
+                    icon: const Icon(Icons.check_rounded),
                     label: const Text('Confirm & Submit'),
                     style: FilledButton.styleFrom(
                       backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      foregroundColor: AppColors.onPrimary,
+                      minimumSize: const Size(0, 52),
                     ),
                   ),
                 ),
@@ -1214,7 +1224,13 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    TextButton(onPressed: _retry, child: const Text('Retry')),
+                    TextButton(
+                      onPressed: _retry,
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Retry'),
+                    ),
                     const SizedBox(width: 16),
                     FilledButton(
                       onPressed: _useSystemCamera,

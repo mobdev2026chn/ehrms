@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/lms_service.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../dashboard/dashboard_screen.dart';
@@ -136,14 +137,16 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
   Widget build(BuildContext context) {
     final tabBar = TabBar(
       controller: _tabController,
-      labelColor: AppColors.primary,
-      unselectedLabelColor: Colors.black87,
+      labelColor: AppColors.primaryText,
+      unselectedLabelColor: AppColors.textSecondary,
       indicatorColor: AppColors.primary,
       indicatorSize: TabBarIndicatorSize.tab,
       labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+      labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+      unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
       indicator: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(6),
+        color: AppColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
       ),
       tabs: const [
         Tab(height: 48, iconMargin: EdgeInsets.only(bottom: 2), text: 'Upcoming', icon: Icon(Icons.event_outlined, size: 20)),
@@ -162,25 +165,33 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
     if (widget.embeddedInShell) {
       return Column(
         children: [
-          Container(color: AppColors.surface, child: tabBar),
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
+            ),
+            child: tabBar,
+          ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.refresh),
+                  icon: const Icon(Icons.refresh_rounded),
+                  tooltip: 'Refresh',
                   onPressed: _isLoading ? null : _loadSessions,
                 ),
+                const SizedBox(width: 4),
                 ElevatedButton.icon(
                   onPressed: () => _showScheduleModal(context),
-                  icon: const Icon(Icons.add, size: 18),
+                  icon: const Icon(Icons.add_rounded, size: 18),
                   label: const Text('Schedule Session'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 44),
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
+                      horizontal: 16,
                       vertical: 8,
                     ),
                   ),
@@ -196,26 +207,22 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
     return Scaffold(
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text(
-          'My Live Sessions',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('My Live Sessions'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh',
             onPressed: _isLoading ? null : _loadSessions,
           ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: ElevatedButton.icon(
               onPressed: () => _showScheduleModal(context),
-              icon: const Icon(Icons.add, size: 18),
+              icon: const Icon(Icons.add_rounded, size: 18),
               label: const Text('Schedule Session'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
               ),
             ),
           ),
@@ -247,10 +254,10 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
         slivers: [
           const SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.all(16),
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Text(
                 'Join interactive classrooms. Tap a session to see details.',
-                style: TextStyle(color: Colors.grey),
+                style: AppTextStyles.bodySmall,
               ),
             ),
           ),
@@ -260,15 +267,23 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.video_call_outlined,
-                      size: 64,
-                      color: Colors.grey[400],
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        Icons.video_call_outlined,
+                        size: 28,
+                        color: AppColors.primaryText,
+                      ),
                     ),
                     const SizedBox(height: 16),
-                    Text(
+                    const Text(
                       'No sessions',
-                      style: TextStyle(color: Colors.grey[600]),
+                      style: AppTextStyles.headingSmall,
                     ),
                   ],
                 ),
@@ -395,7 +410,7 @@ class _LmsLiveSessionsScreenState extends State<LmsLiveSessionsScreen>
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
             child: const Text('Delete'),
           ),
         ],
@@ -487,7 +502,7 @@ class _SessionCard extends StatelessWidget {
     final recordingUrl = session['recordingUrl']?.toString();
 
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      margin: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -498,29 +513,31 @@ class _SessionCard extends StatelessWidget {
                 Expanded(
                   child: Text(
                     session['title'] ?? 'Session',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 16,
-                    ),
+                    style: AppTextStyles.headingSmall,
                   ),
                 ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
+                    horizontal: 10,
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
                     color: isLive
-                        ? Colors.green
+                        ? AppColors.successBg
                         : isUpcoming
-                        ? Colors.blue
-                        : Colors.grey,
-                    borderRadius: BorderRadius.circular(8),
+                        ? AppColors.infoBg
+                        : AppColors.inputFill,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     hasLeft && isLive ? 'You left' : status,
-                    style: const TextStyle(
-                      color: Colors.white,
+                    style: TextStyle(
+                      color: isLive
+                          ? AppColors.success
+                          : isUpcoming
+                          ? AppColors.info
+                          : AppColors.textSecondary,
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
                     ),
@@ -528,11 +545,15 @@ class _SessionCard extends StatelessWidget {
                 ),
                 if (_isCreator) ...[
                   IconButton(
-                    icon: const Icon(Icons.edit_outlined),
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    tooltip: 'Edit',
+                    color: AppColors.textSecondary,
                     onPressed: onEdit,
                   ),
                   IconButton(
-                    icon: const Icon(Icons.delete_outline),
+                    icon: const Icon(Icons.delete_outline_rounded, size: 20),
+                    tooltip: 'Delete',
+                    color: AppColors.error,
                     onPressed: onDelete,
                   ),
                 ],
@@ -542,37 +563,46 @@ class _SessionCard extends StatelessWidget {
             if (d != null)
               Row(
                 children: [
-                  const Icon(Icons.schedule, size: 16),
+                  const Icon(Icons.schedule_rounded, size: 16, color: AppColors.textSecondary),
                   const SizedBox(width: 8),
-                  Text(DateFormat('d MMM yyyy · h:mm a').format(d)),
+                  Text(
+                    DateFormat('d MMM yyyy · h:mm a').format(d),
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  ),
                 ],
               ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Row(
               children: [
-                const Icon(Icons.person_outline, size: 16),
+                const Icon(Icons.person_outline_rounded, size: 16, color: AppColors.textSecondary),
                 const SizedBox(width: 8),
                 Flexible(
                   child: Text(
                     host.toString(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ),
                 const SizedBox(width: 16),
-                Text('${session['duration'] ?? 60} min'),
+                const Icon(Icons.timer_outlined, size: 16, color: AppColors.textSecondary),
+                const SizedBox(width: 4),
+                Text(
+                  '${session['duration'] ?? 60} min',
+                  style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                ),
               ],
             ),
             if (session['agenda']?.toString().isNotEmpty == true) ...[
               const SizedBox(height: 8),
               Text(
                 'Agenda: ${session['agenda']}',
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: const TextStyle(fontSize: 13, height: 1.4, color: AppColors.textSecondary),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -584,8 +614,7 @@ class _SessionCard extends StatelessWidget {
                       icon: const Icon(Icons.play_circle_outlined, size: 18),
                       label: const Text('Start Session'),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
+                        minimumSize: const Size(0, 44),
                       ),
                     ),
                   if (onCancelSession != null)
@@ -594,8 +623,9 @@ class _SessionCard extends StatelessWidget {
                       icon: const Icon(Icons.cancel_outlined, size: 18),
                       label: const Text('Cancel Session'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
-                        side: const BorderSide(color: Colors.red),
+                        foregroundColor: AppColors.error,
+                        side: BorderSide(color: AppColors.error.withValues(alpha: 0.5), width: 1.2),
+                        minimumSize: const Size(0, 44),
                       ),
                     ),
                 ],
@@ -605,28 +635,29 @@ class _SessionCard extends StatelessWidget {
                     icon: const Icon(Icons.stop_circle_outlined, size: 18),
                     label: const Text('End Session'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.brand,
-                      side: const BorderSide(color: AppColors.brand),
+                      foregroundColor: AppColors.brandDark,
+                      side: const BorderSide(color: AppColors.brand, width: 1.2),
+                      minimumSize: const Size(0, 44),
                     ),
                   ),
                 if ((isUpcoming || isLive) && (!_isCreator || isUpcoming))
                   ElevatedButton.icon(
                     onPressed: onJoin,
-                    icon: const Icon(Icons.video_call, size: 18),
+                    icon: const Icon(Icons.video_call_rounded, size: 18),
                     label: Text(isLive ? 'Join Now' : 'Join'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 44),
                     ),
                   ),
                 if (isLive && !_isCreator && !hasLeft && onLeave != null)
                   OutlinedButton.icon(
                     onPressed: onLeave,
-                    icon: const Icon(Icons.logout, size: 18),
+                    icon: const Icon(Icons.logout_rounded, size: 18),
                     label: const Text('Leave Session'),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.red,
-                      side: const BorderSide(color: Colors.red),
+                      foregroundColor: AppColors.error,
+                      side: BorderSide(color: AppColors.error.withValues(alpha: 0.5), width: 1.2),
+                      minimumSize: const Size(0, 44),
                     ),
                   ),
                 if (isEnded &&
@@ -637,6 +668,9 @@ class _SessionCard extends StatelessWidget {
                     onPressed: onWatchRecording,
                     icon: const Icon(Icons.video_library_outlined, size: 18),
                     label: const Text('Watch Recording'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 44),
+                    ),
                   ),
               ],
             ),
@@ -769,24 +803,24 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
           controller: scrollController,
           child: Padding(
             padding: EdgeInsets.only(
-              left: 16,
-              right: 16,
-              bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+              left: 20,
+              right: 20,
+              bottom: MediaQuery.of(context).viewInsets.bottom + 20,
             ),
             child: Form(
               key: _formKey,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   const Text(
                     'Schedule Live Session',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                    style: AppTextStyles.headingLarge,
                   ),
-                  const SizedBox(height: 8),
-                  Text(
+                  const SizedBox(height: 4),
+                  const Text(
                     'Create and manage external meetings',
-                    style: TextStyle(color: Colors.grey[600]),
+                    style: AppTextStyles.bodySmall,
                   ),
                   const SizedBox(height: 24),
                   TextFormField(
@@ -794,7 +828,6 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                     decoration: const InputDecoration(
                       labelText: 'Session Title *',
                       hintText: 'e.g. Q3 Sales Strategy',
-                      border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
                         (v == null || v.trim().isEmpty) ? 'Required' : null,
@@ -804,7 +837,6 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                     initialValue: _sessionType,
                     decoration: const InputDecoration(
                       labelText: 'Session Type',
-                      border: OutlineInputBorder(),
                     ),
                     items: ['Normal Session', 'Training', 'Assessment']
                         .map((e) => DropdownMenuItem(value: e, child: Text(e)))
@@ -819,7 +851,6 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                     decoration: const InputDecoration(
                       labelText: 'Agenda',
                       hintText: 'e.g. 1. Intro 2. Demo 3. Q&A',
-                      border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -828,7 +859,6 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                     decoration: const InputDecoration(
                       labelText: 'Meeting Link *',
                       hintText: 'https://meet.google.com/...',
-                      border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
                         (v == null || v.trim().isEmpty) ? 'Required' : null,
@@ -851,7 +881,7 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                               setState(() => _selectedDate = date);
                             }
                           },
-                          icon: const Icon(Icons.calendar_today),
+                          icon: const Icon(Icons.calendar_today_outlined, size: 18),
                           label: Text(
                             _selectedDate != null
                                 ? DateFormat(
@@ -873,7 +903,7 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                               setState(() => _selectedTime = time);
                             }
                           },
-                          icon: const Icon(Icons.access_time),
+                          icon: const Icon(Icons.access_time_rounded, size: 18),
                           label: Text(
                             _selectedTime != null
                                 ? _selectedTime!.format(context)
@@ -886,10 +916,11 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                   const SizedBox(height: 16),
                   Row(
                     children: [
-                      const Text('Duration (minutes):'),
+                      const Text('Duration (minutes):', style: AppTextStyles.label),
                       const SizedBox(width: 12),
                       DropdownButton<int>(
                         value: _duration,
+                        borderRadius: BorderRadius.circular(12),
                         items: [30, 60, 90, 120]
                             .map(
                               (e) => DropdownMenuItem(
@@ -917,17 +948,13 @@ class _ScheduleSessionSheetState extends State<_ScheduleSessionSheet> {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: _saving ? null : _save,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                          ),
                           child: _saving
-                              ? const SizedBox(
+                              ? SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.white,
+                                    color: AppColors.onPrimary,
                                   ),
                                 )
                               : const Text('Schedule Session'),
@@ -1008,9 +1035,9 @@ class _LeaveSessionSheetState extends State<_LeaveSessionSheet> {
         return SingleChildScrollView(
           controller: scrollController,
           padding: EdgeInsets.only(
-            left: 16,
-            right: 16,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+            left: 20,
+            right: 20,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 20,
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1018,23 +1045,28 @@ class _LeaveSessionSheetState extends State<_LeaveSessionSheet> {
               const SizedBox(height: 16),
               Row(
                 children: [
-                  Icon(Icons.logout, size: 28, color: Colors.red[700]),
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.errorBg,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.logout_rounded, size: 22, color: AppColors.error),
+                  ),
                   const SizedBox(width: 12),
                   const Expanded(
                     child: Text(
                       'Leave Live Session',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
+              const SizedBox(height: 8),
+              const Text(
                 'Before leaving, please share your session feedback.',
-                style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                style: AppTextStyles.bodySmall,
               ),
               const SizedBox(height: 20),
               TextFormField(
@@ -1042,7 +1074,6 @@ class _LeaveSessionSheetState extends State<_LeaveSessionSheet> {
                 decoration: const InputDecoration(
                   labelText: 'Session Summary / What you learned *',
                   hintText: 'Summarize key takeaways...',
-                  border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
                 maxLines: 4,
@@ -1053,31 +1084,26 @@ class _LeaveSessionSheetState extends State<_LeaveSessionSheet> {
                 decoration: const InputDecoration(
                   labelText: 'Issues faced (optional)',
                   hintText: 'Audio / Video / Content issues...',
-                  border: OutlineInputBorder(),
                   alignLabelWithHint: true,
                 ),
                 maxLines: 2,
               ),
               const SizedBox(height: 16),
-              Text(
+              const Text(
                 'Session Rating (1–5 stars)',
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey[700],
-                ),
+                style: AppTextStyles.label,
               ),
               const SizedBox(height: 8),
               Row(
                 children: List.generate(5, (i) {
                   final star = i + 1;
                   return Padding(
-                    padding: const EdgeInsets.only(right: 8),
+                    padding: const EdgeInsets.only(right: 4),
                     child: IconButton(
                       icon: Icon(
                         _rating != null && star <= _rating!
-                            ? Icons.star
-                            : Icons.star_border,
+                            ? Icons.star_rounded
+                            : Icons.star_outline_rounded,
                         size: 32,
                         color: AppColors.brand,
                       ),
@@ -1104,7 +1130,7 @@ class _LeaveSessionSheetState extends State<_LeaveSessionSheet> {
                     child: ElevatedButton(
                       onPressed: _submitting ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
+                        backgroundColor: AppColors.error,
                         foregroundColor: Colors.white,
                       ),
                       child: _submitting

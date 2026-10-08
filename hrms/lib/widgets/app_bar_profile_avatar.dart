@@ -70,7 +70,7 @@ class _AppBarProfileAvatarState extends State<AppBarProfileAvatar> {
       quarterTurns: (showPhoto && _needsFlip) ? 2 : 0,
       child: CircleAvatar(
         radius: widget.radius,
-        backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+        backgroundColor: AppColors.primary.withValues(alpha: 0.12),
         backgroundImage:
             showPhoto ? CachedNetworkImageProvider(_photoUrl!) : null,
         onBackgroundImageError: showPhoto
@@ -81,7 +81,7 @@ class _AppBarProfileAvatarState extends State<AppBarProfileAvatar> {
         child: showPhoto
             ? null
             : Icon(Icons.person_rounded,
-                color: AppColors.primary, size: widget.radius * 1.22),
+                color: AppColors.primaryText, size: widget.radius * 1.22),
       ),
     );
 

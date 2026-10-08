@@ -6,7 +6,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/staff_interaction_service.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -83,17 +86,11 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: kInteractionInk,
-        centerTitle: true,
-        title: const Text('Announcements', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: const Text('Announcements'),
         actions: [
           PopupMenuButton<_Sort>(
             tooltip: 'Sort',
@@ -124,25 +121,25 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
       counts[a.status] = (counts[a.status] ?? 0) + 1;
     }
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(16, 6, 16, 10),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       child: Column(
         children: [
           TextField(
             onChanged: (v) => setState(() => _search = v),
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               hintText: 'Search announcements...',
-              prefixIcon: const Icon(Icons.search_rounded, size: 20),
+              prefixIcon: Icon(Icons.search_rounded, size: 20),
               isDense: true,
-              filled: true,
-              fillColor: const Color(0xFFF1F5F9),
-              contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              contentPadding: EdgeInsets.symmetric(vertical: 12),
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           SizedBox(
-            height: 34,
+            height: 36,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _tabs.length,
@@ -156,16 +153,18 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                   onSelected: (_) => setState(() => _tab = t),
                   showCheckmark: false,
                   visualDensity: VisualDensity.compact,
-                  selectedColor: kInteractionAccent,
-                  backgroundColor: const Color(0xFFF1F5F9),
-                  side: BorderSide.none,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  selectedColor: AppColors.primary,
+                  backgroundColor: AppColors.surface,
+                  side: BorderSide(
+                    color: selected ? AppColors.primary : const Color(0xFFE2E5EA),
+                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
                   label: Text(
                     n > 0 ? '$t  $n' : t,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: selected ? Colors.white : kInteractionInk,
+                    style: AppTextStyles.caption.copyWith(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? AppColors.onPrimary : AppColors.textPrimary,
                     ),
                   ),
                 );
@@ -223,11 +222,15 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
   Widget _statusPill(String status) {
     final (bg, fg) = _statusColors[status] ?? _statusColors['Draft']!;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
       child: Text(
         status.toUpperCase(),
-        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: fg, letterSpacing: 0.4),
+        style: AppTextStyles.caption.copyWith(
+          fontWeight: FontWeight.w600,
+          color: fg,
+          letterSpacing: 0.3,
+        ),
       ),
     );
   }
@@ -247,10 +250,10 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: kInteractionLine),
-          boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 10, offset: Offset(0, 3))],
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: kSoftCardShadow,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -261,29 +264,40 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                 child: Image(image: cover, fit: BoxFit.cover, errorBuilder: (_, _, _) => const SizedBox()),
               ),
             Padding(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.campaign_rounded, size: 16, color: kInteractionAccent),
-                      const SizedBox(width: 6),
+                      Container(
+                        width: 28,
+                        height: 28,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(Icons.campaign_rounded, size: 16, color: AppColors.primaryText),
+                      ),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           a.audience.isNotEmpty ? a.audience : (a.from.isNotEmpty ? a.from : 'Announcement'),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: kInteractionMuted),
+                          style: AppTextStyles.caption.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textSecondary,
+                          ),
                         ),
                       ),
                       _statusPill(a.status),
                     ],
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Text(
                     a.title,
-                    style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: kInteractionInk, height: 1.3),
+                    style: AppTextStyles.headingSmall,
                   ),
                   if (a.subject.isNotEmpty || a.description.isNotEmpty) ...[
                     const SizedBox(height: 4),
@@ -291,28 +305,33 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
                       a.subject.isNotEmpty ? a.subject : a.description,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13, color: kInteractionMuted, height: 1.4),
+                      style: AppTextStyles.bodySmall,
                     ),
                   ],
+                  const SizedBox(height: 12),
+                  const Divider(height: 1),
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      const Icon(Icons.event_outlined, size: 14, color: kInteractionMuted),
+                      const Icon(Icons.event_outlined, size: 14, color: AppColors.textSecondary),
                       Text(
                         ' ${a.rawPublishDate != null ? DateFormat('d MMM yyyy').format(a.rawPublishDate!.toLocal()) : '—'}',
-                        style: const TextStyle(fontSize: 12, color: kInteractionMuted),
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                       ),
                       const Spacer(),
                       if (a.attachments.isNotEmpty) ...[
-                        const Icon(Icons.attach_file_rounded, size: 14, color: kInteractionMuted),
-                        Text(' ${a.attachments.length}', style: const TextStyle(fontSize: 12, color: kInteractionMuted)),
+                        const Icon(Icons.attach_file_rounded, size: 14, color: AppColors.textSecondary),
+                        Text(
+                          ' ${a.attachments.length}',
+                          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                        ),
                         const SizedBox(width: 12),
                       ],
                       if (myComments > 0) ...[
-                        const Icon(Icons.chat_bubble_outline_rounded, size: 14, color: kInteractionMuted),
+                        const Icon(Icons.chat_bubble_outline_rounded, size: 14, color: AppColors.textSecondary),
                         Text(
                           ' $myComments${replies > 0 ? ' · $replies repl${replies == 1 ? 'y' : 'ies'}' : ''}',
-                          style: const TextStyle(fontSize: 12, color: kInteractionMuted),
+                          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                         ),
                       ],
                     ],

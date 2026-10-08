@@ -21,11 +21,13 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../services/interaction_service.dart';
 import '../../services/interaction_socket_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/interaction_avatar_theme.dart';
+import '../../widgets/app_card.dart';
 import 'interaction_poll_detail_screen.dart';
 
 class InteractionChatThreadScreen extends StatefulWidget {
@@ -57,9 +59,8 @@ class InteractionChatThreadScreen extends StatefulWidget {
 }
 
 const Color _kChatHeaderIconGrey = Color(0xFF4A4A4A);
-/// Web / WhatsApp-style outgoing bubble (light mint green).
-const Color _kChatSentBubble = Color(0xFFDCF8C6);
 const Color _kChatReceivedBubble = Color(0xFFFFFFFF);
+const Color _kChatHairline = Color(0xFFECEEF1);
 OverlayEntry? _chatTopBannerEntry;
 Timer? _chatTopBannerTimer;
 
@@ -85,11 +86,11 @@ void showChatTopBanner(BuildContext context, String message) {
         child: Container(
           constraints: const BoxConstraints(minHeight: 64),
           decoration: BoxDecoration(
-            color: const Color(0xFFF1B434),
+            color: AppColors.primary,
             borderRadius: BorderRadius.circular(16),
             boxShadow: const [
               BoxShadow(
-                color: Color(0x33000000),
+                color: Color(0x1F000000),
                 blurRadius: 16,
                 offset: Offset(0, 6),
               ),
@@ -109,9 +110,9 @@ void showChatTopBanner(BuildContext context, String message) {
                     maxLines: 6,
                     overflow: TextOverflow.fade,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
+                    style: TextStyle(
+                      color: AppColors.onPrimary,
+                      fontWeight: FontWeight.w600,
                       fontSize: 14,
                     ),
                   ),
@@ -122,18 +123,18 @@ void showChatTopBanner(BuildContext context, String message) {
                 child: Container(
                   width: 26,
                   height: 26,
-                  decoration: const BoxDecoration(
-                    color: Color(0x33FFFFFF),
+                  decoration: BoxDecoration(
+                    color: AppColors.onPrimary.withValues(alpha: 0.14),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.notifications_none, size: 16, color: Colors.white),
+                  child: Icon(Icons.notifications_none_rounded, size: 16, color: AppColors.onPrimary),
                 ),
               ),
               Align(
                 alignment: Alignment.centerRight,
                 child: GestureDetector(
                   onTap: _hideChatTopBanner,
-                  child: const Icon(Icons.close, size: 18, color: Colors.white),
+                  child: Icon(Icons.close_rounded, size: 18, color: AppColors.onPrimary),
                 ),
               ),
             ],
@@ -614,7 +615,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                 const Expanded(
                                   child: Text(
                                     'Group settings',
-                                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700),
+                                    style: AppTextStyles.headingLarge,
                                   ),
                                 ),
                                 IconButton(
@@ -627,10 +628,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                               alignment: Alignment.centerLeft,
                               child: Text(
                                 'Profile, members, and permissions — same actions as before, organized in tabs.',
-                                style: TextStyle(
-                                  color: Colors.blueGrey.shade500,
-                                  fontSize: 13,
-                                ),
+                                style: AppTextStyles.bodySmall,
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -686,11 +684,6 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                       SizedBox(
                                         width: double.infinity,
                                         child: FilledButton(
-                                          style: FilledButton.styleFrom(
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(6),
-                                            ),
-                                          ),
                                         onPressed: savingName
                                             ? null
                                             : () async {
@@ -772,8 +765,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                                         decoration: BoxDecoration(
                                           color: Colors.white,
-                                          borderRadius: BorderRadius.circular(10),
-                                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                                          borderRadius: BorderRadius.circular(12),
+                                          border: Border.all(color: const Color(0xFFECEEF1)),
                                         ),
                                         child: Row(
                                           children: [
@@ -790,31 +783,36 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                               child: Column(
                                                 crossAxisAlignment: CrossAxisAlignment.start,
                                                 children: [
-                                                  Text(name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                                  Text(
+                                                    name,
+                                                    maxLines: 1,
+                                                    overflow: TextOverflow.ellipsis,
+                                                    style: const TextStyle(fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                                                  ),
                                                   const SizedBox(height: 2),
                                                   Text(
                                                     '${code.isNotEmpty ? '$code  ' : ''}${email.isNotEmpty ? email : '-'}',
-                                                    style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12),
+                                                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                                                     maxLines: 1,
                                                     overflow: TextOverflow.ellipsis,
                                                   ),
                                                   const SizedBox(height: 2),
                                                   Text(
                                                     role == 'admin' ? 'Admin' : 'Member',
-                                                    style: TextStyle(color: Colors.blueGrey.shade500, fontSize: 11),
+                                                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                                                   ),
                                                   if (role == 'admin') ...[
                                                     const SizedBox(height: 4),
                                                     Container(
                                                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                                       decoration: BoxDecoration(
-                                                        color: const Color(0xFFFFF4D9),
+                                                        color: AppColors.primary.withValues(alpha: 0.12),
                                                         borderRadius: BorderRadius.circular(999),
                                                       ),
                                                       child: Text(
                                                         'group admin',
                                                         style: TextStyle(
-                                                          color: AppColors.brandDark,
+                                                          color: AppColors.primaryText,
                                                           fontSize: 11,
                                                           fontWeight: FontWeight.w600,
                                                         ),
@@ -857,7 +855,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                               }
                                                             },
                                                       style: TextButton.styleFrom(
-                                                        foregroundColor: const Color(0xFFE4A115),
+                                                        foregroundColor: AppColors.primaryText,
                                                         textStyle: const TextStyle(fontWeight: FontWeight.w600),
                                                       ),
                                                       child: const Text('Make admin'),
@@ -886,7 +884,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                               }
                                                             },
                                                       style: TextButton.styleFrom(
-                                                        foregroundColor: const Color(0xFFE4A115),
+                                                        foregroundColor: AppColors.primaryText,
                                                         textStyle: const TextStyle(fontWeight: FontWeight.w600),
                                                       ),
                                                       child: const Text('Make member'),
@@ -913,8 +911,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                             }
                                                           },
                                                     style: TextButton.styleFrom(
-                                                      foregroundColor: const Color(0xFFFF4D4F),
-                                                      textStyle: const TextStyle(fontWeight: FontWeight.w500),
+                                                      foregroundColor: AppColors.error,
+                                                      textStyle: const TextStyle(fontWeight: FontWeight.w600),
                                                     ),
                                                     child: const Text('Remove'),
                                                   ),
@@ -930,7 +928,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                     children: [
                                       Text(
                                         'People already in this group are hidden here. Search by name, email, or employee code.',
-                                        style: TextStyle(color: Colors.blueGrey.shade500),
+                                        style: AppTextStyles.bodySmall,
                                       ),
                                       const SizedBox(height: 8),
                                       TextField(
@@ -968,8 +966,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
                                               decoration: BoxDecoration(
                                                 color: Colors.white,
-                                                borderRadius: BorderRadius.circular(10),
-                                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                                                borderRadius: BorderRadius.circular(12),
+                                                border: Border.all(color: const Color(0xFFECEEF1)),
                                               ),
                                               child: Row(
                                                 children: [
@@ -1006,7 +1004,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                         const SizedBox(height: 2),
                                                         Text(
                                                           '${code.isNotEmpty ? '$code  ' : ''}${email.isNotEmpty ? email : '-'}',
-                                                          style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 12),
+                                                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
                                                           maxLines: 1,
                                                           overflow: TextOverflow.ellipsis,
                                                         ),
@@ -1022,11 +1020,6 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                       SizedBox(
                                         width: double.infinity,
                                         child: FilledButton(
-                                          style: FilledButton.styleFrom(
-                                            shape: RoundedRectangleBorder(
-                                              borderRadius: BorderRadius.circular(6),
-                                            ),
-                                          ),
                                         onPressed: selectedAddIds.isEmpty
                                             ? null
                                             : () async {
@@ -1118,11 +1111,6 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                         SizedBox(
                                           width: double.infinity,
                                           child: FilledButton(
-                                            style: FilledButton.styleFrom(
-                                              shape: RoundedRectangleBorder(
-                                                borderRadius: BorderRadius.circular(6),
-                                              ),
-                                            ),
                                           onPressed: savingBroadcast
                                               ? null
                                               : () async {
@@ -1595,13 +1583,13 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
             child: Material(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(20),
               color: Colors.white,
               clipBehavior: Clip.antiAlias,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   _attachRow(
                     icon: Icons.description_rounded,
                     iconBg: Colors.purple,
@@ -1629,7 +1617,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                       _pickAudioFile();
                     },
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                 ],
               ),
             ),
@@ -1646,11 +1634,18 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     required VoidCallback onTap,
   }) {
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: iconBg,
-        child: Icon(icon, color: Colors.white, size: 22),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      leading: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: iconBg.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Icon(icon, color: iconBg, size: 22),
       ),
-      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15)),
+      title: Text(label, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 15, color: AppColors.textPrimary)),
+      trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textCaption),
       onTap: onTap,
     );
   }
@@ -1869,18 +1864,15 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       padding: const EdgeInsets.symmetric(vertical: 10),
       child: Center(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.96),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade300),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4, offset: const Offset(0, 1)),
-            ],
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: _kChatHairline),
           ),
           child: Text(
             _dayPillLabel(dt),
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade700, fontWeight: FontWeight.w500),
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary, fontWeight: FontWeight.w600),
           ),
         ),
       ),
@@ -1914,14 +1906,14 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
-              color: const Color(0xFFF6F3C6),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: const Color(0xFFEAE3A4)),
+              color: AppColors.warningBg,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.brandBorder),
             ),
             child: Text(
               msg['messageContent']?.toString() ?? '',
               textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade800),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
             ),
           ),
         ),
@@ -1932,8 +1924,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     final timeStr = sent == null ? '' : DateFormat.jm().format(sent);
     final read = msg['readStatus'] == true;
 
-    final bubbleColor = isMine ? _kChatSentBubble : _kChatReceivedBubble;
-    final textColor = const Color(0xFF0F172A);
+    final bubbleColor = isMine ? AppColors.primary : _kChatReceivedBubble;
+    final textColor = isMine ? AppColors.onPrimary : AppColors.textPrimary;
     final parsedReply = _splitReplyPrefix(msg['messageContent']?.toString() ?? '');
 
     Widget inner;
@@ -2078,7 +2070,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       default:
         inner = _linkifiedText(
           parsedReply.body,
-          style: TextStyle(color: textColor, fontSize: 15, height: 1.35),
+          style: TextStyle(color: textColor, fontSize: 15, height: 1.4),
+          linkColor: isMine ? AppColors.onPrimary : AppColors.info,
         );
     }
 
@@ -2089,19 +2082,13 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: type == 'poll' ? Colors.transparent : bubbleColor,
-        borderRadius: BorderRadius.circular(12),
-        border: type == 'poll'
-            ? null
-            : Border.all(color: isMine ? const Color(0xFFB2DFDB).withValues(alpha: 0.5) : Colors.grey.shade200),
-        boxShadow: type == 'poll'
-            ? null
-            : [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
-              ],
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(16),
+          topRight: const Radius.circular(16),
+          bottomLeft: Radius.circular(isMine ? 16 : 4),
+          bottomRight: Radius.circular(isMine ? 4 : 16),
+        ),
+        border: type == 'poll' || isMine ? null : Border.all(color: _kChatHairline),
       ),
       child: type == 'poll'
           ? inner
@@ -2114,10 +2101,10 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Text(
                       _senderLabel(msg),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1565C0),
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primaryText,
                       ),
                     ),
                   ),
@@ -2129,10 +2116,10 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                       margin: const EdgeInsets.only(bottom: 8),
                       padding: const EdgeInsets.fromLTRB(10, 7, 8, 7),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.6),
+                        color: isMine ? Colors.white.withValues(alpha: 0.78) : AppColors.background,
                         borderRadius: BorderRadius.circular(8),
                         border: Border(
-                          left: BorderSide(color: AppColors.brand, width: 3),
+                          left: BorderSide(color: isMine ? AppColors.primaryText : AppColors.primary, width: 3),
                         ),
                       ),
                       child: Column(
@@ -2142,14 +2129,14 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                             parsedReply.sender!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.brand),
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primaryText),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             parsedReply.snippet!,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11, color: Colors.grey.shade800),
+                            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                           ),
                         ],
                       ),
@@ -2169,11 +2156,11 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             Icon(
               Icons.done_all,
               size: 15,
-              color: read ? const Color(0xFF53BDEB) : Colors.grey.shade500,
+              color: read ? AppColors.info : AppColors.textCaption,
             ),
             const SizedBox(width: 4),
           ],
-          Text(timeStr, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+          Text(timeStr, style: AppTextStyles.caption.copyWith(fontSize: 11, color: AppColors.textSecondary)),
         ],
       ),
     );
@@ -2200,7 +2187,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     );
 
     final row = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 12),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         mainAxisAlignment: isMine ? MainAxisAlignment.end : MainAxisAlignment.start,
@@ -2225,7 +2212,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           context: context,
           builder: (ctx) => SafeArea(
             child: ListTile(
-              leading: const Icon(Icons.reply),
+              leading: const Icon(Icons.reply_rounded),
               title: const Text('Reply'),
               onTap: () {
                 Navigator.pop(ctx);
@@ -2267,7 +2254,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     if (widget.isGroup && _memberCount != null) {
       return Text(
         '$_memberCount members',
-        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
       );
     }
     if (!widget.isGroup && widget.peerIsOnline != null) {
@@ -2281,7 +2268,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             width: 8,
             height: 8,
             decoration: BoxDecoration(
-              color: online ? const Color(0xFF16A34A) : Colors.grey.shade500,
+              color: online ? AppColors.success : AppColors.textCaption,
               shape: BoxShape.circle,
             ),
           ),
@@ -2294,7 +2281,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w500,
-                color: online ? const Color(0xFF16A34A) : Colors.grey.shade600,
+                color: online ? AppColors.success : AppColors.textSecondary,
               ),
             ),
           ),
@@ -2310,20 +2297,35 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
       return Center(
         child: Text(
           'Search messages…',
-          style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
+          style: AppTextStyles.bodySmall,
         ),
       );
     }
     final filtered = _searchFiltered;
     if (filtered.isEmpty) {
       return Center(
-        child: Text('No matches', style: TextStyle(color: Colors.grey.shade600)),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.search_off_rounded, size: 28, color: AppColors.primaryText),
+            ),
+            const SizedBox(height: 12),
+            const Text('No matches', style: AppTextStyles.headingSmall),
+          ],
+        ),
       );
     }
     return ListView.separated(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: filtered.length,
-      separatorBuilder: (_, __) => Divider(height: 1, color: Colors.grey.shade200),
+      separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (ctx, i) {
         final m = filtered[i];
         final name = _senderLabel(m);
@@ -2336,14 +2338,20 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
           leading: CircleAvatar(
             backgroundColor: bg,
             radius: 20,
-            child: Text(letter, style: TextStyle(color: fg, fontWeight: FontWeight.bold, fontSize: 14)),
+            child: Text(letter, style: TextStyle(color: fg, fontWeight: FontWeight.w600, fontSize: 14)),
           ),
           title: Text(
             m['messageContent']?.toString() ?? m['fileName']?.toString() ?? '(media)',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textPrimary),
           ),
-          subtitle: Text('$name · $timeStr', maxLines: 1, overflow: TextOverflow.ellipsis),
+          subtitle: Text(
+            '$name · $timeStr',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+          ),
         );
       },
     );
@@ -2363,6 +2371,11 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
     unawaited(_audioRecorder.dispose());
     super.dispose();
   }
+
+  BoxDecoration _sendTileDecoration() => BoxDecoration(
+        color: AppColors.primary,
+        borderRadius: BorderRadius.circular(14),
+      );
 
   String _fmtMmSs(Duration d) {
     final total = d.inSeconds;
@@ -2407,16 +2420,14 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
         }
       },
       child: Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        iconTheme: const IconThemeData(color: _kChatHeaderIconGrey),
+        centerTitle: false,
         leadingWidth: 44,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
           color: _kChatHeaderIconGrey,
+          tooltip: 'Back',
           onPressed: () {
             if (_searchOpen) {
               _closeMessageSearch();
@@ -2441,31 +2452,34 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                   fallbackBg: letterBg,
                   fallbackFg: letterFg,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: _searchOpen
                       ? Container(
                           height: 40,
-                          padding: const EdgeInsets.only(left: 4, right: 12),
+                          padding: const EdgeInsets.only(left: 10, right: 12),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(22),
-                            border: Border.all(color: Colors.grey.shade400),
+                            color: AppColors.background,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: const Color(0xFFE2E5EA)),
                           ),
                           child: Row(
                             children: [
-                              Icon(Icons.search, color: Colors.grey.shade600, size: 22),
+                              const Icon(Icons.search_rounded, color: AppColors.textSecondary, size: 20),
                               Expanded(
                                 child: TextField(
                                   controller: _searchQuery,
                                   focusNode: _searchFocus,
-                                  style: const TextStyle(fontSize: 15, color: Color(0xFF0F172A)),
-                                  decoration: InputDecoration(
+                                  style: const TextStyle(fontSize: 15, color: AppColors.textPrimary),
+                                  decoration: const InputDecoration(
                                     isDense: true,
+                                    filled: false,
                                     border: InputBorder.none,
+                                    enabledBorder: InputBorder.none,
+                                    focusedBorder: InputBorder.none,
                                     hintText: 'Search messages...',
-                                    hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 15),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                    hintStyle: TextStyle(color: AppColors.textCaption, fontSize: 15),
+                                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                                   ),
                                   onChanged: (_) => setState(() {}),
                                 ),
@@ -2484,7 +2498,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                               style: const TextStyle(
                                 fontWeight: FontWeight.w600,
                                 fontSize: 16,
-                                color: Color(0xFF0F172A),
+                                color: AppColors.textPrimary,
                               ),
                             ),
                             _subtitleRow(),
@@ -2493,7 +2507,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                 ),
                 if (_searchOpen)
                   IconButton(
-                    icon: Icon(Icons.close, size: 20, color: Colors.grey.shade700),
+                    icon: const Icon(Icons.close_rounded, size: 20, color: _kChatHeaderIconGrey),
                     onPressed: () {
                       if (_searchQuery.text.isEmpty) {
                         _closeMessageSearch();
@@ -2506,13 +2520,15 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                   )
                 else
                   IconButton(
-                    icon: Icon(Icons.search, color: Colors.grey.shade700),
+                    icon: const Icon(Icons.search_rounded, color: _kChatHeaderIconGrey),
                     onPressed: _openMessageSearch,
+                    tooltip: 'Search messages',
                   ),
                 if (!_searchOpen && _canManageGroupSettings)
                   IconButton(
-                    icon: Icon(Icons.settings, color: Colors.grey.shade700),
+                    icon: const Icon(Icons.settings_outlined, color: _kChatHeaderIconGrey),
                     onPressed: _openGroupSettingsSheet,
+                    tooltip: 'Group settings',
                   ),
               ],
             ),
@@ -2526,12 +2542,12 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
             child: Image.asset(
               AppConstants.interactionChatBackgroundAsset,
               fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => ColoredBox(color: Colors.grey.shade200),
+              errorBuilder: (_, __, ___) => const ColoredBox(color: AppColors.background),
             ),
           ),
           Positioned.fill(
             child: ColoredBox(
-              color: Colors.white.withValues(alpha: 0.68),
+              color: AppColors.background.withValues(alpha: 0.82),
             ),
           ),
           Column(
@@ -2542,9 +2558,25 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                     ? _searchResultsBody()
                     : _messages.isEmpty && !_loading
                         ? Center(
-                            child: Text(
-                              'No messages yet. Say hello!',
-                              style: TextStyle(color: Colors.grey.shade800),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Container(
+                                  width: 64,
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary.withValues(alpha: 0.12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(Icons.waving_hand_outlined, size: 28, color: AppColors.primaryText),
+                                ),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'No messages yet. Say hello!',
+                                  textAlign: TextAlign.center,
+                                  style: AppTextStyles.headingSmall,
+                                ),
+                              ],
                             ),
                           )
                         : ListView.builder(
@@ -2602,33 +2634,33 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
               ),
               if (!_searchOpen && _maySend && _recording)
                 Material(
-                  color: Colors.grey.shade100,
+                  color: AppColors.errorBg,
                   child: ListTile(
                     dense: true,
-                    leading: Icon(Icons.fiber_manual_record, color: Colors.red.shade700, size: 20),
+                    leading: const Icon(Icons.fiber_manual_record, color: AppColors.error, size: 20),
                     title: Text(
                       'Recording… ${_fmtMmSs(_recordingElapsed)}',
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary),
                     ),
                   ),
                 ),
               if (!_searchOpen && !_maySend)
                 Material(
-                  elevation: 2,
-                  color: Colors.grey.shade200,
+                  color: Colors.white,
+                  shape: const Border(top: BorderSide(color: _kChatHairline)),
                   child: SafeArea(
                     top: false,
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                       child: Row(
                         children: [
-                          Icon(Icons.info_outline, color: Colors.grey.shade700, size: 22),
+                          const Icon(Icons.info_outline_rounded, color: AppColors.textSecondary, size: 20),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
                               _sendBlockedReason ??
                                   'You can view this broadcast chat, but only selected users can send messages.',
-                              style: TextStyle(fontSize: 13, color: Colors.grey.shade800),
+                              style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                             ),
                           ),
                         ],
@@ -2638,12 +2670,12 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                 ),
               if (!_searchOpen && _maySend)
                 Material(
-                  elevation: 6,
                   color: Colors.white,
+                  shape: const Border(top: BorderSide(color: _kChatHairline)),
                   child: SafeArea(
                     top: false,
                     child: Padding(
-                      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
@@ -2652,9 +2684,9 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                               margin: const EdgeInsets.only(bottom: 8),
                               padding: const EdgeInsets.fromLTRB(12, 8, 6, 8),
                               decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: AppColors.background,
                                 borderRadius: BorderRadius.circular(12),
-                                border: Border.all(color: Colors.grey.shade300),
+                                border: Border(left: BorderSide(color: AppColors.primary, width: 3)),
                               ),
                               child: Row(
                                 children: [
@@ -2666,20 +2698,21 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                           _replyLabelFor(_replyTo!),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF1565C0)),
+                                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primaryText),
                                         ),
                                         const SizedBox(height: 2),
                                         Text(
                                           _replySnippetFor(_replyTo!),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                                          style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                         ),
                                       ],
                                     ),
                                   ),
                                   IconButton(
-                                    icon: const Icon(Icons.close, size: 18),
+                                    tooltip: 'Cancel reply',
+                                    icon: const Icon(Icons.close_rounded, size: 18),
                                     onPressed: () => setState(() => _replyTo = null),
                                   ),
                                 ],
@@ -2694,15 +2727,16 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                           Expanded(
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(28),
-                                border: Border.all(color: AppColors.primary.withValues(alpha: 0.35)),
+                                color: AppColors.background,
+                                borderRadius: BorderRadius.circular(24),
+                                border: Border.all(color: const Color(0xFFE2E5EA)),
                               ),
                               child: Row(
                                 crossAxisAlignment: CrossAxisAlignment.center,
                                 children: [
                                   IconButton(
-                                    icon: Icon(Icons.attach_file, color: AppColors.primary, size: 22),
+                                    icon: const Icon(Icons.attach_file_rounded, color: AppColors.textSecondary, size: 22),
+                                    tooltip: 'Attach',
                                     onPressed: _uploading ? null : _showWebAttachSheet,
                                     visualDensity: VisualDensity.compact,
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -2722,23 +2756,24 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                                     shape: BoxShape.circle,
                                                   ),
                                                   alignment: Alignment.center,
-                                                  child: Icon(Icons.play_arrow_rounded, color: AppColors.primary, size: 18),
+                                                  child: Icon(Icons.play_arrow_rounded, color: AppColors.primaryText, size: 18),
                                                 ),
                                                 const SizedBox(width: 10),
-                                                const Icon(Icons.mic_rounded, size: 18, color: Color(0xFF0F172A)),
+                                                const Icon(Icons.mic_rounded, size: 18, color: AppColors.textPrimary),
                                                 const SizedBox(width: 8),
                                                 Expanded(
                                                   child: Text(
                                                     'Voice message',
                                                     maxLines: 1,
                                                     overflow: TextOverflow.ellipsis,
-                                                    style: TextStyle(color: const Color(0xFF0F172A).withValues(alpha: 0.75)),
+                                                    style: const TextStyle(color: AppColors.textSecondary),
                                                   ),
                                                 ),
                                                 IconButton(
                                                   visualDensity: VisualDensity.compact,
                                                   padding: EdgeInsets.zero,
-                                                  icon: Icon(Icons.close, size: 18, color: Colors.grey.shade700),
+                                                  icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.textSecondary),
+                                                  tooltip: 'Discard',
                                                   onPressed: _discardPendingVoice,
                                                 ),
                                               ],
@@ -2750,9 +2785,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                             maxLines: 4,
                                             decoration: const InputDecoration(
                                               hintText: 'Type a message...',
-                                              hintStyle: TextStyle(color: Color(0xFF94A3B8)),
-                                              filled: true,
-                                              fillColor: Colors.white,
+                                              hintStyle: TextStyle(color: AppColors.textCaption),
+                                              filled: false,
                                               border: InputBorder.none,
                                               enabledBorder: InputBorder.none,
                                               focusedBorder: InputBorder.none,
@@ -2766,7 +2800,8 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                                           ),
                                   ),
                                   IconButton(
-                                    icon: Icon(Icons.photo_camera_outlined, color: AppColors.primary, size: 22),
+                                    icon: const Icon(Icons.photo_camera_outlined, color: AppColors.textSecondary, size: 22),
+                                    tooltip: 'Camera',
                                     onPressed: _uploading ? null : () => _pickImage(ImageSource.camera),
                                     visualDensity: VisualDensity.compact,
                                     padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -2781,67 +2816,66 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                             Container(
                               width: 48,
                               height: 48,
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
+                              decoration: _sendTileDecoration(),
                               alignment: Alignment.center,
-                              child: const SizedBox(
+                              child: SizedBox(
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
                                   valueColor:
-                                      AlwaysStoppedAnimation<Color>(Colors.white),
+                                      AlwaysStoppedAnimation<Color>(AppColors.onPrimary),
                                 ),
                               ),
                             )
                           else if (_recording)
                             Container(
+                              width: 48,
+                              height: 48,
                               decoration: BoxDecoration(
-                                color: Colors.white,
-                                shape: BoxShape.circle,
-                                border: Border.all(color: Colors.grey.shade300),
+                                color: AppColors.errorBg,
+                                borderRadius: BorderRadius.circular(14),
                               ),
                               child: IconButton(
-                                icon: const Icon(Icons.stop_circle_outlined),
-                                color: Colors.red.shade700,
+                                icon: const Icon(Icons.stop_rounded),
+                                color: AppColors.error,
+                                tooltip: 'Stop recording',
                                 onPressed: _toggleRecording,
                               ),
                             )
                           else if (_pendingVoicePath != null)
                             Container(
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
+                              width: 48,
+                              height: 48,
+                              decoration: _sendTileDecoration(),
                               child: IconButton(
                                 icon: const Icon(Icons.send_rounded),
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
+                                tooltip: 'Send',
                                 onPressed: _sendPendingVoice,
                               ),
                             )
                           else if (_text.text.trim().isNotEmpty)
                             Container(
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
+                              width: 48,
+                              height: 48,
+                              decoration: _sendTileDecoration(),
                               child: IconButton(
                                 icon: const Icon(Icons.send_rounded),
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
+                                tooltip: 'Send',
                                 onPressed: _sendText,
                               ),
                             )
                           else
                             Container(
-                              decoration: BoxDecoration(
-                                color: AppColors.primary,
-                                shape: BoxShape.circle,
-                              ),
+                              width: 48,
+                              height: 48,
+                              decoration: _sendTileDecoration(),
                               child: IconButton(
                                 icon: const Icon(Icons.mic_none_rounded),
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
+                                tooltip: 'Record voice message',
                                 onPressed: _toggleRecording,
                               ),
                             ),
@@ -2860,7 +2894,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
               bottom: MediaQuery.viewInsetsOf(context).bottom + MediaQuery.paddingOf(context).bottom + 80,
               child: Material(
                 elevation: 2,
-                shape: const CircleBorder(),
+                shape: const CircleBorder(side: BorderSide(color: _kChatHairline)),
                 color: Colors.white,
                 child: InkWell(
                   customBorder: const CircleBorder(),
@@ -2875,7 +2909,7 @@ class _InteractionChatThreadScreenState extends State<InteractionChatThreadScree
                   },
                   child: Padding(
                     padding: const EdgeInsets.all(10),
-                    child: Icon(Icons.keyboard_arrow_down, color: Colors.grey.shade700, size: 22),
+                    child: Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary, size: 22),
                   ),
                 ),
               ),
@@ -2912,8 +2946,6 @@ class _PollInlineCard extends StatefulWidget {
 }
 
 class _PollInlineCardState extends State<_PollInlineCard> {
-  static const Color _voteBlue = Color(0xFF1976D2);
-
   bool _loading = true;
   bool _submitting = false;
   String? _role;
@@ -3059,7 +3091,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
       children: [
         Text(
           'Vote already submitted.',
-          style: TextStyle(fontSize: 13, color: Colors.grey.shade700, fontWeight: FontWeight.w500),
+          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
         ),
         const SizedBox(height: 8),
         ..._results.map((r) {
@@ -3071,9 +3103,9 @@ class _PollInlineCardState extends State<_PollInlineCard> {
             margin: const EdgeInsets.only(bottom: 8),
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey.shade200),
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: _kChatHairline),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -3085,13 +3117,13 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                         label,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)),
+                        style: const TextStyle(fontSize: 14, color: AppColors.textPrimary),
                       ),
                     ),
                     const SizedBox(width: 8),
                     Text(
                       '$count ($pct%)',
-                      style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A), fontWeight: FontWeight.w500),
+                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),
@@ -3101,7 +3133,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                   child: LinearProgressIndicator(
                     value: progress,
                     minHeight: 6,
-                    backgroundColor: const Color(0xFFE5E7EB),
+                    backgroundColor: const Color(0xFFEDEFF2),
                     valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
                   ),
                 ),
@@ -3123,17 +3155,15 @@ class _PollInlineCardState extends State<_PollInlineCard> {
       color: Colors.transparent,
       child: InkWell(
         onTap: _cannotVote || _loading ? _openDetailSync : null,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade300),
-            boxShadow: [
-              BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 6, offset: const Offset(0, 2)),
-            ],
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: _kChatHairline),
+            boxShadow: kSoftCardShadow,
           ),
           child: _loading
               ? const Padding(
@@ -3144,7 +3174,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                   ? Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(titleUpper, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A))),
+                        Text(titleUpper, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, letterSpacing: 0.3, color: AppColors.textPrimary)),
                         const SizedBox(height: 8),
                         TextButton(onPressed: _openDetailSync, child: const Text('Open poll')),
                       ],
@@ -3159,7 +3189,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                             Expanded(
                               child: Text(
                                 titleUpper,
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Color(0xFF0F172A)),
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14, letterSpacing: 0.3, color: AppColors.textPrimary),
                               ),
                             ),
                           ],
@@ -3206,7 +3236,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                                               });
                                             },
                                     ),
-                                    Expanded(child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)))),
+                                    Expanded(child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary))),
                                   ],
                                 ),
                               ),
@@ -3251,7 +3281,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                                               });
                                             },
                                     ),
-                                    Expanded(child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: Color(0xFF0F172A)))),
+                                    Expanded(child: Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: AppColors.textPrimary))),
                                   ],
                                 ),
                               ),
@@ -3264,24 +3294,22 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                             Expanded(
                               child: Text(
                                 _footerLine,
-                                style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                               ),
                             ),
                             if (showVoteUi)
                               FilledButton(
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: _voteBlue,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                                  minimumSize: Size.zero,
+                                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                                  minimumSize: const Size(0, 40),
                                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                 ),
                                 onPressed: _submitting ? null : _submitVote,
                                 child: _submitting
-                                    ? const SizedBox(
+                                    ? SizedBox(
                                         width: 18,
                                         height: 18,
-                                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                                       )
                                     : const Text('Vote'),
                               )
@@ -3293,7 +3321,7 @@ class _PollInlineCardState extends State<_PollInlineCard> {
                             else if (!_isActive)
                               Text(
                                 'Poll inactive',
-                                style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w600),
+                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
                               ),
                           ],
                         ),
@@ -3387,7 +3415,8 @@ class _InlineVoiceMessagePlayerState extends State<_InlineVoiceMessagePlayer> {
 
   @override
   Widget build(BuildContext context) {
-    final accent = widget.isMine ? const Color(0xFF2E7D32) : AppColors.primary;
+    final accent = widget.isMine ? AppColors.onPrimary : AppColors.primaryText;
+    final muted = widget.isMine ? AppColors.onPrimary.withValues(alpha: 0.75) : AppColors.textSecondary;
     final maxMs = _duration.inMilliseconds > 0 ? _duration.inMilliseconds.toDouble() : 1.0;
     final posMs = _position.inMilliseconds.clamp(0, _duration.inMilliseconds > 0 ? _duration.inMilliseconds : 0);
 
@@ -3395,9 +3424,9 @@ class _InlineVoiceMessagePlayerState extends State<_InlineVoiceMessagePlayer> {
       return Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.error_outline, size: 18, color: Colors.red.shade700),
+          Icon(Icons.error_outline_rounded, size: 18, color: widget.isMine ? AppColors.onPrimary : AppColors.error),
           const SizedBox(width: 6),
-          const Text('Voice unavailable', style: TextStyle(fontSize: 13)),
+          Text('Voice unavailable', style: TextStyle(fontSize: 13, color: muted)),
         ],
       );
     }
@@ -3435,7 +3464,7 @@ class _InlineVoiceMessagePlayerState extends State<_InlineVoiceMessagePlayer> {
                 overlayShape: SliderComponentShape.noOverlay,
                 activeTrackColor: accent,
                 thumbColor: accent,
-                inactiveTrackColor: Colors.grey.shade300,
+                inactiveTrackColor: accent.withValues(alpha: 0.25),
               ),
               child: Slider(
                 min: 0,
@@ -3450,7 +3479,7 @@ class _InlineVoiceMessagePlayerState extends State<_InlineVoiceMessagePlayer> {
           const SizedBox(width: 4),
           Text(
             _fmt(_duration.inSeconds > 0 ? _duration : _position),
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+            style: TextStyle(fontSize: 11, color: muted),
           ),
         ],
       ),

@@ -9,6 +9,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../utils/interaction_avatar_theme.dart';
 import '../../utils/error_message_utils.dart';
 import '../../services/interaction_service.dart';
@@ -428,7 +430,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.grey.shade200,
+        color: const Color(0xFFEDEFF2),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -440,17 +442,9 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
                 decoration: BoxDecoration(
-                  color: sel ? Colors.white : Colors.transparent,
+                  color: sel ? AppColors.surface : Colors.transparent,
                   borderRadius: BorderRadius.circular(10),
-                  boxShadow: sel
-                      ? [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.08),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
-                          ),
-                        ]
-                      : null,
+                  boxShadow: sel ? kSoftCardShadow : null,
                 ),
                 child: Material(
                   color: Colors.transparent,
@@ -470,7 +464,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                         style: TextStyle(
                           fontWeight: sel ? FontWeight.w600 : FontWeight.w500,
                           fontSize: 13,
-                          color: sel ? AppColors.primary : Colors.grey.shade700,
+                          color: sel ? AppColors.primaryText : AppColors.textSecondary,
                         ),
                       ),
                     ),
@@ -490,16 +484,18 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const SizedBox(height: 24),
-        Text(
+        Center(child: _emptyIcon(Icons.mark_chat_unread_outlined)),
+        const SizedBox(height: 12),
+        const Text(
           'No chats yet',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.grey.shade800),
+          style: AppTextStyles.headingSmall,
         ),
-        const SizedBox(height: 8),
-        Text(
+        const SizedBox(height: 4),
+        const Text(
           'Start a conversation:',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+          style: AppTextStyles.bodySmall,
         ),
         const SizedBox(height: 16),
         if (_suggestionsLoading) const LinearProgressIndicator(),
@@ -514,13 +510,13 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           return Padding(
             padding: const EdgeInsets.only(bottom: 8),
             child: Material(
-              color: Colors.white,
+              color: AppColors.surface,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: BorderSide(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(16),
+                side: const BorderSide(color: _kHairline),
               ),
               child: InkWell(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 onTap: id.isEmpty
                     ? null
                     : () async {
@@ -539,10 +535,11 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                         _load();
                       },
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Row(
                     children: [
                       CircleAvatar(
+                        radius: 22,
                         backgroundColor: sugBg,
                         backgroundImage: url != null ? CachedNetworkImageProvider(url) : null,
                         child: url == null
@@ -550,7 +547,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                                 name.isNotEmpty ? name[0].toUpperCase() : '?',
                                 style: TextStyle(
                                   color: sugFg,
-                                  fontWeight: FontWeight.bold,
+                                  fontWeight: FontWeight.w600,
                                 ),
                               )
                             : null,
@@ -560,17 +557,21 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(name, style: const TextStyle(fontWeight: FontWeight.w600)),
+                            Text(name, style: AppTextStyles.headingSmall.copyWith(fontSize: 15)),
                             if (role.isNotEmpty)
-                              Text(
-                                role,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 2),
+                                child: Text(
+                                  role,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTextStyles.bodySmall,
+                                ),
                               ),
                           ],
                         ),
                       ),
+                      const Icon(Icons.chevron_right_rounded, color: AppColors.textCaption),
                     ],
                   ),
                 ),
@@ -579,6 +580,20 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           );
         }),
       ],
+    );
+  }
+
+  static const Color _kHairline = Color(0xFFECEEF1);
+
+  Widget _emptyIcon(IconData icon) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.12),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, size: 28, color: AppColors.primaryText),
     );
   }
 
@@ -593,47 +608,79 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     final letterBg =
         InteractionAvatarTheme.backgroundForTitle(title, groupType: gt.isEmpty ? null : gt);
     final letterFg = InteractionAvatarTheme.letterColor(letterBg);
-    return ListTile(
+    return Card(
       key: ValueKey(listKey),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       leading: CircleAvatar(
+        radius: 22,
         backgroundColor: letterBg,
         backgroundImage: avatarUrl != null ? CachedNetworkImageProvider(avatarUrl) : null,
         child: avatarUrl == null
             ? Text(
                 title.isNotEmpty ? title[0].toUpperCase() : '?',
-                style: TextStyle(color: letterFg, fontWeight: FontWeight.bold),
+                style: TextStyle(color: letterFg, fontWeight: FontWeight.w600),
               )
             : null,
       ),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-      subtitle: Text(
-        _subtitle(row),
+      title: Text(
+        title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        style: AppTextStyles.headingSmall.copyWith(
+          fontSize: 15,
+          fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w600,
+        ),
+      ),
+      subtitle: Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(
+          _subtitle(row),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: unread > 0 ? AppColors.textPrimary : AppColors.textSecondary,
+          ),
+        ),
       ),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(_time(row), style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+          Text(
+            _time(row),
+            style: AppTextStyles.caption.copyWith(
+              color: unread > 0 ? AppColors.primaryText : AppColors.textSecondary,
+              fontWeight: unread > 0 ? FontWeight.w600 : FontWeight.w400,
+            ),
+          ),
           if (unread > 0)
             Padding(
-              padding: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.only(top: 6),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                constraints: const BoxConstraints(minWidth: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE9A820),
-                  borderRadius: BorderRadius.circular(12),
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   unread > 99 ? '99+' : '$unread',
-                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: AppColors.onPrimary,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
         ],
       ),
       onTap: () => _openThread(row),
+      ),
     );
   }
 
@@ -649,7 +696,21 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(_error!, textAlign: TextAlign.center),
+              Container(
+                width: 64,
+                height: 64,
+                decoration: const BoxDecoration(
+                  color: AppColors.errorBg,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.wifi_off_rounded, size: 28, color: AppColors.error),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+              ),
               const SizedBox(height: 16),
               FilledButton(onPressed: _load, child: const Text('Retry')),
             ],
@@ -661,7 +722,7 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
     final visible = _visibleChats;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: AppColors.background,
       body: RefreshIndicator(
         onRefresh: _load,
         child: CustomScrollView(
@@ -676,26 +737,12 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
                     TextField(
                       controller: _search,
                       style: const TextStyle(fontSize: 15),
-                      decoration: InputDecoration(
+                      decoration: const InputDecoration(
                         hintText: 'Search conversations...',
-                        hintStyle: TextStyle(color: Colors.grey.shade500, fontSize: 15),
-                        prefixIcon: Icon(Icons.search, color: Colors.grey.shade600),
-                        filled: true,
-                        fillColor: Colors.white,
+                        prefixIcon: Icon(Icons.search_rounded, size: 20),
+                        fillColor: AppColors.surface,
                         isDense: true,
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(28),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(28),
-                          borderSide: BorderSide(color: Colors.grey.shade300),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(28),
-                          borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-                        ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -713,12 +760,27 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
               SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(
-                  child: Text(
-                    _segment == 2 ? 'No group threads yet.' : 'No conversations match your search.',
-                    style: TextStyle(color: Colors.grey.shade600),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _emptyIcon(
+                          _segment == 2 ? Icons.groups_outlined : Icons.forum_outlined,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _segment == 2 ? 'No group threads yet.' : 'No conversations match your search.',
+                          textAlign: TextAlign.center,
+                          style: AppTextStyles.bodySmall,
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
+            if (visible.isNotEmpty)
+              const SliverToBoxAdapter(child: SizedBox(height: 4)),
             if (visible.isNotEmpty)
               SliverList(
                 delegate: SliverChildBuilderDelegate(
@@ -738,7 +800,11 @@ class _InteractionChatListScreenState extends State<InteractionChatListScreen> {
           _load();
         },
         backgroundColor: AppColors.primary,
-        child: const Icon(Icons.chat, color: Colors.white),
+        foregroundColor: AppColors.onPrimary,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        tooltip: 'New chat',
+        child: const Icon(Icons.add_comment_outlined),
       ),
     );
   }

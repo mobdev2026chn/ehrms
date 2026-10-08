@@ -1,63 +1,31 @@
 // lib/screens/admin/recruitment/admin_interview_rounds_screen.dart
+// Interview Rounds: one row per candidate (their latest ongoing round), filters by the round's
+// status and number; tap opens the scorecard.
+
 import 'package:flutter/material.dart';
+
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
-import '../../../utils/snackbar_utils.dart';
+import '../../../models/admin_recruitment_models.dart';
+import '../../../services/admin_recruitment_service.dart';
 import '../../../widgets/app_drawer.dart';
-import '../../../widgets/app_tab_loader.dart';
 import 'admin_candidate_scorecard_screen.dart';
+import 'rec_widgets.dart';
 
-class AdminEvaluationRoundItem {
-  final String id;
-  final String candidateName;
-  final String candidateEmail;
-  final String position;
-  final String round;
-  final int roundNumber;
-  final String interviewerName;
-  final String interviewDate;
-  final String interviewTime;
-  final String mode;
-  String status;
-  int overallScore;
-  String generalFeedback;
-  String recommendation;
+const List<String> kRoundStatusOptions = ['Scheduled', 'Passed', 'Selected', 'On Hold', 'Reassigned', 'Rejected'];
 
-  AdminEvaluationRoundItem({
-    required this.id,
-    required this.candidateName,
-    required this.candidateEmail,
-    required this.position,
-    required this.round,
-    required this.roundNumber,
-    required this.interviewerName,
-    required this.interviewDate,
-    required this.interviewTime,
-    required this.mode,
-    required this.status,
-    this.overallScore = 9,
-    this.generalFeedback = 'Exceptional visual layout skills and typography. Strong case studies in components systems.',
-    this.recommendation = 'Pass',
-  });
+int byRoundSequence(RecInterviewRound a, RecInterviewRound b) {
+  final n = a.roundNumber.compareTo(b.roundNumber);
+  if (n != 0) return n;
+  final d = '${a.interviewDate}T${a.interviewTime}'.compareTo('${b.interviewDate}T${b.interviewTime}');
+  if (d != 0) return d;
+  return a.createdAt.compareTo(b.createdAt);
+}
 
-  factory AdminEvaluationRoundItem.fromJson(Map<String, dynamic> json) {
-    return AdminEvaluationRoundItem(
-      id: (json['id'] ?? 'INT-003').toString(),
-      candidateName: (json['candidateName'] ?? 'Candidate').toString(),
-      candidateEmail: (json['candidateEmail'] ?? '').toString(),
-      position: (json['position'] ?? 'Product Designer').toString(),
-      round: (json['round'] ?? 'Portfolio Review').toString(),
-      roundNumber: int.tryParse(json['roundNumber']?.toString() ?? '1') ?? 1,
-      interviewerName: (json['interviewerName'] ?? 'Interviewer').toString(),
-      interviewDate: (json['interviewDate'] ?? '2026-08-26').toString(),
-      interviewTime: (json['interviewTime'] ?? '11:00').toString(),
-      mode: (json['mode'] ?? 'Zoom').toString(),
-      status: (json['status'] ?? 'Evaluated - Pass').toString(),
-      overallScore: int.tryParse(json['overallScore']?.toString() ?? '9') ?? 9,
-      generalFeedback: (json['generalFeedback'] ?? '').toString(),
-      recommendation: (json['recommendation'] ?? 'Pass').toString(),
-    );
-  }
+class _CandidateRow {
+  final String candidateId;
+  final List<RecInterviewRound> rounds;
+  final RecInterviewRound current;
+  _CandidateRow(this.candidateId, this.rounds, this.current);
 }
 
 class AdminInterviewRoundsScreen extends StatefulWidget {
@@ -69,314 +37,163 @@ class AdminInterviewRoundsScreen extends StatefulWidget {
 
 class _AdminInterviewRoundsScreenState extends State<AdminInterviewRoundsScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final ApiClient _api = ApiClient();
+  final AdminRecruitmentService _service = AdminRecruitmentService();
 
-  bool _isLoading = true;
-  String _searchQuery = '';
-  String _statusFilter = 'All';
-
-  List<AdminEvaluationRoundItem> _items = [];
+  bool _loading = true;
+  String? _error;
+  List<_CandidateRow> _rows = [];
+  String _search = '';
+  String _status = 'All';
+  String _round = 'All';
 
   @override
   void initState() {
     super.initState();
-    _fetchRounds();
+    _load();
   }
 
-  Future<void> _fetchRounds({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
+  Future<void> _load({bool showLoader = true}) async {
+    if (showLoader) setState(() => _loading = true);
     try {
-      final res = await _api.request('/admin/recruitment/interview-process/rounds');
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data']?['rounds'] as List?) ?? (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _items = list.map((e) => AdminEvaluationRoundItem.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRounds();
-        }
-      } else {
-        _setMockRounds();
+      final rounds = await _service.getInterviewRounds();
+      final by = <String, List<RecInterviewRound>>{};
+      for (final r in rounds) {
+        by.putIfAbsent(r.candidateId, () => []).add(r);
       }
-    } catch (_) {
-      _setMockRounds();
+      final rows = by.entries.map((e) {
+        final sorted = [...e.value]..sort(byRoundSequence);
+        final ongoing = sorted.where((r) => r.status == 'Scheduled').toList();
+        return _CandidateRow(e.key, sorted, ongoing.isNotEmpty ? ongoing.last : sorted.last);
+      }).toList()
+        ..sort((a, b) => '${b.current.interviewDate}T${b.current.interviewTime}'
+            .compareTo('${a.current.interviewDate}T${a.current.interviewTime}'));
+      if (!mounted) return;
+      setState(() {
+        _rows = rows;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
-
-    if (showLoader && mounted) setState(() => _isLoading = false);
-  }
-
-  void _setMockRounds() {
-    _items = [
-      AdminEvaluationRoundItem(
-        id: 'INT-003',
-        candidateName: 'Rohan Mehta',
-        candidateEmail: 'rohan.mehta@example.com',
-        position: 'Product Designer',
-        round: 'Portfolio Review',
-        roundNumber: 1,
-        interviewerName: 'Vikram Malhotra (UX Director)',
-        interviewDate: '2026-08-26',
-        interviewTime: '11:00',
-        mode: 'ZOOM',
-        status: 'Evaluated - Pass',
-        overallScore: 9,
-        generalFeedback: 'Exceptional visual layout skills and typography. Strong case studies in components systems. Needs minor improvement in responsive layout details.',
-        recommendation: 'Pass',
-      ),
-      AdminEvaluationRoundItem(
-        id: 'INT-001',
-        candidateName: 'Amit Sharma',
-        candidateEmail: 'amit.sharma@example.com',
-        position: 'Senior Full-Stack Engineer',
-        round: 'Initial Coding Assessment',
-        roundNumber: 1,
-        interviewerName: 'Sanjay Patel (Tech Lead)',
-        interviewDate: '2026-08-28',
-        interviewTime: '10:00',
-        mode: 'GOOGLE MEET',
-        status: 'Pending Evaluation',
-        overallScore: 0,
-        generalFeedback: '',
-        recommendation: 'Pending',
-      ),
-      AdminEvaluationRoundItem(
-        id: 'INT-004',
-        candidateName: 'Sneha Reddy',
-        candidateEmail: 'sneha.reddy@example.com',
-        position: 'DevOps Engineer',
-        round: 'Infrastructure Round',
-        roundNumber: 1,
-        interviewerName: 'Karan Singh (DevOps Lead)',
-        interviewDate: '2026-08-29',
-        interviewTime: '16:00',
-        mode: 'GOOGLE MEET',
-        status: 'Scheduled',
-        overallScore: 0,
-        generalFeedback: '',
-        recommendation: 'Pending',
-      ),
-    ];
-  }
-
-  List<AdminEvaluationRoundItem> get _filteredItems {
-    return _items.where((i) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          i.candidateName.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          i.position.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          i.interviewerName.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesStatus = _statusFilter == 'All' || i.status.toLowerCase().contains(_statusFilter.toLowerCase());
-
-      return matchesSearch && matchesStatus;
-    }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
+    final roundNumbers = _rows.map((r) => r.current.roundNumber).toSet().toList()..sort();
+    final q = _search.toLowerCase();
+    final visible = _rows.where((row) {
+      final c = row.current;
+      if (_status != 'All' && c.displayStatus != _status) return false;
+      if (_round != 'All' && '${c.roundNumber}' != _round) return false;
+      return q.isEmpty ||
+          c.candidateName.toLowerCase().contains(q) ||
+          c.position.toLowerCase().contains(q) ||
+          c.interviewerName.toLowerCase().contains(q) ||
+          row.rounds.any((r) => r.roundName.toLowerCase().contains(q));
+    }).toList();
+
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: kRecBg,
       drawer: const AppDrawer(),
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
-          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-        ),
-        title: const Text(
-          'Interview Evaluation Rounds',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
-        centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF64748B), size: 22),
-            onPressed: () => _fetchRounds(),
-            tooltip: 'Refresh',
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      body: _isLoading
-          ? const Center(child: AppTabLoader())
-          : RefreshIndicator(
-              onRefresh: () => _fetchRounds(showLoader: false),
-              color: AppColors.primary,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  // Search & Filter Header
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFF1F5F9)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Review active assessment queues, evaluate candidates, and read historical scorecard notes.',
-                          style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                        ),
-                        const SizedBox(height: 12),
-
-                        // Search
-                        Container(
-                          height: 42,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xFFE2E8F0)),
-                          ),
-                          child: TextField(
-                            onChanged: (v) => setState(() => _searchQuery = v),
-                            decoration: const InputDecoration(
-                              hintText: 'Search candidate, role, or interviewer...',
-                              hintStyle: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8)),
-                              prefixIcon: Icon(Icons.search_rounded, size: 18, color: Color(0xFF94A3B8)),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(vertical: 11),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  if (_filteredItems.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(36),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                      child: const Text('No interview evaluation rounds found', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
-                    )
-                  else
-                    ..._filteredItems.map((item) => _buildRoundCard(item)),
-                ],
+      appBar: recAppBar(context, 'Interview Rounds', drawerKey: _scaffoldKey, onRefresh: () => _load()),
+      body: RecAsyncBody(
+        loading: _loading,
+        error: _error,
+        isEmpty: _rows.isEmpty,
+        emptyText: 'No interviews scheduled yet.\nSchedule one from a candidate\'s profile.',
+        emptyIcon: Icons.event_busy_outlined,
+        onRetry: _load,
+        builder: () => RefreshIndicator(
+          onRefresh: () => _load(showLoader: false),
+          color: AppColors.primary,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              RecSearchField(hint: 'Search candidate, position, round or evaluator', onChanged: (v) => setState(() => _search = v)),
+              const SizedBox(height: 12),
+              RecFilterChips(
+                options: const ['All', ...kRoundStatusOptions],
+                selected: _status,
+                onSelected: (s) => setState(() => _status = s),
               ),
-            ),
+              const SizedBox(height: 8),
+              RecFilterChips(
+                options: ['All', ...roundNumbers.map((n) => '$n')],
+                selected: _round,
+                labelOf: (s) => s == 'All' ? 'All rounds' : 'Round $s',
+                onSelected: (s) => setState(() => _round = s),
+              ),
+              const SizedBox(height: 16),
+              if (visible.isEmpty)
+                const Padding(padding: EdgeInsets.only(top: 60), child: RecEmptyState(text: 'No rounds match the filters'))
+              else
+                ...visible.map(_card),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
-  Widget _buildRoundCard(AdminEvaluationRoundItem item) {
-    Color stBg = const Color(0xFFFEF3C7);
-    Color stFg = AppColors.brandDark;
-    if (item.status.contains('Pass')) {
-      stBg = const Color(0xFFDCFCE7);
-      stFg = const Color(0xFF16A34A);
-    } else if (item.status.contains('Fail') || item.status.contains('Reject')) {
-      stBg = const Color(0xFFFEE2E2);
-      stFg = const Color(0xFFDC2626);
-    }
-
-    return InkWell(
+  Widget _card(_CandidateRow row) {
+    final c = row.current;
+    return RecCard(
       onTap: () async {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => AdminCandidateScorecardScreen(item: item)),
-        );
-        setState(() {});
+        await Navigator.push(context, MaterialPageRoute(builder: (_) => AdminCandidateScorecardScreen(roundId: c.id)));
+        _load(showLoader: false);
       },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFF1F5F9)),
-          boxShadow: const [BoxShadow(color: Color(0x04000000), blurRadius: 6, offset: Offset(0, 2))],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(child: Text(item.candidateName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)))),
-                const SizedBox(width: 8),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(color: stBg, borderRadius: BorderRadius.circular(20)),
-                  child: Text(
-                    item.status,
-                    style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: stFg),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(item.candidateEmail, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-            const SizedBox(height: 10),
-
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            RecAvatar(c.candidateName, size: 40),
+            const SizedBox(width: 12),
+            Expanded(
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.work_outline_rounded, size: 14, color: Color(0xFFEFAA1F)),
-                      const SizedBox(width: 6),
-                      Text(item.position, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(4), border: Border.all(color: const Color(0xFFFDE68A))),
-                        child: Text('ROUND ${item.roundNumber}', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Text('Type: ${item.round}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                    ],
-                  ),
-                  const Divider(height: 14, color: Color(0xFFE2E8F0)),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Row(
-                        children: [
-                          const Icon(Icons.person_outline_rounded, size: 13, color: Color(0xFF64748B)),
-                          const SizedBox(width: 4),
-                          Text(item.interviewerName, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
-                        ],
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(4)),
-                        child: Text(item.mode, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFF2563EB))),
-                      ),
-                    ],
-                  ),
+                  Text(c.candidateName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: kRecInk)),
+                  const SizedBox(height: 2),
+                  Text(c.position, style: const TextStyle(fontSize: 13, color: kRecMuted, fontWeight: FontWeight.w500)),
                 ],
               ),
             ),
-            const SizedBox(height: 10),
-
-            Row(
-              children: [
-                const Icon(Icons.calendar_today_outlined, size: 13, color: Color(0xFF64748B)),
-                const SizedBox(width: 6),
-                Text('${item.interviewDate} at ${item.interviewTime}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF64748B))),
-                const Spacer(),
-                const Text('View Scorecard ❯', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
-              ],
+            const SizedBox(width: 8),
+            RecBadge(c.displayStatus),
+          ]),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 12),
+          Text('Round ${c.roundNumber}: ${c.roundName}',
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kRecInk)),
+          const SizedBox(height: 4),
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 1),
+              child: Icon(Icons.event_outlined, size: 15, color: kRecMuted),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                  '${recFormatDate(c.interviewDate)} • ${recFormatTime(c.interviewTime)} • ${c.mode} • ${c.interviewerName}',
+                  style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+            ),
+          ]),
+          if (row.rounds.length > 1) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: row.rounds.map((r) => RecBadge('R${r.roundNumber} ${r.displayStatus}', colorKey: r.displayStatus)).toList(),
             ),
           ],
-        ),
+        ],
       ),
     );
   }

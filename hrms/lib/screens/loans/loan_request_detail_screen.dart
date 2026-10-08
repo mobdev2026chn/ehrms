@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../models/loan_models.dart';
 import '../../services/loan_service.dart';
 import '../../utils/error_message_utils.dart';
@@ -107,23 +108,31 @@ class _LoanRequestDetailScreenState extends State<LoanRequestDetailScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(r?.requestNo ?? 'Request', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: Text(r?.requestNo ?? 'Request'),
       ),
       body: r == null
           ? Center(
               child: _error == null
                   ? const AppTabLoader()
-                  : Padding(padding: const EdgeInsets.all(24), child: Text(_error!, textAlign: TextAlign.center)),
+                  : Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(mainAxisSize: MainAxisSize.min, children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+                          child: const Icon(Icons.error_outline_rounded, size: 28, color: AppColors.error),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodyMedium),
+                      ]),
+                    ),
             )
           : RefreshIndicator(
               color: AppColors.primary,
               onRefresh: _load,
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 children: [
                   LoanCard(
                     child: Column(
@@ -132,13 +141,15 @@ class _LoanRequestDetailScreenState extends State<LoanRequestDetailScreen> {
                         Row(
                           children: [
                             Expanded(
-                              child: Text(r.isAdvance ? 'Salary Advance' : r.loanType,
-                                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                              child: Text(r.isAdvance ? 'Salary Advance' : r.loanType, style: AppTextStyles.headingMedium),
                             ),
+                            const SizedBox(width: 8),
                             LoanStatusChip(r.status),
                           ],
                         ),
-                        const SizedBox(height: 8),
+                        const SizedBox(height: 12),
+                        const Divider(height: 1),
+                        const SizedBox(height: 6),
                         LoanInfoRow('Amount requested', loanMoney(r.requestedAmount)),
                         if (r.isAdvance)
                           LoanInfoRow('Recovery', r.advanceRecovery)
@@ -160,7 +171,7 @@ class _LoanRequestDetailScreenState extends State<LoanRequestDetailScreen> {
                     const LoanSectionTitle('Documents'),
                     LoanCard(child: LoanDocumentList(r.documents)),
                   ],
-                  const SizedBox(height: 18),
+                  const SizedBox(height: 24),
                   if (r.loanId.isNotEmpty)
                     ElevatedButton.icon(
                       onPressed: () => Navigator.of(context).push(
@@ -168,23 +179,17 @@ class _LoanRequestDetailScreenState extends State<LoanRequestDetailScreen> {
                       ),
                       icon: const Icon(Icons.receipt_long_outlined, size: 18),
                       label: const Text('View loan & EMI schedule'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
+                      style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(52)),
                     ),
                   if (r.canCancel)
                     Padding(
-                      padding: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.only(top: 12),
                       child: OutlinedButton(
                         onPressed: _busy ? null : _cancel,
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppColors.error,
-                          side: const BorderSide(color: AppColors.errorBg),
-                          padding: const EdgeInsets.symmetric(vertical: 13),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          side: BorderSide(color: AppColors.error.withValues(alpha: 0.4), width: 1.2),
+                          minimumSize: const Size.fromHeight(52),
                         ),
                         child: const Text('Cancel request'),
                       ),
@@ -196,36 +201,41 @@ class _LoanRequestDetailScreenState extends State<LoanRequestDetailScreen> {
   }
 
   Widget _clarificationCard(LoanRequest r) => Padding(
-        padding: const EdgeInsets.only(top: 14),
+        padding: const EdgeInsets.only(top: 12),
         child: Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: AppColors.infoBg, borderRadius: BorderRadius.circular(14)),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.infoBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(children: [
-                Icon(Icons.help_outline_rounded, size: 18, color: AppColors.info),
-                SizedBox(width: 6),
-                Text('The approver needs more information',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: AppColors.info)),
+              Row(children: [
+                const Icon(Icons.help_outline_rounded, size: 20, color: AppColors.info),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text('The approver needs more information',
+                      style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600, color: AppColors.info)),
+                ),
               ]),
               if (r.clarificationQuestion.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text('“${r.clarificationQuestion}”', style: const TextStyle(fontSize: 13)),
+                const SizedBox(height: 8),
+                Text('“${r.clarificationQuestion}”', style: AppTextStyles.bodyMedium.copyWith(fontSize: 13.5)),
               ],
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               TextField(
                 controller: _reply,
                 minLines: 2,
                 maxLines: 4,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Your reply',
                   filled: true,
                   fillColor: Colors.white,
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Align(
                 alignment: Alignment.centerRight,
                 child: ElevatedButton(

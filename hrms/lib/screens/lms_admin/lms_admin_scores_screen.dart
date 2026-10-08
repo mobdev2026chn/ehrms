@@ -7,8 +7,10 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../widgets/app_card.dart';
 import 'lms_admin_utils.dart';
 import 'widgets/lms_admin_stat_card.dart';
 
@@ -97,11 +99,7 @@ class _LmsAdminScoresScreenState extends State<LmsAdminScoresScreen> {
             padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: Text(
               'Scores & Analytics',
-              style: TextStyle(
-                fontSize: 19,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.headingLarge,
             ),
           ),
           LmsAdminStatRow(
@@ -157,36 +155,39 @@ class _LmsAdminScoresScreenState extends State<LmsAdminScoresScreen> {
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.divider),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFECEEF1)),
+                boxShadow: kSoftCardShadow,
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
                     'Score Distribution',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingSmall,
                   ),
                   const SizedBox(height: 16),
                   Center(
                     child: Column(
                       children: [
-                        Icon(Icons.inbox_outlined, size: 40, color: AppColors.textHint),
-                        const SizedBox(height: 10),
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.insights_outlined,
+                              size: 28, color: AppColors.primaryText),
+                        ),
+                        const SizedBox(height: 12),
                         Text(
                           _i('totalCourses') == 0
                               ? 'No score data yet'
                               : 'Overall score: $_avgAssessment · '
                                   '${_i('completedCourses')}/${_i('totalCourses')} completed',
                           textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: AppColors.textSecondary,
-                          ),
+                          style: AppTextStyles.bodySmall,
                         ),
                       ],
                     ),
@@ -201,11 +202,7 @@ class _LmsAdminScoresScreenState extends State<LmsAdminScoresScreen> {
             padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Text(
               'Course Performance',
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.headingSmall,
             ),
           ),
           Padding(
@@ -220,7 +217,7 @@ class _LmsAdminScoresScreenState extends State<LmsAdminScoresScreen> {
             LmsAdminUtils.emptyState('No course performance data.')
           else
             ...courses.map((c) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: _CoursePerfCard(
                     title: (c['title'] ?? 'Course').toString(),
                     category: (c['category'] ?? '—').toString(),
@@ -256,11 +253,12 @@ class _CoursePerfCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final pct = progress.clamp(0, 100).toDouble();
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -284,7 +282,7 @@ class _CoursePerfCard extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       category,
-                      style: const TextStyle(fontSize: 11, color: AppColors.textCaption),
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -300,8 +298,8 @@ class _CoursePerfCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(999),
                   child: LinearProgressIndicator(
                     value: pct / 100,
-                    minHeight: 7,
-                    backgroundColor: AppColors.divider,
+                    minHeight: 8,
+                    backgroundColor: const Color(0xFFECEEF1),
                     valueColor: AlwaysStoppedAnimation(
                       pct >= 100 ? AppColors.success : AppColors.primary,
                     ),

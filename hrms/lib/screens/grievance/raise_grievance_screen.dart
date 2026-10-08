@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
@@ -174,68 +175,97 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text('Raise Grievance', style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
+        title: const Text('Raise Grievance'),
       ),
       body: Column(
         children: [
           Expanded(
             child: Container(
-              color: Colors.white,
+              color: AppColors.surface,
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
                 child: Form(
                   key: _formKey,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                  Text(
-                    'Submit a formal complaint. All submissions are confidential.',
-                    style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(Icons.shield_outlined, size: 20, color: AppColors.primaryText),
+                        ),
+                        const SizedBox(width: 12),
+                        const Expanded(
+                          child: Text(
+                            'Submit a formal complaint. All submissions are confidential.',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.4),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 20),
-                  const Text('Category *', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 24),
+                  const Text('Category *', style: AppTextStyles.label),
+                  const SizedBox(height: 8),
                   if (_categoriesLoading)
                     const Center(child: AppTabLoader())
                   else if (_categoriesError != null)
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: colorScheme.errorContainer.withOpacity(0.5),
+                        color: AppColors.errorBg,
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Text(_categoriesError!, style: TextStyle(color: colorScheme.error)),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.error_outline_rounded, size: 20, color: AppColors.error),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_categoriesError!, style: const TextStyle(color: AppColors.error, fontSize: 13))),
+                        ],
+                      ),
                     )
                   else if (_categories.isEmpty)
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        border: Border.all(color: colorScheme.outline),
+                        color: AppColors.background,
+                        border: Border.all(color: const Color(0xFFE2E5EA)),
                         borderRadius: BorderRadius.circular(12),
                       ),
-                      child: Text(
+                      child: const Text(
                         'No categories available. Contact HR to set up grievance categories.',
-                        style: TextStyle(color: colorScheme.onSurfaceVariant),
+                        style: AppTextStyles.bodySmall,
                       ),
                     )
                   else
                     DropdownButtonFormField<String>(
                       initialValue: _selectedCategoryId,
                       isExpanded: true,
-                      decoration: InputDecoration(
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                      borderRadius: BorderRadius.circular(12),
+                      decoration: const InputDecoration(
+                        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       ),
                       items: _categories.map((c) {
                         final id = c['_id']?.toString() ?? '';
@@ -244,35 +274,34 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                       }).toList(),
                       onChanged: (v) => setState(() => _selectedCategoryId = v),
                     ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   TextFormField(
                     controller: _titleController,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Title *',
                       hintText: 'Brief description of your grievance',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
                     maxLength: 200,
                     validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   TextFormField(
                     controller: _descriptionController,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       labelText: 'Description *',
                       hintText: 'Provide detailed information...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       alignLabelWithHint: true,
                     ),
                     maxLines: 6,
                     validator: (v) => (v == null || v.trim().isEmpty) ? 'Required' : null,
                   ),
-                  const SizedBox(height: 16),
-                  const Text('Incident Date (Optional)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 20),
+                  const Text('Incident Date (Optional)', style: AppTextStyles.label),
+                  const SizedBox(height: 8),
                   InkWell(
+                    borderRadius: BorderRadius.circular(12),
                     onTap: () async {
                       final d = await showDatePicker(
                         context: context,
@@ -285,35 +314,36 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                       decoration: BoxDecoration(
-                        border: Border.all(color: colorScheme.outline),
+                        color: const Color(0xFFF7F8FA),
+                        border: Border.all(color: const Color(0xFFE2E5EA)),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.calendar_today, color: colorScheme.primary),
+                          Icon(Icons.calendar_today_outlined, size: 20, color: AppColors.primaryText),
                           const SizedBox(width: 12),
                           Text(
                             _incidentDate != null ? DateFormat('MMM d, yyyy').format(_incidentDate!) : 'Pick a date',
                             style: TextStyle(
-                              color: _incidentDate != null ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
+                              fontSize: 14,
+                              color: _incidentDate != null ? AppColors.textPrimary : AppColors.textSecondary,
                             ),
                           ),
                         ],
                       ),
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  const Text('People Involved (Optional)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 20),
+                  const Text('People Involved (Optional)', style: AppTextStyles.label),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
                         child: TextField(
                           controller: _personController,
-                          decoration: InputDecoration(
+                          decoration: const InputDecoration(
                             hintText: 'Enter name and tap Add',
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                            contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                           ),
                           onSubmitted: (_) => _addPerson(),
                         ),
@@ -321,36 +351,35 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                       const SizedBox(width: 8),
                       FilledButton(
                         onPressed: _addPerson,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                        ),
                         child: const Text('Add'),
                       ),
                     ],
                   ),
                   if (_peopleInvolved.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
                       children: _peopleInvolved.asMap().entries.map((e) {
                         return Chip(
+                          avatar: Icon(Icons.person_outline_rounded, size: 18, color: AppColors.primaryText),
                           label: Text(e.value),
                           onDeleted: () => _removePerson(e.key),
+                          deleteIcon: const Icon(Icons.close_rounded, size: 18),
                           deleteIconColor: AppColors.error,
                         );
                       }).toList(),
                     ),
                   ],
-                  const SizedBox(height: 16),
-                  const Text('Priority', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 20),
+                  const Text('Priority', style: AppTextStyles.label),
+                  const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     initialValue: _priority,
-                    decoration: InputDecoration(
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded),
+                    borderRadius: BorderRadius.circular(12),
+                    decoration: const InputDecoration(
+                      contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                     ),
                     items: const [
                       DropdownMenuItem(value: 'Low', child: Text('Low')),
@@ -360,88 +389,118 @@ class _RaiseGrievanceScreenState extends State<RaiseGrievanceScreen> {
                     ],
                     onChanged: (v) => setState(() => _priority = v ?? 'Medium'),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   Card(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    margin: EdgeInsets.zero,
+                    clipBehavior: Clip.antiAlias,
                     child: SwitchListTile(
-                      title: const Text('Submit Anonymously'),
-                      subtitle: const Text('Your identity will be hidden from HR'),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      secondary: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.indigoBg,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(Icons.visibility_off_outlined, size: 20, color: AppColors.indigo),
+                      ),
+                      title: const Text('Submit Anonymously', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      subtitle: const Text('Your identity will be hidden from HR', style: AppTextStyles.bodySmall),
                       value: _isAnonymous,
                       onChanged: (v) => setState(() => _isAnonymous = v),
                     ),
                   ),
-                  const SizedBox(height: 16),
-                  const Text('Attachments (Optional)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 20),
+                  const Text('Attachments (Optional)', style: AppTextStyles.label),
+                  const SizedBox(height: 8),
                   GestureDetector(
                     onTap: _pickFiles,
                     child: Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 24),
+                      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
                       decoration: BoxDecoration(
-                        border: Border.all(color: colorScheme.outline, style: BorderStyle.solid),
-                        borderRadius: BorderRadius.circular(12),
-                        color: colorScheme.surfaceContainerLowest,
+                        border: Border.all(color: AppColors.primary.withValues(alpha: 0.4), style: BorderStyle.solid),
+                        borderRadius: BorderRadius.circular(16),
+                        color: AppColors.primary.withValues(alpha: 0.05),
                       ),
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.upload_file_outlined, size: 32, color: AppColors.primary),
-                          const SizedBox(height: 8),
+                          Container(
+                            width: 48,
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(Icons.upload_file_outlined, size: 24, color: AppColors.primaryText),
+                          ),
+                          const SizedBox(height: 12),
                           Text(
                             'Tap to upload files',
-                            style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.w500),
+                            style: TextStyle(color: AppColors.primaryText, fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(height: 4),
-                          Text(
+                          const Text(
                             'PDF, DOC, DOCX, Images, Excel, TXT',
-                            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
                           ),
                         ],
                       ),
                     ),
                   ),
                   if (_selectedFiles.isNotEmpty) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     ...List.generate(_selectedFiles.length, (i) {
                       final name = _fileName(_selectedFiles[i]);
                       return Container(
-                        margin: const EdgeInsets.only(bottom: 6),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
                         decoration: BoxDecoration(
-                          border: Border.all(color: colorScheme.outline),
-                          borderRadius: BorderRadius.circular(10),
+                          color: AppColors.surface,
+                          border: Border.all(color: const Color(0xFFECEEF1)),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.insert_drive_file_outlined, size: 18),
-                            const SizedBox(width: 8),
+                            Container(
+                              width: 36,
+                              height: 36,
+                              decoration: BoxDecoration(
+                                color: AppColors.infoBg,
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Icon(Icons.insert_drive_file_outlined, size: 18, color: AppColors.info),
+                            ),
+                            const SizedBox(width: 12),
                             Expanded(
-                              child: Text(name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
+                              child: Text(name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
                             ),
                             GestureDetector(
                               onTap: () => _removeFile(i),
-                              child: const Icon(Icons.close, size: 18, color: AppColors.error),
+                              behavior: HitTestBehavior.opaque,
+                              child: const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: Icon(Icons.close_rounded, size: 18, color: AppColors.error),
+                              ),
                             ),
                           ],
                         ),
                       );
                     }),
                   ],
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 28),
                   FilledButton(
                     onPressed: _isLoading ? null : _submit,
                     style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      minimumSize: const Size.fromHeight(52),
                     ),
                     child: _isLoading
-                        ? const SizedBox(
+                        ? SizedBox(
                             height: 24,
                             width: 24,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                           )
                         : const Text('Submit Grievance'),
                   ),

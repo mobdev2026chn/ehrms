@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -88,7 +90,7 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
             color: AppColors.primary,
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
               child: _buildOverviewContent(),
             ),
           );
@@ -99,14 +101,7 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: Text(
-          'My Performance',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('My Performance'),
       ),
       body: body,
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
@@ -120,22 +115,27 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, size: 64, color: AppColors.error),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 32, color: AppColors.error),
+            ),
             const SizedBox(height: 16),
             Text(
               _error ?? 'Failed to load performance data',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textSecondary),
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _fetchSummary,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
             ),
           ],
         ),
@@ -164,9 +164,8 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 8),
         _buildHeroRating(avgRating),
-        const SizedBox(height: 20),
+        const SizedBox(height: 16),
         _buildStatTile(
           icon: Icons.rate_review_rounded,
           title: 'Total Reviews',
@@ -222,38 +221,33 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
       decoration: BoxDecoration(
-        color: AppColors.surface,
         borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            AppColors.primary.withValues(alpha: 0.08),
+            AppColors.surface,
+          ],
+        ),
       ),
       child: Column(
         children: [
-          Text(
-            'OVERALL RATING',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              letterSpacing: 1.5,
-              color: AppColors.textSecondary,
-            ),
-          ),
-          const SizedBox(height: 8),
+          const Text('OVERALL RATING', style: AppTextStyles.sectionLabel),
+          const SizedBox(height: 12),
           Text(
             rating > 0 ? rating.toStringAsFixed(1) : 'N/A',
             style: TextStyle(
-              fontSize: 72,
-              fontWeight: FontWeight.bold,
+              fontSize: 64,
+              fontWeight: FontWeight.w700,
               height: 1.0,
-              color: AppColors.primary,
+              letterSpacing: -1.5,
+              color: AppColors.primaryText,
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: _buildStars(rating),
@@ -275,7 +269,10 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
         icon = Icons.star_rounded;
         color = AppColors.divider;
       }
-      return Icon(icon, size: 32, color: color);
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 2),
+        child: Icon(icon, size: 30, color: color),
+      );
     });
   }
 
@@ -296,58 +293,41 @@ class _MyPerformanceScreenState extends State<MyPerformanceScreen> {
           decoration: BoxDecoration(
             color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
+            border: Border.all(color: const Color(0xFFECEEF1)),
+            boxShadow: kSoftCardShadow,
           ),
           child: Row(
             children: [
               Container(
-                width: 48,
-                height: 48,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(icon, color: AppColors.primary, size: 24),
+                child: Icon(icon, color: AppColors.primaryText, size: 22),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
+                    Text(title, style: AppTextStyles.headingSmall),
                     const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
+                    Text(subtitle, style: AppTextStyles.bodySmall),
                   ],
                 ),
               ),
               const SizedBox(width: 12),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
+                style: AppTextStyles.headingLarge,
               ),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right_rounded,
+                    size: 20, color: AppColors.textCaption),
+              ],
             ],
           ),
         ),

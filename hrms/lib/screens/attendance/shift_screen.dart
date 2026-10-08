@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:table_calendar/table_calendar.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/attendance_service.dart';
 import '../../services/auth_service.dart';
 import '../../utils/holiday_off_util.dart';
@@ -680,27 +681,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        titleSpacing: 0,
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-        title: const Text(
-          'Shift Time',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: AppColors.textPrimary,
-          ),
-        ),
+        title: const Text('Shift Time'),
         actions: const [ProfileAppBarActions()],
       ),
       body: RefreshIndicator(
         onRefresh: _refresh,
         child: ListView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
         children: [
           // Text(
           //   'Your Shift',
@@ -719,17 +707,17 @@ class _ShiftScreenState extends State<ShiftScreen> {
           //     color: AppColors.textSecondary,
           //   ),
           // ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
           _buildTodayShiftCard(todayInfo, refFmt),
           if (todayInfo.kind == _DayKind.working && todayInfo.shift != null) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             _buildDetailsCard(todayInfo.shift!),
           ],
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildPoliciesCard(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildShiftCalendarCard(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildSelectedDayCard(),
         ],
         ),
@@ -770,10 +758,17 @@ class _ShiftScreenState extends State<ShiftScreen> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withValues(alpha: 0.14),
+            AppColors.primary.withValues(alpha: 0.04),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
       ),
       child: Column(
@@ -782,15 +777,15 @@ class _ShiftScreenState extends State<ShiftScreen> {
           Row(
             children: [
               Container(
-                width: 40,
-                height: 40,
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
+                  color: AppColors.primary,
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   Icons.access_time_rounded,
-                  color: AppColors.primary,
+                  color: AppColors.onPrimary,
                   size: 22,
                 ),
               ),
@@ -802,17 +797,17 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     Text(
                       "Today's working shift (this cycle)",
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
+                        color: AppColors.primaryText,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       refFmt,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: AppColors.primary,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -820,13 +815,13 @@ class _ShiftScreenState extends State<ShiftScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           if (statusHeadline != null)
             Text(
               statusHeadline,
               style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+                fontSize: 22,
+                fontWeight: FontWeight.w700,
                 height: 1.3,
                 color: AppColors.textPrimary,
               ),
@@ -848,7 +843,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                 window,
                 style: TextStyle(
                   fontSize: 28,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w700,
                   height: 1.1,
                   color: AppColors.textPrimary,
                 ),
@@ -870,7 +865,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     : 'No shift assigned',
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w700,
                   height: 1.3,
                   color: AppColors.textPrimary,
                 ),
@@ -913,24 +908,18 @@ class _ShiftScreenState extends State<ShiftScreen> {
     ];
 
     return AppCard(
+      border: Border.all(color: _hairline),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Shift Details',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 4),
           for (var i = 0; i < rows.length; i++) ...[
             if (i > 0)
-              Divider(
-                height: 1,
-                color: AppColors.textSecondary.withValues(alpha: 0.12),
-              ),
+              const Divider(height: 1, color: _hairline),
             rows[i],
           ],
         ],
@@ -951,12 +940,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: Icon(icon, size: 18, color: AppColors.primary),
-          ),
+          _rowIcon(icon),
           const SizedBox(width: 12),
           Text(
             label,
@@ -999,16 +985,13 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
 
     return AppCard(
+      border: Border.all(color: _hairline),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Shift Policies',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 4),
           if (policies.graceTimeMinutes != null) ...[
@@ -1068,9 +1051,19 @@ class _ShiftScreenState extends State<ShiftScreen> {
     );
   }
 
-  Widget _policyDivider() => Divider(
-        height: 1,
-        color: AppColors.textSecondary.withValues(alpha: 0.12),
+  Widget _policyDivider() => const Divider(height: 1, color: _hairline);
+
+  static const Color _hairline = Color(0xFFECEEF1);
+
+  /// Tinted icon tile used by the detail / policy rows.
+  Widget _rowIcon(IconData icon) => Container(
+        width: 32,
+        height: 32,
+        decoration: BoxDecoration(
+          color: AppColors.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Icon(icon, size: 18, color: AppColors.primaryText),
       );
 
   /// Plain value row (no enabled/disabled styling) — used for informational
@@ -1079,12 +1072,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: Icon(icon, size: 18, color: AppColors.primary),
-          ),
+          _rowIcon(icon),
           const SizedBox(width: 12),
           Text(
             label,
@@ -1125,7 +1115,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
         break;
       case PolicyAvailability.disabled:
         value = disabledLabel;
-        valueColor = disabledColor ?? Colors.red.shade600;
+        valueColor = disabledColor ?? AppColors.error;
         break;
       case PolicyAvailability.unconfigured:
         value = unconfiguredLabel;
@@ -1136,12 +1126,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Padding(
-            padding: const EdgeInsets.only(top: 1),
-            child: Icon(icon, size: 18, color: AppColors.primary),
-          ),
+          _rowIcon(icon),
           const SizedBox(width: 12),
           Text(
             label,
@@ -1181,20 +1168,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
   // ── Shift calendar ─────────────────────────────────────────────────────────
 
   Widget _buildShiftCalendarCard() {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Container(
+    return AppCard(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0D000000),
-            blurRadius: 10,
-            offset: Offset(0, 3),
-          ),
-        ],
-      ),
+      border: Border.all(color: _hairline),
       child: Column(
         children: [
           _buildCalendarHeader(),
@@ -1234,8 +1210,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
             ),
           ),
           const SizedBox(height: 8),
-          Divider(height: 1, color: colorScheme.outline.withValues(alpha: 0.4)),
-          const SizedBox(height: 10),
+          const Divider(height: 1, color: _hairline),
+          const SizedBox(height: 12),
           _buildLegend(),
           const SizedBox(height: 4),
         ],
@@ -1251,6 +1227,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
         children: [
           IconButton(
             visualDensity: VisualDensity.compact,
+            tooltip: 'Previous month',
             icon: Icon(
               Icons.chevron_left_rounded,
               color: _isAtJoiningMonth
@@ -1261,14 +1238,11 @@ class _ShiftScreenState extends State<ShiftScreen> {
           ),
           Text(
             DateFormat('MMMM yyyy').format(_focusedDay),
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
+            tooltip: 'Next month',
             icon: const Icon(
               Icons.chevron_right_rounded,
               color: AppColors.textPrimary,
@@ -1297,20 +1271,20 @@ class _ShiftScreenState extends State<ShiftScreen> {
     final Color bg;
     final Color border;
     if (isToday) {
-      bg = AppColors.primary.withValues(alpha: 0.06);
-      border = AppColors.primary.withValues(alpha: 0.5);
+      bg = AppColors.primary.withValues(alpha: 0.10);
+      border = AppColors.primary;
     } else if (info.kind == _DayKind.holiday) {
-      bg = const Color(0xFFEEF0FF);
+      bg = AppColors.indigoBg;
       border = Colors.transparent;
     } else if (info.kind == _DayKind.leave) {
-      bg = const Color(0xFFDCEAFE);
+      bg = AppColors.infoBg;
       border = Colors.transparent;
     } else if (info.kind == _DayKind.weekOff) {
       bg = AppColors.inputFill;
       border = Colors.transparent;
     } else {
       bg = Colors.transparent;
-      border = AppColors.textSecondary.withValues(alpha: 0.12);
+      border = _hairline;
     }
 
     // Times take priority over the shift name: green dot = in time (start),
@@ -1321,20 +1295,21 @@ class _ShiftScreenState extends State<ShiftScreen> {
         detail = _cellNote('Off');
         break;
       case _DayKind.holiday:
-        detail = _cellNote('Hol', color: const Color(0xFF4F46E5));
+        detail = _cellNote('Hol', color: AppColors.indigo);
         break;
       case _DayKind.leave:
-        detail = _cellNote(info.label ?? 'L', color: const Color(0xFF2563EB));
+        detail = _cellNote(info.label ?? 'L', color: AppColors.info);
         break;
       case _DayKind.working:
         if (winParts != null) {
           detail = Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _timeRow(
-                  Colors.green, _formatTime12(winParts.start, compact: true)),
+              _timeRow(AppColors.success,
+                  _formatTime12(winParts.start, compact: true)),
               const SizedBox(height: 1),
-              _timeRow(Colors.red, _formatTime12(winParts.end, compact: true)),
+              _timeRow(AppColors.error,
+                  _formatTime12(winParts.end, compact: true)),
             ],
           );
         } else if (snap?.isOpen ?? false) {
@@ -1366,8 +1341,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
         padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 1),
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: border),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: border, width: isToday ? 1.4 : 1),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1376,8 +1351,8 @@ class _ShiftScreenState extends State<ShiftScreen> {
               '${day.day}',
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: isToday ? FontWeight.bold : FontWeight.w500,
-                color: AppColors.textPrimary,
+                fontWeight: isToday ? FontWeight.w700 : FontWeight.w500,
+                color: isToday ? AppColors.primaryText : AppColors.textPrimary,
               ),
             ),
             const SizedBox(height: 2),
@@ -1455,14 +1430,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
 
     return Wrap(
       alignment: WrapAlignment.center,
-      spacing: 18,
+      spacing: 16,
       runSpacing: 8,
       children: [
-        item(Colors.green, 'In time'),
-        item(Colors.red, 'Out time'),
+        item(AppColors.success, 'In time'),
+        item(AppColors.error, 'Out time'),
         item(AppColors.inputFill, 'Week Off', circle: false),
-        item(const Color(0xFFEEF0FF), 'Holiday', circle: false),
-        item(const Color(0xFFDCEAFE), 'Leave', circle: false),
+        item(AppColors.indigoBg, 'Holiday', circle: false),
+        item(AppColors.infoBg, 'Leave', circle: false),
       ],
     );
   }
@@ -1621,9 +1596,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Theme.of(context).colorScheme.surface,
+      backgroundColor: AppColors.background,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => DraggableScrollableSheet(
         initialChildSize: 0.85,
@@ -1642,18 +1617,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
                   height: 4,
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(2),
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
               ),
               Text(
                 dateStr,
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.textPrimary,
-                ),
+                style: AppTextStyles.headingMedium,
               ),
               const SizedBox(height: 16),
               _dayDetailSection('Shift Details', Icons.badge_outlined, [
@@ -1689,13 +1660,13 @@ class _ShiftScreenState extends State<ShiftScreen> {
                           valueColor: AppColors.brandDark),
                     if (totalFineMin > 0)
                       _dayDetailRow('Total Fine Minutes', _fmtMins(totalFineMin),
-                          valueColor: Colors.red.shade700),
+                          valueColor: AppColors.error),
                     // Always shown, ₹0.00 included: minutes inside the grace time
                     // are "no fine", not "fine not calculated".
                     _dayDetailRow(
                       'Fine Amount',
                       '₹${NumberFormat('#,##0.00').format(totalFineAmount)}',
-                      valueColor: totalFineAmount > 0 ? Colors.red.shade700 : Colors.green.shade700,
+                      valueColor: totalFineAmount > 0 ? AppColors.error : AppColors.success,
                       bold: true,
                     ),
                   ]),
@@ -1709,7 +1680,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     if (breakRemaining != null && breakRemaining > 0)
                       _dayDetailRow(
                           'Break Remaining', _fmtMins(breakRemaining),
-                          valueColor: Colors.green.shade700),
+                          valueColor: AppColors.success),
                   ];
                   if (breakRows.isEmpty) return const SizedBox.shrink();
                   return Column(
@@ -1731,7 +1702,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                     if (permRemaining != null && permRemaining > 0)
                       _dayDetailRow(
                           'Permission Remaining', _fmtMins(permRemaining),
-                          valueColor: Colors.green.shade700),
+                          valueColor: AppColors.success),
                   ];
                   if (permRows.isEmpty) return const SizedBox.shrink();
                   return Column(
@@ -1753,7 +1724,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
                       _dayDetailRow('Overtime Buffer', _fmtMins(otBuffer)),
                     if (earnedOt > 0)
                       _dayDetailRow('Earned Overtime', _fmtMins(earnedOt),
-                          valueColor: Colors.green.shade700),
+                          valueColor: AppColors.success),
                     // Exact policy notice when overtime is disabled / not configured.
                     if (otNotice.isNotEmpty)
                       Padding(
@@ -1761,9 +1732,9 @@ class _ShiftScreenState extends State<ShiftScreen> {
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.info_outline,
-                                size: 15, color: AppColors.brandDark),
-                            const SizedBox(width: 6),
+                            const Icon(Icons.info_outline_rounded,
+                                size: 16, color: AppColors.brandDark),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 otNotice,
@@ -1820,20 +1791,18 @@ class _ShiftScreenState extends State<ShiftScreen> {
       children: [
         Row(
           children: [
-            Icon(icon, size: 18, color: AppColors.primary),
+            Icon(icon, size: 18, color: AppColors.primaryText),
             const SizedBox(width: 8),
             Text(
               title,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
             ),
           ],
         ),
         const SizedBox(height: 8),
         AppCard(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          border: Border.all(color: _hairline),
           child: Column(children: rows),
         ),
       ],
@@ -1850,7 +1819,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
   }
 
   Color _fineLegColor(dynamic amount) =>
-      amount is num && amount <= 0 ? Colors.green.shade700 : AppColors.brandDark;
+      amount is num && amount <= 0 ? AppColors.success : AppColors.brandDark;
 
   Widget _dayDetailRow(String label, String value,
       {Color? valueColor, bool bold = false}) {
@@ -1872,7 +1841,7 @@ class _ShiftScreenState extends State<ShiftScreen> {
               textAlign: TextAlign.right,
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: bold ? FontWeight.bold : FontWeight.w600,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.w600,
                 color: valueColor ?? AppColors.textPrimary,
               ),
             ),
@@ -1921,25 +1890,26 @@ class _ShiftScreenState extends State<ShiftScreen> {
     return GestureDetector(
       onTap: () => _showDayDetailSheet(_selectedDay),
       child: AppCard(
+        border: Border.all(color: _hairline),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
                 Container(
-                  width: 40,
-                  height: 40,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
                     color: AppColors.primary.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     Icons.event_note_outlined,
-                    color: AppColors.primary,
+                    color: AppColors.primaryText,
                     size: 20,
                   ),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1954,18 +1924,14 @@ class _ShiftScreenState extends State<ShiftScreen> {
                       const SizedBox(height: 2),
                       Text(
                         valueLine,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+                        style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                       ),
                     ],
                   ),
                 ),
-                Icon(
+                const Icon(
                   Icons.chevron_right_rounded,
-                  color: AppColors.textSecondary,
+                  color: AppColors.textCaption,
                   size: 20,
                 ),
               ],

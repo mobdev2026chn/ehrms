@@ -52,23 +52,23 @@ class _PerformanceModuleScreenState extends State<PerformanceModuleScreen> {
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text('Performance',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        elevation: 0,
-        centerTitle: false,
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('Performance'),
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
+          preferredSize: const Size.fromHeight(60),
           child: Container(
-            color: Colors.white,
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(
+                top: BorderSide(color: Color(0xFFECEEF1)),
+                bottom: BorderSide(color: Color(0xFFECEEF1)),
+              ),
+            ),
             child: Row(
               children: [
-                _buildNavItem(0, Icons.grid_view_rounded,    'Overview'),
-                _buildNavItem(1, Icons.flag_rounded,         'Goals'),
-                _buildNavItem(2, Icons.description_outlined, 'Reviews'),
-                _buildNavItem(3, Icons.person_outline,       'Self'),
+                _buildNavItem(0, Icons.grid_view_rounded,      'Overview'),
+                _buildNavItem(1, Icons.flag_outlined,          'Goals'),
+                _buildNavItem(2, Icons.description_outlined,   'Reviews'),
+                _buildNavItem(3, Icons.person_outline_rounded, 'Self'),
               ],
             ),
           ),
@@ -117,25 +117,36 @@ class _PerformanceModuleScreenState extends State<PerformanceModuleScreen> {
     return Expanded(
       child: InkWell(
         onTap: () => _onTabTap(index),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10),
+        child: SizedBox(
+          height: 58,
           child: Column(
-            mainAxisSize: MainAxisSize.min,
             children: [
+              const Spacer(),
               Icon(
                 icon,
                 size: 22,
-                color: isSelected ? AppColors.primary : AppColors.textSecondary,
+                color: isSelected ? AppColors.primaryText : AppColors.textSecondary,
               ),
               const SizedBox(height: 4),
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
                   color: isSelected
-                      ? AppColors.primary
+                      ? AppColors.textPrimary
                       : AppColors.textSecondary,
+                ),
+              ),
+              const Spacer(),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                height: 3,
+                width: isSelected ? 32 : 0,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  borderRadius:
+                      const BorderRadius.vertical(top: Radius.circular(3)),
                 ),
               ),
             ],
@@ -149,11 +160,13 @@ class _PerformanceModuleScreenState extends State<PerformanceModuleScreen> {
     return SizedBox(
       height: 44,
       child: FloatingActionButton.extended(
-        foregroundColor: Colors.white,
+        foregroundColor: AppColors.onPrimary,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         onPressed: _onAddGoal,
         label: const Text(
           'Add Goal',
-          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         ),
         icon: const Icon(Icons.add_rounded, size: 20),
         backgroundColor: AppColors.primary,

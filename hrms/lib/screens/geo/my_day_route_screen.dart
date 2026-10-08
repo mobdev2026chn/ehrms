@@ -6,6 +6,7 @@
 // when tracking is enabled for the employee.
 
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -105,8 +106,8 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   int? _selectedLeg;
   GoogleMapController? _map;
 
-  static const _ink = Color(0xFF0F172A);
-  static const _muted = Color(0xFF64748B);
+  static const _ink = AppColors.textPrimary;
+  static const _muted = AppColors.textSecondary;
 
   Timer? _refresh;
 
@@ -595,15 +596,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: _ink,
-        title: Text(widget.staffName != null ? '${widget.staffName}’s Route' : 'My Route',
-            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: Text(widget.staffName != null ? '${widget.staffName}’s Route' : 'My Route'),
         actions: [
           IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded), tooltip: 'Refresh'),
         ],
@@ -636,27 +631,39 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 
   Widget _dayBar() {
     return Container(
-      color: Colors.white,
-      padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+      color: AppColors.surface,
+      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
       child: Row(
         children: [
-          IconButton(onPressed: () => _shiftDay(-1), icon: const Icon(Icons.chevron_left_rounded)),
+          IconButton(
+            onPressed: () => _shiftDay(-1),
+            icon: const Icon(Icons.chevron_left_rounded),
+            tooltip: 'Previous day',
+          ),
           Expanded(
-            child: InkWell(
-              onTap: _pickDay,
-              borderRadius: BorderRadius.circular(10),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.calendar_today_rounded, size: 15, color: _muted),
-                    const SizedBox(width: 6),
-                    Text(
-                      _isToday ? 'Today, ${DateFormat('d MMM yyyy').format(_day)}' : DateFormat('EEE, d MMM yyyy').format(_day),
-                      style: const TextStyle(fontWeight: FontWeight.w800, color: _ink),
-                    ),
-                  ],
+            child: Material(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: _pickDay,
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.calendar_today_outlined, size: 16, color: AppColors.primaryText),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          _isToday ? 'Today, ${DateFormat('d MMM yyyy').format(_day)}' : DateFormat('EEE, d MMM yyyy').format(_day),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -664,6 +671,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           IconButton(
             onPressed: _isToday ? null : () => _shiftDay(1),
             icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Next day',
           ),
         ],
       ),
@@ -679,10 +687,18 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.wifi_off_rounded, color: _muted, size: 32),
-              const SizedBox(height: 8),
-              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: _muted)),
-              const SizedBox(height: 8),
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.error.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.wifi_off_rounded, color: AppColors.error, size: 28),
+              ),
+              const SizedBox(height: 16),
+              Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodySmall),
+              const SizedBox(height: 16),
               OutlinedButton(onPressed: _load, child: const Text('Retry')),
             ],
           ),
@@ -690,26 +706,43 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       );
     }
     return Container(
-      color: Colors.white,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
+      ),
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           _summary(),
           const SizedBox(height: 12),
           _legend(),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           if (_flags.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text(
-                'No punch or field activity on this day.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: _muted),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Column(
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.flag_outlined, size: 28, color: AppColors.primaryText),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'No punch or field activity on this day.',
+                    textAlign: TextAlign.center,
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ],
               ),
             )
           else ...[
-            const Text('Timeline', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink)),
-            const SizedBox(height: 10),
+            const Text('Timeline', style: AppTextStyles.headingSmall),
+            const SizedBox(height: 12),
             ..._timeline(),
           ],
         ],
@@ -720,17 +753,28 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   Widget _summary() {
     final km = _totalKm;
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: _trackingOn ? const Color(0xFFECFDF5) : const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _trackingOn ? const Color(0xFFA7F3D0) : const Color(0xFFE2E8F0)),
+        color: _trackingOn ? AppColors.successBg.withValues(alpha: 0.5) : AppColors.background,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _trackingOn ? AppColors.success.withValues(alpha: 0.25) : const Color(0xFFECEEF1),
+        ),
       ),
       child: Row(
         children: [
-          Icon(
-            _trackingOn ? Icons.route_rounded : Icons.location_off_outlined,
-            color: _trackingOn ? const Color(0xFF059669) : _muted,
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: (_trackingOn ? AppColors.success : _muted).withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              _trackingOn ? Icons.route_rounded : Icons.location_off_outlined,
+              size: 22,
+              color: _trackingOn ? AppColors.success : _muted,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -739,7 +783,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
               children: [
                 Text(
                   _trackingOn ? 'Distance travelled' : 'Tracking is off',
-                  style: const TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w600),
+                  style: AppTextStyles.caption.copyWith(color: _muted, fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -747,16 +791,16 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                       ? '${(km ?? 0).toStringAsFixed(1)} km · ${_legs.length} leg${_legs.length == 1 ? '' : 's'}'
                       : 'Distance is not recorded for this employee',
                   style: TextStyle(
-                    fontSize: _trackingOn ? 18 : 13,
-                    fontWeight: FontWeight.w900,
-                    color: _trackingOn ? const Color(0xFF047857) : _ink,
+                    fontSize: _trackingOn ? 20 : 13,
+                    fontWeight: _trackingOn ? FontWeight.w700 : FontWeight.w600,
+                    color: _trackingOn ? AppColors.success : _ink,
                   ),
                 ),
                 if (_trackingOn && _trailKm != null) ...[
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   Text(
                     'Whole day tracked: ${_trailKm!.toStringAsFixed(1)} km (incl. movement at clients)',
-                    style: const TextStyle(fontSize: 11.5, color: _muted),
+                    style: AppTextStyles.caption.copyWith(color: _muted),
                   ),
                 ],
               ],
@@ -773,7 +817,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           children: [
             Icon(Icons.flag_rounded, size: 16, color: c),
             const SizedBox(width: 2),
-            Text(label, style: const TextStyle(fontSize: 11.5, color: _muted)),
+            Text(label, style: AppTextStyles.caption.copyWith(color: _muted)),
           ],
         );
     Widget visitDot(Color c, String label) => Row(
@@ -893,7 +937,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                     ),
                   ),
                   if (!isLast)
-                    Expanded(child: Container(width: 2, color: const Color(0xFFE2E8F0))),
+                    Expanded(child: Container(width: 2, color: AppColors.divider)),
                 ],
               ),
             ),
@@ -911,12 +955,12 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                             title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: _ink),
+                            style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
                           ),
                         ),
                         Text(
                           out != null ? '${time.format(f.at)} – ${time.format(out.at)}' : time.format(f.at),
-                          style: const TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w700),
+                          style: AppTextStyles.caption.copyWith(color: _muted, fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
@@ -927,19 +971,19 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                           f.address,
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11.5, color: _muted),
+                          style: AppTextStyles.caption.copyWith(color: _muted),
                         ),
                       ),
                     if (f.type == 'field_in')
                       Padding(
-                        padding: const EdgeInsets.only(top: 2),
+                        padding: const EdgeInsets.only(top: 4),
                         child: Text(
                           out != null ? 'At site ${_durationLabel(out.at.difference(f.at))}' : 'At site now',
-                          style: TextStyle(fontSize: 11.5, color: color, fontWeight: FontWeight.w700),
+                          style: AppTextStyles.caption.copyWith(color: color, fontWeight: FontWeight.w600),
                         ),
                       ),
                     if (f.pos == null)
-                      const Text('Location not recorded', style: TextStyle(fontSize: 11.5, color: _muted)),
+                      Text('Location not recorded', style: AppTextStyles.caption.copyWith(color: _muted)),
                   ],
                 ),
               ),
@@ -975,21 +1019,21 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
             const SizedBox(width: 10),
             Expanded(
               child: Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                 decoration: BoxDecoration(
                   color: l.color.withValues(alpha: selected ? 0.12 : 0.06),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: l.color.withValues(alpha: selected ? 0.9 : 0.25)),
                 ),
                 child: Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                      decoration: BoxDecoration(color: l.color, borderRadius: BorderRadius.circular(6)),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                      decoration: BoxDecoration(color: l.color, borderRadius: BorderRadius.circular(999)),
                       child: Text(
                         'L${l.index}',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white),
+                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -1005,7 +1049,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                     const SizedBox(width: 6),
                     Text(
                       l.km == null ? '—' : '${l.km!.toStringAsFixed(1)} km',
-                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w900, color: l.color),
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: l.color),
                     ),
                   ],
                 ),

@@ -99,6 +99,59 @@ String _proofUrlOf(dynamic proof) {
   return proof.toString();
 }
 
+/// Rounded status pill (Approved / Pending / Rejected / ...) using the shared
+/// [AppColors.statusStyle] palette. Shows [status] exactly as given.
+Widget _requestStatusPill(String status) {
+  final st = AppColors.statusStyle(status.trim());
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    decoration: BoxDecoration(
+      color: st.bg,
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: Text(
+      status,
+      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: st.fg),
+    ),
+  );
+}
+
+/// Label / value row used inside the request detail bottom sheets. A "Status"
+/// row renders its value as a status pill; every other value is plain text.
+Widget _requestDetailRow(String label, String value, {double labelWidth = 110}) {
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 6),
+    child: Row(
+      crossAxisAlignment: label == 'Status'
+          ? CrossAxisAlignment.center
+          : CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: labelWidth,
+          child: Text(
+            '$label:',
+            style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w500),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: label == 'Status' && value.trim().isNotEmpty
+              ? Align(
+                  alignment: Alignment.centerLeft,
+                  child: _requestStatusPill(value),
+                )
+              : Text(
+                  value,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+        ),
+      ],
+    ),
+  );
+}
+
 /// Builds the "Proof Files" section for an expense detail sheet: a header plus
 /// one tappable "View Proof" row per uploaded document. Tapping a row opens the
 /// document via [showProofDocument]. Returns an empty list when [proofs] is
@@ -110,36 +163,43 @@ List<Widget> buildProofFileRows(
 ) {
   if (proofs.isEmpty) return const [];
   return <Widget>[
-    const SizedBox(height: 12),
+    const SizedBox(height: 16),
     Text(
       'Proof Files:',
-      style: TextStyle(
-        fontWeight: FontWeight.bold,
-        color: AppColors.textPrimary,
-      ),
+      style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
     ),
-    const SizedBox(height: 6),
+    const SizedBox(height: 8),
     ...proofs.map((proof) {
       final proofUrl = _proofUrlOf(proof);
       return Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.only(bottom: 8),
         child: InkWell(
           onTap: () => showProofDocument(context, requestService, proofUrl),
-          borderRadius: BorderRadius.circular(8),
-          child: Row(
-            children: [
-              Icon(Icons.attach_file, size: 18, color: AppColors.primary),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'View Proof',
-                  style: TextStyle(
-                    color: Colors.blue,
-                    fontWeight: FontWeight.w500,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.infoBg.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.info.withValues(alpha: 0.2)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.attach_file_rounded, size: 18, color: AppColors.info),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'View Proof',
+                    style: TextStyle(
+                      color: AppColors.info,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
+                Icon(Icons.open_in_new_rounded, size: 16, color: AppColors.info),
+              ],
+            ),
           ),
         ),
       );
@@ -222,7 +282,8 @@ void _showProofImageDialog(BuildContext context, List<int> bytes) {
             backgroundColor: Colors.transparent,
             elevation: 0,
             leading: IconButton(
-              icon: const Icon(Icons.close, color: Colors.black),
+              tooltip: 'Close',
+              icon: const Icon(Icons.close_rounded, color: AppColors.textPrimary),
               onPressed: () => Navigator.pop(ctx),
             ),
           ),
@@ -445,12 +506,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text('My Requests', style: AppTextStyles.headingMedium),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('My Requests'),
       ),
       drawer: AppDrawer(
         currentIndex: widget.dashboardTabIndex ?? 1,
@@ -497,23 +553,31 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
   Widget _buildTabStrip() {
     return Container(
       color: AppColors.background,
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-      child: TabBar(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.all(4),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: kSoftCardShadow,
+        ),
+        child: TabBar(
         controller: _tabController,
         isScrollable: false,
         indicatorSize: TabBarIndicatorSize.tab,
-        indicatorPadding: const EdgeInsets.all(3),
+        indicatorPadding: EdgeInsets.zero,
         indicator: BoxDecoration(
-          color: AppColors.primary.withValues(alpha: 0.15),
+          color: AppColors.primary.withValues(alpha: 0.14),
           borderRadius: BorderRadius.circular(12),
         ),
         dividerColor: Colors.transparent,
-        labelColor: AppColors.primary,
+        labelColor: AppColors.primaryText,
         unselectedLabelColor: AppColors.textSecondary,
-        labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
         unselectedLabelStyle: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
         ),
         labelPadding: const EdgeInsets.symmetric(horizontal: 2),
         tabs: _tabSpecs
@@ -529,6 +593,7 @@ class _MyRequestsScreenState extends State<MyRequestsScreen>
               ),
             )
             .toList(),
+        ),
       ),
     );
   }
@@ -571,9 +636,6 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
   final result = await showModalBottomSheet<DateTimeRange>(
     context: context,
     isScrollControlled: true,
-    shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-    ),
     builder: (ctx) {
       return StatefulBuilder(
         builder: (context, setModalState) {
@@ -590,16 +652,13 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    padding: const EdgeInsets.fromLTRB(20, 16, 12, 8),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
                           'Select from - to date',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
+                          style: AppTextStyles.headingMedium,
                         ),
                         TextButton(
                           onPressed: () {
@@ -656,26 +715,51 @@ Future<DateTimeRange?> showDateRangePickerSameCalendar({
                         headerStyle: HeaderStyle(
                           formatButtonVisible: false,
                           titleCentered: true,
+                          titleTextStyle: AppTextStyles.headingSmall,
+                          leftChevronIcon: const Icon(
+                            Icons.chevron_left_rounded,
+                            color: AppColors.textPrimary,
+                          ),
+                          rightChevronIcon: const Icon(
+                            Icons.chevron_right_rounded,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
                         calendarStyle: CalendarStyle(
                           rangeStartDecoration: BoxDecoration(
                             color: AppColors.primary,
                             shape: BoxShape.circle,
                           ),
+                          rangeStartTextStyle: TextStyle(
+                            color: AppColors.onPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
                           rangeEndDecoration: BoxDecoration(
                             color: AppColors.primary,
                             shape: BoxShape.circle,
                           ),
-                          rangeHighlightColor: AppColors.primary.withOpacity(
-                            0.2,
+                          rangeEndTextStyle: TextStyle(
+                            color: AppColors.onPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          rangeHighlightColor: AppColors.primary.withValues(
+                            alpha: 0.16,
                           ),
                           selectedDecoration: BoxDecoration(
                             color: AppColors.primary,
                             shape: BoxShape.circle,
                           ),
+                          selectedTextStyle: TextStyle(
+                            color: AppColors.onPrimary,
+                            fontWeight: FontWeight.w600,
+                          ),
                           todayDecoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.5),
                             shape: BoxShape.circle,
+                            border: Border.all(color: AppColors.primary, width: 1.5),
+                          ),
+                          todayTextStyle: TextStyle(
+                            color: AppColors.primaryText,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
@@ -708,15 +792,14 @@ class _RequestDetailBottomSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      decoration: BoxDecoration(
-        color: colorScheme.surface,
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         boxShadow: [
           BoxShadow(
-            color: colorScheme.shadow.withOpacity(0.3),
-            blurRadius: 20,
+            color: Color(0x14000000),
+            blurRadius: 16,
             offset: Offset(0, -4),
           ),
         ],
@@ -734,31 +817,32 @@ class _RequestDetailBottomSheet extends StatelessWidget {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: colorScheme.outline,
+                color: const Color(0xFFE2E5EA),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             Row(
               children: [
                 const SizedBox(width: 20),
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: iconColor.withOpacity(0.12),
+                    color: iconColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(icon, color: iconColor, size: 24),
+                  child: Icon(icon, color: iconColor, size: 22),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     title,
-                    style: AppTextStyles.headingMedium.copyWith(
-                      color: colorScheme.onSurface,
-                    ),
+                    style: AppTextStyles.headingMedium,
                   ),
                 ),
+                const SizedBox(width: 20),
               ],
             ),
             const SizedBox(height: 20),
@@ -770,9 +854,9 @@ class _RequestDetailBottomSheet extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
+                      color: AppColors.background,
                       borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: colorScheme.outline),
+                      border: Border.all(color: const Color(0xFFECEEF1)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -784,14 +868,6 @@ class _RequestDetailBottomSheet extends StatelessWidget {
                     width: double.infinity,
                     child: FilledButton(
                       onPressed: () => Navigator.pop(context),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: colorScheme.onPrimary,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
                       child: Text('Close'),
                     ),
                   ),
@@ -864,24 +940,22 @@ class _PaginationBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       onTap: isCurrent ? null : () => onPageSelected(page),
       child: Container(
-        constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
         padding: const EdgeInsets.symmetric(horizontal: 8),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: isCurrent ? AppColors.primary : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
+          color: isCurrent ? AppColors.primary : AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
           border: Border.all(
-            color: isCurrent
-                ? AppColors.primary
-                : AppColors.primary.withOpacity(0.3),
+            color: isCurrent ? AppColors.primary : const Color(0xFFE2E5EA),
           ),
         ),
         child: Text(
           '$page',
           style: TextStyle(
-            color: isCurrent ? Colors.white : AppColors.primary,
-            fontSize: 15,
-            fontWeight: FontWeight.bold,
+            color: isCurrent ? AppColors.onPrimary : AppColors.textPrimary,
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ),
@@ -893,13 +967,13 @@ class _PaginationBar extends StatelessWidget {
       borderRadius: BorderRadius.circular(8),
       onTap: enabled ? onTap : null,
       child: Container(
-        width: 34,
-        height: 34,
+        width: 36,
+        height: 36,
         alignment: Alignment.center,
         child: Icon(
           icon,
           size: 22,
-          color: enabled ? AppColors.primary : Colors.grey.shade400,
+          color: enabled ? AppColors.textPrimary : AppColors.textHint,
         ),
       ),
     );
@@ -915,14 +989,14 @@ class _PaginationBar extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           _arrow(
-            Icons.chevron_left,
+            Icons.chevron_left_rounded,
             currentPage > 1,
             () => onPageSelected(currentPage - 1),
           ),
           for (final p in pages) ...[const SizedBox(width: 6), _pageChip(p)],
           const SizedBox(width: 6),
           _arrow(
-            Icons.chevron_right,
+            Icons.chevron_right_rounded,
             currentPage < totalPages,
             () => onPageSelected(currentPage + 1),
           ),
@@ -934,17 +1008,13 @@ class _PaginationBar extends StatelessWidget {
   Widget _createButton() {
     final button = ElevatedButton.icon(
       onPressed: onCreate,
-      icon: const Icon(Icons.add, size: 20),
+      icon: const Icon(Icons.add_rounded, size: 20),
       label: Text(
         createLabel ?? '',
-        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
       ),
       style: ElevatedButton.styleFrom(
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
     );
     final tip = createTooltip;
@@ -970,10 +1040,10 @@ class _PaginationBar extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Container(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          border: Border(top: BorderSide(color: Colors.grey.shade200)),
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
         ),
         child: Row(
           children: [
@@ -1044,23 +1114,24 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text('Cancel Leave Request', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-        content: const Text('Are you sure you want to cancel this leave request?'),
+        title: const Text('Cancel Leave Request', style: AppTextStyles.headingSmall),
+        content: Text(
+          'Are you sure you want to cancel this leave request?',
+          style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('No', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
+            child: const Text('No', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFDC2626),
+              backgroundColor: AppColors.error,
               foregroundColor: Colors.white,
-              elevation: 0,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              minimumSize: const Size(0, 44),
             ),
-            child: const Text('Yes, Cancel', style: TextStyle(fontWeight: FontWeight.w800)),
+            child: const Text('Yes, Cancel'),
           ),
         ],
       ),
@@ -1221,7 +1292,6 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       builder: (ctx) => ApplyLeaveDialog(onSuccess: _fetchLeaves),
     );
   }
@@ -1277,8 +1347,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
       backgroundColor: Colors.transparent,
       builder: (ctx) => _RequestDetailBottomSheet(
         title: 'Leave Details',
-        icon: Icons.calendar_today,
-        iconColor: AppColors.primary,
+        icon: Icons.calendar_today_rounded,
+        iconColor: AppColors.primaryText,
         children: [
           _detailRow('Leave Type', leave['leaveType'] ?? ''),
           if (_isHalfDayLeaveRecord(leave))
@@ -1300,27 +1370,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
       ),
     );
   }
-  Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label:',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  Widget _detailRow(String label, String value) => _requestDetailRow(label, value);
 
   static String _trimBalanceNum(num n) {
     if (n == n.roundToDouble()) return n.toInt().toString();
@@ -1360,21 +1410,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
 
         return Column(
           children: [
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFF1F5F9)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x08000000),
-                    blurRadius: 10,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-              ),
+            AppCard(
+              margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+              border: Border.all(color: const Color(0xFFECEEF1)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1385,18 +1423,20 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         child: Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.all(7),
+                              width: 40,
+                              height: 40,
+                              alignment: Alignment.center,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFFFFBEB),
-                                borderRadius: BorderRadius.circular(10),
+                                color: AppColors.primary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                              child: const Icon(
+                              child: Icon(
                                 Icons.calendar_month_outlined,
-                                color: Color(0xFFEFAA1F),
-                                size: 18,
+                                color: AppColors.primaryText,
+                                size: 20,
                               ),
                             ),
-                            const SizedBox(width: 8),
+                            const SizedBox(width: 12),
                             const Expanded(
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1404,21 +1444,14 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 children: [
                                   Text(
                                     'Leave Entitlements & Balances',
-                                    style: TextStyle(
-                                      fontSize: 13.5,
-                                      fontWeight: FontWeight.w800,
-                                      color: Color(0xFF0F172A),
-                                    ),
+                                    style: AppTextStyles.headingSmall,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
+                                  SizedBox(height: 2),
                                   Text(
                                     'leaves',
-                                    style: TextStyle(
-                                      fontSize: 11.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: Color(0xFF94A3B8),
-                                    ),
+                                    style: AppTextStyles.caption,
                                   ),
                                 ],
                               ),
@@ -1426,13 +1459,13 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           ],
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.fromLTRB(10, 4, 4, 4),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFFBEB),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: const Color(0xFFFDE68A)),
+                          color: AppColors.brandLight,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: AppColors.brandBorder),
                         ),
                         child: Row(
                           mainAxisSize: MainAxisSize.min,
@@ -1446,17 +1479,19 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               ),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                              decoration: const BoxDecoration(
-                                color: Color(0xFFEFAA1F),
-                                shape: BoxShape.circle,
+                              constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: AppColors.primary,
+                                borderRadius: BorderRadius.circular(999),
                               ),
                               child: Text(
                                 _trimBalanceNum(totalAvailableLeaves),
-                                style: const TextStyle(
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w900,
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.onPrimary,
                                 ),
                               ),
                             ),
@@ -1465,11 +1500,12 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   Container(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    decoration: const BoxDecoration(
-                      border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(10),
                     ),
                     child: Row(
                       children: const [
@@ -1479,8 +1515,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             'TYPE',
                             style: TextStyle(
                               fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textCaption,
                               letterSpacing: 0.5,
                             ),
                           ),
@@ -1497,8 +1533,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textCaption,
                               letterSpacing: 0.5,
                             ),
                           ),
@@ -1511,8 +1547,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF94A3B8),
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textCaption,
                               letterSpacing: 0.5,
                             ),
                           ),
@@ -1528,8 +1564,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               textAlign: TextAlign.right,
                               style: TextStyle(
                                 fontSize: 11.5,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF94A3B8),
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textCaption,
                                 letterSpacing: 0.5,
                               ),
                             ),
@@ -1540,11 +1576,11 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                   ),
                   if (_leaveBalances.isEmpty)
                     const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
+                      padding: EdgeInsets.symmetric(vertical: 20),
                       child: Center(
                         child: Text(
                           'No leave balances found',
-                          style: TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8)),
+                          style: AppTextStyles.bodySmall,
                         ),
                       ),
                     )
@@ -1556,13 +1592,13 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       final used = (b['takenCount'] as num? ?? b['used'] as num? ?? 0);
                       final avail = b['remaining'] as num? ?? b['availableBalance'] as num? ?? (total > used ? total - used : 0);
                       final isCasual = name.toLowerCase().contains('casual');
-                      final badgeBg = isCasual ? const Color(0xFFECFDF5) : const Color(0xFFFFFBEB);
-                      final badgeColor = isCasual ? const Color(0xFF047857) : AppColors.brandDark;
+                      final badgeBg = isCasual ? AppColors.successBg : AppColors.brandLight;
+                      final badgeColor = isCasual ? AppColors.success : AppColors.brandDark;
 
                       return Container(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
                         decoration: const BoxDecoration(
-                          border: Border(bottom: BorderSide(color: Color(0xFFF8FAFC))),
+                          border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
                         ),
                         child: Row(
                           children: [
@@ -1571,18 +1607,18 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               child: Row(
                                 children: [
                                   Container(
-                                    width: 22,
-                                    height: 22,
+                                    width: 28,
+                                    height: 28,
                                     alignment: Alignment.center,
                                     decoration: BoxDecoration(
                                       color: badgeBg,
-                                      borderRadius: BorderRadius.circular(6),
+                                      borderRadius: BorderRadius.circular(8),
                                     ),
                                     child: Text(
                                       initial,
                                       style: TextStyle(
                                         fontSize: 12.5,
-                                        fontWeight: FontWeight.w900,
+                                        fontWeight: FontWeight.w700,
                                         color: badgeColor,
                                       ),
                                     ),
@@ -1597,7 +1633,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                           style: const TextStyle(
                                             fontSize: 13,
                                             fontWeight: FontWeight.w700,
-                                            color: Color(0xFF1E293B),
+                                            color: AppColors.textPrimary,
                                           ),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
@@ -1605,8 +1641,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                         const Text(
                                           'Paid • Carry Forward',
                                           style: TextStyle(
-                                            fontSize: 9.5,
-                                            color: Color(0xFF94A3B8),
+                                            fontSize: 11,
+                                            color: AppColors.textSecondary,
                                           ),
                                         ),
                                       ],
@@ -1622,8 +1658,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF1E293B),
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textPrimary,
                                 ),
                               ),
                             ),
@@ -1634,8 +1670,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                 textAlign: TextAlign.center,
                                 style: const TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                  color: Color(0xFF94A3B8),
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textSecondary,
                                 ),
                               ),
                             ),
@@ -1644,10 +1680,10 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               child: Text(
                                 '${_trimBalanceNum(avail)} day(s)',
                                 textAlign: TextAlign.right,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFFEFAA1F),
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.primaryText,
                                 ),
                               ),
                             ),
@@ -1658,67 +1694,51 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                 ],
               ),
             ),
-            Container(
+            AppCard(
               margin: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFF1F5F9)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x08000000),
-                    blurRadius: 10,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-              ),
+              border: Border.all(color: const Color(0xFFECEEF1)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(8),
+                        width: 40,
+                        height: 40,
+                        alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFFBEB),
-                          borderRadius: BorderRadius.circular(10),
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.mail_outline_rounded,
-                          color: Color(0xFFEFAA1F),
+                          color: AppColors.primaryText,
                           size: 20,
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       const Text(
                         'Total Requests',
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style: AppTextStyles.headingSmall,
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   Row(
                     children: [
                       Container(
-                        width: 58,
-                        height: 58,
+                        width: 64,
+                        height: 64,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          border: Border.all(color: const Color(0xFFEFAA1F), width: 3),
-                          color: Colors.white,
+                          border: Border.all(color: AppColors.primary, width: 3),
+                          color: AppColors.primary.withValues(alpha: 0.08),
                         ),
                         alignment: Alignment.center,
                         child: Text(
                           '$totalRequests',
-                          style: const TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFFEFAA1F),
+                          style: AppTextStyles.headingLarge.copyWith(
+                            color: AppColors.primaryText,
                           ),
                         ),
                       ),
@@ -1731,53 +1751,53 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               children: [
                                 const Text(
                                   'Approved',
-                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                                 ),
                                 Text(
                                   '$approvedCount',
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF10B981)),
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success),
                                 ),
                               ],
                             ),
-                            const Divider(height: 10, color: Color(0xFFF1F5F9)),
+                            const Divider(height: 10, color: Color(0xFFECEEF1)),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 const Text(
                                   'Rejected',
-                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                                 ),
                                 Text(
                                   '$rejectedCount',
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFF43F5E)),
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.error),
                                 ),
                               ],
                             ),
-                            const Divider(height: 10, color: Color(0xFFF1F5F9)),
+                            const Divider(height: 10, color: Color(0xFFECEEF1)),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 const Text(
                                   'Pending',
-                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                                 ),
                                 Text(
                                   '$pendingCount',
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFEFAA1F)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.primaryText),
                                 ),
                               ],
                             ),
-                            const Divider(height: 10, color: Color(0xFFF1F5F9)),
+                            const Divider(height: 10, color: Color(0xFFECEEF1)),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
                                 const Text(
                                   'Cancelled',
-                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                                 ),
                                 Text(
                                   '$cancelledCount',
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFF64748B)),
+                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                                 ),
                               ],
                             ),
@@ -1791,7 +1811,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     alignment: Alignment.centerRight,
                     child: Text(
                       '$totalRequests request(s) total',
-                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8)),
+                      style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.textCaption),
                     ),
                   ),
                 ],
@@ -1815,12 +1835,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       'Leave Requests',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
-                        letterSpacing: -0.3,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ),
                   Row(
@@ -1832,26 +1847,26 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                     onTap: toggleFilters,
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
-                      padding: const EdgeInsets.all(6),
+                      padding: const EdgeInsets.all(9),
                       decoration: BoxDecoration(
                         color: (_showFilters || _startDate != null)
-                            ? const Color(0xFFFFFBEB)
-                            : const Color(0xFFF1F5F9),
+                            ? AppColors.brandLight
+                            : const Color(0xFFECEEF1),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Icon(
                         Icons.filter_list_rounded,
-                        size: 18,
+                        size: 20,
                         color: (_showFilters || _startDate != null)
-                            ? const Color(0xFFEFAA1F)
-                            : const Color(0xFF64748B),
+                            ? AppColors.primaryText
+                            : AppColors.textSecondary,
                       ),
                     ),
                   ),
                   const SizedBox(width: 6),
                   Container(
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF1F5F9),
+                      color: const Color(0xFFECEEF1),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     padding: const EdgeInsets.all(3),
@@ -1861,9 +1876,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           onTap: () => setState(() => _isTableView = false),
                           borderRadius: BorderRadius.circular(8),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             decoration: BoxDecoration(
-                              color: !_isTableView ? Colors.white : Colors.transparent,
+                              color: !_isTableView ? AppColors.surface : Colors.transparent,
                               borderRadius: BorderRadius.circular(8),
                               boxShadow: !_isTableView
                                   ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -1873,8 +1888,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               children: [
                                 Icon(
                                   Icons.grid_view_rounded,
-                                  size: 14,
-                                  color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                                  size: 16,
+                                  color: !_isTableView ? AppColors.primaryText : AppColors.textSecondary,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
@@ -1882,7 +1897,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                   style: TextStyle(
                                     fontSize: 12.5,
                                     fontWeight: FontWeight.w700,
-                                    color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                    color: !_isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                                   ),
                                 ),
                               ],
@@ -1893,9 +1908,9 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           onTap: () => setState(() => _isTableView = true),
                           borderRadius: BorderRadius.circular(8),
                           child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                             decoration: BoxDecoration(
-                              color: _isTableView ? Colors.white : Colors.transparent,
+                              color: _isTableView ? AppColors.surface : Colors.transparent,
                               borderRadius: BorderRadius.circular(8),
                               boxShadow: _isTableView
                                   ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -1905,8 +1920,8 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                               children: [
                                 Icon(
                                   Icons.table_rows_rounded,
-                                  size: 14,
-                                  color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                                  size: 16,
+                                  color: _isTableView ? AppColors.primaryText : AppColors.textSecondary,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
@@ -1914,7 +1929,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                                   style: TextStyle(
                                     fontSize: 12.5,
                                     fontWeight: FontWeight.w700,
-                                    color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                    color: _isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                                   ),
                                 ),
                               ],
@@ -1933,28 +1948,16 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                 children: [
                   Expanded(
                     child: SizedBox(
-                      height: 38,
+                      height: 44,
                       child: TextField(
                         controller: _searchController,
                         decoration: InputDecoration(
                           hintText: 'Search...',
-                          hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                          prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                          hintStyle: const TextStyle(fontSize: 14, color: AppColors.textCaption),
+                          prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                           filled: true,
-                          fillColor: Colors.white,
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(10),
-                            borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                          ),
+                          fillColor: AppColors.surface,
                         ),
                         onChanged: (val) {
                           if (_debounce?.isActive ?? false) _debounce!.cancel();
@@ -1989,18 +1992,18 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                   onTap: _pickDate,
                   borderRadius: BorderRadius.circular(10),
                   child: Container(
-                    height: 38,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    height: 44,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(12),
                       border: Border.all(
-                        color: _startDate != null ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                        color: _startDate != null ? AppColors.primary : const Color(0xFFE2E5EA),
                       ),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFF94A3B8)),
+                        const Icon(Icons.calendar_today_rounded, size: 18, color: AppColors.textSecondary),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -2010,7 +2013,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: _startDate == null ? FontWeight.w500 : FontWeight.w700,
-                              color: _startDate == null ? const Color(0xFF94A3B8) : const Color(0xFF1E293B),
+                              color: _startDate == null ? AppColors.textCaption : AppColors.textPrimary,
                             ),
                           ),
                         ),
@@ -2020,7 +2023,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             borderRadius: BorderRadius.circular(8),
                             child: const Padding(
                               padding: EdgeInsets.all(4),
-                              child: Icon(Icons.close_rounded, size: 16, color: Color(0xFF64748B)),
+                              child: Icon(Icons.close_rounded, size: 16, color: AppColors.textSecondary),
                             ),
                           ),
                       ],
@@ -2041,15 +2044,14 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
         final isApproved = status.toLowerCase() == 'approved';
         final isRejected = status.toLowerCase() == 'rejected';
 
-        final Color statusBg = isApproved
-            ? const Color(0xFFECFDF5)
-            : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-        final Color statusBorder = isApproved
-            ? const Color(0xFFA7F3D0)
-            : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-        final Color statusText = isApproved
-            ? const Color(0xFF059669)
-            : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+        // Pill colours come from the shared status palette (approved-like and
+        // rejected-like states keep their existing grouping).
+        final statusPalette = AppColors.statusStyle(
+          isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+        );
+        final Color statusBg = statusPalette.bg;
+        final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+        final Color statusText = statusPalette.fg;
 
         final leaveType = leave['leaveType']?.toString() ?? 'Leave';
         final days = leave['days']?.toString() ?? '1';
@@ -2058,16 +2060,10 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFF1F5F9)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x08000000),
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
+            border: Border.all(color: const Color(0xFFECEEF1)),
+            boxShadow: kSoftCardShadow,
           ),
           child: Material(
             color: Colors.transparent,
@@ -2075,7 +2071,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
               onTap: () => _showLeaveDetails(leave),
               borderRadius: BorderRadius.circular(16),
               child: Padding(
-                padding: const EdgeInsets.all(14.0),
+                padding: const EdgeInsets.all(16.0),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -2086,28 +2082,24 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           child: Row(
                             children: [
                               Container(
-                                width: 28,
-                                height: 28,
+                                width: 40,
+                                height: 40,
                                 alignment: Alignment.center,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFFFFFBEB),
-                                  borderRadius: BorderRadius.circular(8),
+                                  color: AppColors.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                child: const Icon(
+                                child: Icon(
                                   Icons.calendar_today_outlined,
-                                  size: 15,
-                                  color: Color(0xFFEFAA1F),
+                                  size: 20,
+                                  color: AppColors.primaryText,
                                 ),
                               ),
-                              const SizedBox(width: 8),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Text(
                                   _isHalfDayLeaveRecord(leave) ? '$leaveType (Half Day)' : leaveType,
-                                  style: const TextStyle(
-                                    fontSize: 14.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFF0F172A),
-                                  ),
+                                  style: AppTextStyles.headingSmall,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -2116,46 +2108,47 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: statusBg,
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(999),
                             border: Border.all(color: statusBorder),
                           ),
                           child: Text(
                             status,
                             style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
                               color: statusText,
                             ),
                           ),
                         ),
                       ],
                     ),
-                    const Divider(height: 18, color: Color(0xFFF1F5F9)),
+                    const Divider(height: 24, color: Color(0xFFECEEF1)),
                     Row(
                       children: [
-                        const Icon(Icons.date_range_outlined, size: 14, color: Color(0xFF94A3B8)),
+                        const Icon(Icons.date_range_outlined, size: 18, color: AppColors.textSecondary),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             '$start ➔ $end',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 8),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF1F5F9),
-                            borderRadius: BorderRadius.circular(6),
+                            color: AppColors.background,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: const Color(0xFFECEEF1)),
                           ),
                           child: Text(
                             '$days Day(s)',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF475569)),
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                           ),
                         ),
                       ],
@@ -2164,7 +2157,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                       const SizedBox(height: 8),
                       Text(
                         'Reason: $reason',
-                        style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+                        style: AppTextStyles.bodySmall,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -2175,16 +2168,17 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         alignment: Alignment.centerRight,
                         child: OutlinedButton.icon(
                           onPressed: () => _cancelLeave(leave),
-                          icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                          icon: const Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                           label: const Text(
                             'Cancel',
-                            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                           ),
                           style: OutlinedButton.styleFrom(
                             side: const BorderSide(color: Color(0xFFFECACA)),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                            minimumSize: Size.zero,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            backgroundColor: AppColors.errorBg.withValues(alpha: 0.4),
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            minimumSize: const Size(0, 36),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
                         ),
                       ),
@@ -2201,33 +2195,27 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
-            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingRowColor: WidgetStateProperty.all(AppColors.background),
             headingTextStyle: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w700,
+              color: AppColors.textCaption,
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF1E293B),
+              color: AppColors.textPrimary,
             ),
             columns: const [
               DataColumn(label: Text('LEAVE TYPE')),
@@ -2246,15 +2234,14 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
               final isApproved = status.toLowerCase() == 'approved';
               final isRejected = status.toLowerCase() == 'rejected';
 
-              final Color statusBg = isApproved
-                  ? const Color(0xFFECFDF5)
-                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-              final Color statusBorder = isApproved
-                  ? const Color(0xFFA7F3D0)
-                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-              final Color statusText = isApproved
-                  ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+              // Pill colours come from the shared status palette (approved-like and
+              // rejected-like states keep their existing grouping).
+              final statusPalette = AppColors.statusStyle(
+                isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+              );
+              final Color statusBg = statusPalette.bg;
+              final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+              final Color statusText = statusPalette.fg;
 
               final leaveType = leave['leaveType']?.toString() ?? 'Leave';
               final days = leave['days']?.toString() ?? '1';
@@ -2265,25 +2252,25 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                   DataCell(
                     Text(
                       _isHalfDayLeaveRecord(leave) ? '$leaveType (Half Day)' : leaveType,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                   DataCell(Text(start)),
                   DataCell(Text(end)),
-                  DataCell(Text(days, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(Text(days, style: const TextStyle(fontWeight: FontWeight.w700))),
                   DataCell(
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: statusBorder),
                       ),
                       child: Text(
                         status,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                           color: statusText,
                         ),
                       ),
@@ -2303,18 +2290,18 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                             onPressed: () => _cancelLeave(leave),
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: Color(0xFFFECACA)),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              minimumSize: Size.zero,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              minimumSize: const Size(0, 32),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                                 SizedBox(width: 4),
                                 Text(
                                   'Cancel',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error),
                                 ),
                               ],
                             ),
@@ -2365,25 +2352,23 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(18),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFFFFBEB),
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.calendar_today_outlined,
-                              size: 40,
-                              color: Color(0xFFEFAA1F),
+                              size: 28,
+                              color: AppColors.primaryText,
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 16),
                           const Text(
                             'No leave requests found',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ],
                       ),
@@ -2505,10 +2490,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               'value': name,
               'badge': name.isNotEmpty ? name[0].toUpperCase() : 'L',
               'badgeBg': type == 'paid'
-                  ? const Color(0xFFECFDF5)
-                  : (type == 'unpaid' ? const Color(0xFFFAF5FF) : const Color(0xFFFFFBEB)),
+                  ? AppColors.successBg
+                  : (type == 'unpaid' ? const Color(0xFFFAF5FF) : AppColors.brandLight),
               'badgeText': type == 'paid'
-                  ? const Color(0xFF059669)
+                  ? AppColors.success
                   : (type == 'unpaid' ? const Color(0xFF9333EA) : AppColors.brandDark),
               'balance': avail?.toDouble() ?? 0.0,
               'allocated': alloc?.toDouble(),
@@ -2629,15 +2614,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               insetPadding: const EdgeInsets.symmetric(horizontal: 24),
               child: Container(
                 width: 320,
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x25000000),
+                      color: Color(0x1A000000),
                       blurRadius: 24,
-                      offset: Offset(0, 10),
+                      offset: Offset(0, 8),
                     ),
                   ],
                 ),
@@ -2649,7 +2634,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
+                          tooltip: 'Previous month',
+                          icon: const Icon(Icons.chevron_left_rounded, size: 24, color: AppColors.textPrimary),
                           onPressed: () {
                             setDialogState(() {
                               navDate = DateTime(navDate.year, navDate.month - 1, 1);
@@ -2658,14 +2644,11 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         ),
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF0F172A),
-                          ),
+                          style: AppTextStyles.headingSmall,
                         ),
                         IconButton(
-                          icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
+                          tooltip: 'Next month',
+                          icon: const Icon(Icons.chevron_right_rounded, size: 24, color: AppColors.textPrimary),
                           onPressed: () {
                             setDialogState(() {
                               navDate = DateTime(navDate.year, navDate.month + 1, 1);
@@ -2674,18 +2657,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         ),
                       ],
                     ),
-                    const Divider(color: Color(0xFFF1F5F9), height: 16),
+                    const Divider(color: Color(0xFFECEEF1), height: 16),
                     // Weekday headers
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: const [
-                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -2718,15 +2701,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           child: Container(
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent,
+                              color: isSelected ? AppColors.primary : Colors.transparent,
                               shape: BoxShape.circle,
                             ),
                             child: Text(
                               '$dayNumber',
                               style: TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
-                                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                                fontSize: 14,
+                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                                color: isSelected ? AppColors.onPrimary : AppColors.textPrimary,
                               ),
                             ),
                           ),
@@ -2753,16 +2736,27 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
             color: Colors.white,
             borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE2E5EA),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
               const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 child: Text(
                   'Select Leave Type',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
+                  style: AppTextStyles.headingMedium,
                 ),
               ),
               const SizedBox(height: 12),
@@ -2770,7 +2764,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 child: ListView.separated(
                   shrinkWrap: true,
                   itemCount: _leaveTypeOptions.length,
-                  separatorBuilder: (_, __) => const Divider(color: Color(0xFFF1F5F9), height: 1),
+                  separatorBuilder: (_, __) => const Divider(color: Color(0xFFECEEF1), height: 1),
                   itemBuilder: (ctx, index) {
                     final opt = _leaveTypeOptions[index];
                     final isSelected = opt['value'] == _selectedLeaveTypeName;
@@ -2790,15 +2784,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         height: 32,
                         alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: opt['badgeBg'] as Color? ?? const Color(0xFFFFF7ED),
+                          color: opt['badgeBg'] as Color? ?? AppColors.brandLight,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           opt['badge'] as String? ?? 'L',
                           style: TextStyle(
                             fontSize: 13,
-                            fontWeight: FontWeight.w900,
-                            color: opt['badgeText'] as Color? ?? const Color(0xFFEFAA1F),
+                            fontWeight: FontWeight.w700,
+                            color: opt['badgeText'] as Color? ?? AppColors.primaryText,
                           ),
                         ),
                       ),
@@ -2806,14 +2800,14 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         opt['label'] as String? ?? '',
                         style: TextStyle(
                           fontSize: 14.5,
-                          fontWeight: FontWeight.w800,
-                          color: isSelected ? const Color(0xFFEFAA1F) : const Color(0xFF0F172A),
+                          fontWeight: FontWeight.w700,
+                          color: isSelected ? AppColors.primaryText : AppColors.textPrimary,
                         ),
                       ),
                       subtitle: opt['subtext'] != null
                           ? Text(
                               opt['subtext'] as String,
-                              style: const TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8)),
+                              style: const TextStyle(fontSize: 12.5, color: AppColors.textCaption),
                             )
                           : null,
                       trailing: Row(
@@ -2823,7 +2817,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                               decoration: BoxDecoration(
-                                color: bal > 0 ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2),
+                                color: bal > 0 ? AppColors.successBg : AppColors.errorBg,
                                 borderRadius: BorderRadius.circular(6),
                                 border: Border.all(
                                   color: bal > 0 ? const Color(0xFFA7F3D0) : const Color(0xFFFECACA),
@@ -2833,14 +2827,14 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 '${bal.toInt()} Left',
                                 style: TextStyle(
                                   fontSize: 11.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: bal > 0 ? const Color(0xFF059669) : const Color(0xFFDC2626),
+                                  fontWeight: FontWeight.w700,
+                                  color: bal > 0 ? AppColors.success : AppColors.error,
                                 ),
                               ),
                             ),
                           if (isSelected) ...[
                             const SizedBox(width: 8),
-                            const Icon(Icons.check_circle_rounded, color: Color(0xFFEFAA1F), size: 18),
+                            Icon(Icons.check_circle_rounded, color: AppColors.primaryText, size: 20),
                           ],
                         ],
                       ),
@@ -2996,8 +2990,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.only(
         left: 20,
@@ -3020,18 +3014,20 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     child: Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.all(8),
+                          width: 44,
+                          height: 44,
+                          alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFFFBEB),
-                            borderRadius: BorderRadius.circular(10),
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: const Icon(
+                          child: Icon(
                             Icons.description_rounded,
-                            size: 20,
-                            color: Color(0xFFEFAA1F),
+                            size: 22,
+                            color: AppColors.primaryText,
                           ),
                         ),
-                        const SizedBox(width: 10),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3040,11 +3036,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 'Apply for Leave',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w900,
-                                  color: Color(0xFF0F172A),
-                                ),
+                                style: AppTextStyles.headingMedium,
                               ),
                               Text(
                                 _assignedTemplate?['name']?.toString() ?? 'leaves',
@@ -3053,7 +3045,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 style: const TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFF94A3B8),
+                                  color: AppColors.textCaption,
                                 ),
                               ),
                             ],
@@ -3063,35 +3055,40 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     ),
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textSecondary),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const Divider(color: Color(0xFFF1F5F9), height: 24),
+              const Divider(color: Color(0xFFECEEF1), height: 32),
 
               // Error banner if any
               if (_errorMessage != null) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
+                    color: AppColors.errorBg,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFFECACA)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.error),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                         ),
                       ),
                       InkWell(
                         onTap: () => setState(() => _errorMessage = null),
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                        borderRadius: BorderRadius.circular(8),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close_rounded, size: 16, color: AppColors.error),
+                        ),
                       ),
                     ],
                   ),
@@ -3106,10 +3103,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                   const Text(
                     'LEAVE TYPE',
                     style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF64748B),
-                      letterSpacing: 0.5,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                      letterSpacing: 0.6,
                     ),
                   ),
                   // Half Day Pill Button
@@ -3124,12 +3121,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     },
                     borderRadius: BorderRadius.circular(100),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
-                        color: _isHalfDay ? const Color(0xFFFFFBEB) : const Color(0xFFF1F5F9),
+                        color: _isHalfDay ? AppColors.brandLight : const Color(0xFFECEEF1),
                         borderRadius: BorderRadius.circular(100),
                         border: Border.all(
-                          color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                          color: _isHalfDay ? AppColors.primary : const Color(0xFFE2E5EA),
                         ),
                       ),
                       child: Row(
@@ -3138,7 +3135,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             width: 6,
                             height: 6,
                             decoration: BoxDecoration(
-                              color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFF94A3B8),
+                              color: _isHalfDay ? AppColors.primary : AppColors.textCaption,
                               shape: BoxShape.circle,
                             ),
                           ),
@@ -3147,8 +3144,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             'Half Day',
                             style: TextStyle(
                               fontSize: 12.5,
-                              fontWeight: FontWeight.w800,
-                              color: _isHalfDay ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              fontWeight: FontWeight.w700,
+                              color: _isHalfDay ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                           ),
                         ],
@@ -3166,9 +3163,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: AppColors.background,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: const Color(0xFFE2E5EA)),
                   ),
                   child: Row(
                     children: [
@@ -3178,15 +3175,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           height: 28,
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
-                            color: opt['badgeBg'] as Color? ?? const Color(0xFFFFF7ED),
+                            color: opt['badgeBg'] as Color? ?? AppColors.brandLight,
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: Text(
                             opt['badge'] as String? ?? 'L',
                             style: TextStyle(
                               fontSize: 13,
-                              fontWeight: FontWeight.w900,
-                              color: opt['badgeText'] as Color? ?? const Color(0xFFEFAA1F),
+                              fontWeight: FontWeight.w700,
+                              color: opt['badgeText'] as Color? ?? AppColors.primaryText,
                             ),
                           ),
                         ),
@@ -3197,16 +3194,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           children: [
                             Text(
                               opt?['label'] as String? ?? (_isLoadingTypes ? 'Loading leave types...' : 'Select Leave Type'),
-                              style: const TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF0F172A),
-                              ),
+                              style: AppTextStyles.headingSmall,
                             ),
                             if (opt?['subtext'] != null)
                               Text(
                                 opt!['subtext'] as String,
-                                style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                                style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                               ),
                           ],
                         ),
@@ -3215,21 +3208,21 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFFFFBEB),
+                            color: AppColors.brandLight,
                             borderRadius: BorderRadius.circular(6),
-                            border: Border.all(color: const Color(0xFFFDE68A)),
+                            border: Border.all(color: AppColors.brandBorder),
                           ),
                           child: Text(
                             '${bal.toInt()} Left',
                             style: const TextStyle(
                               fontSize: 12,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                               color: AppColors.brandDark,
                             ),
                           ),
                         ),
                       const SizedBox(width: 6),
-                      const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B), size: 18),
+                      const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary, size: 18),
                     ],
                   ),
                 ),
@@ -3241,9 +3234,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
+                    color: AppColors.brandLight,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xFFFDE68A)),
+                    border: Border.all(color: AppColors.brandBorder),
                   ),
                   // Wrap (not Row) so the two halves drop to a second line on narrow phones.
                   child: Wrap(
@@ -3257,18 +3250,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         children: [
                           const Text(
                             'Available Balance: ',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
                           ),
                           Text(
                             '${bal.toInt()} Left',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.brandDark),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.brandDark),
                           ),
                         ],
                       ),
                       if (alloc != null)
                         Text(
                           'Allocated: ${alloc.toInt()} • Used: ${(used ?? 0).toInt()}',
-                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                         ),
                     ],
                   ),
@@ -3281,10 +3274,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 const Text(
                   'SELECT HALF',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF64748B),
-                    letterSpacing: 0.5,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -3297,10 +3290,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 10),
                           decoration: BoxDecoration(
-                            color: _halfDaySession == '1st Half' ? const Color(0xFFEFAA1F) : const Color(0xFFF8FAFC),
+                            color: _halfDaySession == '1st Half' ? AppColors.primary : AppColors.background,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: _halfDaySession == '1st Half' ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                              color: _halfDaySession == '1st Half' ? AppColors.primary : const Color(0xFFE2E5EA),
                             ),
                           ),
                           alignment: Alignment.center,
@@ -3311,7 +3304,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 width: 6,
                                 height: 6,
                                 decoration: BoxDecoration(
-                                  color: _halfDaySession == '1st Half' ? Colors.white : const Color(0xFF94A3B8),
+                                  color: _halfDaySession == '1st Half' ? AppColors.onPrimary : AppColors.textCaption,
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -3320,8 +3313,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 '1st Half',
                                 style: TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                  color: _halfDaySession == '1st Half' ? Colors.white : const Color(0xFF1E293B),
+                                  fontWeight: FontWeight.w700,
+                                  color: _halfDaySession == '1st Half' ? AppColors.onPrimary : AppColors.textPrimary,
                                 ),
                               ),
                             ],
@@ -3337,10 +3330,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         child: Container(
                           padding: const EdgeInsets.symmetric(vertical: 10),
                           decoration: BoxDecoration(
-                            color: _halfDaySession == '2nd Half' ? const Color(0xFFEFAA1F) : const Color(0xFFF8FAFC),
+                            color: _halfDaySession == '2nd Half' ? AppColors.primary : AppColors.background,
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: _halfDaySession == '2nd Half' ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0),
+                              color: _halfDaySession == '2nd Half' ? AppColors.primary : const Color(0xFFE2E5EA),
                             ),
                           ),
                           alignment: Alignment.center,
@@ -3351,7 +3344,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 width: 6,
                                 height: 6,
                                 decoration: BoxDecoration(
-                                  color: _halfDaySession == '2nd Half' ? Colors.white : const Color(0xFF94A3B8),
+                                  color: _halfDaySession == '2nd Half' ? AppColors.onPrimary : AppColors.textCaption,
                                   shape: BoxShape.circle,
                                 ),
                               ),
@@ -3360,8 +3353,8 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                 '2nd Half',
                                 style: TextStyle(
                                   fontSize: 13,
-                                  fontWeight: FontWeight.w800,
-                                  color: _halfDaySession == '2nd Half' ? Colors.white : const Color(0xFF1E293B),
+                                  fontWeight: FontWeight.w700,
+                                  color: _halfDaySession == '2nd Half' ? AppColors.onPrimary : AppColors.textPrimary,
                                 ),
                               ),
                             ],
@@ -3380,10 +3373,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                 const Text(
                   'SELECT DATE *',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF64748B),
-                    letterSpacing: 0.5,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -3393,9 +3386,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
+                      color: AppColors.background,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      border: Border.all(color: const Color(0xFFE2E5EA)),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -3403,7 +3396,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                         Expanded(
                           child: Row(
                             children: [
-                              const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                              Icon(Icons.calendar_today_rounded, size: 16, color: AppColors.primaryText),
                               const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
@@ -3412,15 +3405,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 14,
-                                    fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
-                                    color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                    fontWeight: _startDate != null ? FontWeight.w700 : FontWeight.w500,
+                                    color: _startDate != null ? AppColors.textPrimary : AppColors.textCaption,
                                   ),
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
+                        const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.textSecondary),
                       ],
                     ),
                   ),
@@ -3436,10 +3429,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           const Text(
                             'START DATE *',
                             style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF64748B),
-                              letterSpacing: 0.5,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
+                              letterSpacing: 0.6,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -3449,9 +3442,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
+                                color: AppColors.background,
                                 borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                                border: Border.all(color: const Color(0xFFE2E5EA)),
                               ),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -3459,7 +3452,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                   Expanded(
                                     child: Row(
                                       children: [
-                                        const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
+                                        Icon(Icons.calendar_today_rounded, size: 15, color: AppColors.primaryText),
                                         const SizedBox(width: 6),
                                         Flexible(
                                           child: Text(
@@ -3468,15 +3461,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               fontSize: 13,
-                                              fontWeight: _startDate != null ? FontWeight.w800 : FontWeight.w500,
-                                              color: _startDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                              fontWeight: _startDate != null ? FontWeight.w700 : FontWeight.w500,
+                                              color: _startDate != null ? AppColors.textPrimary : AppColors.textCaption,
                                             ),
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.textSecondary),
                                 ],
                               ),
                             ),
@@ -3493,10 +3486,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                           const Text(
                             'END DATE *',
                             style: TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF64748B),
-                              letterSpacing: 0.5,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textSecondary,
+                              letterSpacing: 0.6,
                             ),
                           ),
                           const SizedBox(height: 8),
@@ -3506,9 +3499,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
+                                color: AppColors.background,
                                 borderRadius: BorderRadius.circular(14),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                                border: Border.all(color: const Color(0xFFE2E5EA)),
                               ),
                               child: Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -3516,7 +3509,7 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                   Expanded(
                                     child: Row(
                                       children: [
-                                        const Icon(Icons.calendar_today_rounded, size: 15, color: Color(0xFFEFAA1F)),
+                                        Icon(Icons.calendar_today_rounded, size: 15, color: AppColors.primaryText),
                                         const SizedBox(width: 6),
                                         Flexible(
                                           child: Text(
@@ -3525,15 +3518,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               fontSize: 13,
-                                              fontWeight: _endDate != null ? FontWeight.w800 : FontWeight.w500,
-                                              color: _endDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                              fontWeight: _endDate != null ? FontWeight.w700 : FontWeight.w500,
+                                              color: _endDate != null ? AppColors.textPrimary : AppColors.textCaption,
                                             ),
                                           ),
                                         ),
                                       ],
                                     ),
                                   ),
-                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.textSecondary),
                                 ],
                               ),
                             ),
@@ -3551,34 +3544,22 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
               const Text(
                 'REASON',
                 style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.6,
                 ),
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _reasonController,
                 maxLines: 3,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'State the reason for your leave request...',
-                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                  ),
+                  fillColor: AppColors.background,
                   contentPadding: const EdgeInsets.all(14),
                 ),
               ),
@@ -3592,13 +3573,11 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     child: OutlinedButton(
                       onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                       ),
                     ),
                   ),
@@ -3607,21 +3586,17 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                     child: ElevatedButton(
                       onPressed: _isSubmitting ? null : _handleApplyLeaveSubmit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEFAA1F),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: _isSubmitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                             )
                           : const Text(
                               'Submit Request',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                             ),
                     ),
                   ),
@@ -3811,8 +3786,8 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
       backgroundColor: Colors.transparent,
       builder: (ctx) => _RequestDetailBottomSheet(
         title: 'Loan Details',
-        icon: Icons.account_balance_wallet,
-        iconColor: AppColors.primary,
+        icon: Icons.account_balance_wallet_outlined,
+        iconColor: AppColors.primaryText,
         children: [
           _detailRow('Type', loan['loanType'] ?? ''),
           _detailRow('Amount', '${loan['amount']}'),
@@ -3836,33 +3811,14 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
     );
   }
 
-  Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  Widget _detailRow(String label, String value) =>
+      _requestDetailRow(label, value);
 
   Widget _buildLoanCard(Map<String, dynamic> loan) {
     final appliedDate = loan['createdAt'] != null
         ? DateFormat('MMM dd, yyyy').format(DateTime.parse(loan['createdAt']))
         : '-';
-    Color statusColor = Colors.grey;
+    Color statusColor = AppColors.textSecondary;
     if (loan['status'] == 'Approved' || loan['status'] == 'Active') {
       statusColor = AppColors.success;
     } else if (loan['status'] == 'Rejected') {
@@ -3893,28 +3849,30 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
       rejectedByName = approvedByName;
     }
 
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: () => _showLoanDetails(loan),
       borderRadius: BorderRadius.circular(16),
       child: AppCard(
-        radius: 18,
+        border: Border.all(color: const Color(0xFFECEEF1)),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Icon
             Container(
-              padding: const EdgeInsets.all(12),
+              width: 48,
+              height: 48,
+              alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: AppColors.surfaceDark,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: const Icon(
-                Icons.account_balance_wallet,
+                Icons.account_balance_wallet_outlined,
                 color: Colors.white,
-                size: 28,
+                size: 24,
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
             // Content
             Expanded(
               child: Column(
@@ -3927,9 +3885,7 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                       Expanded(
                         child: Text(
                           loan['loanType'] ?? 'Loan',
-                          style: AppTextStyles.headingSmall.copyWith(
-                            color: colorScheme.onSurface,
-                          ),
+                          style: AppTextStyles.headingSmall,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -3937,17 +3893,17 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
+                          horizontal: 10,
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.12),
+                          color: statusColor.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           loan['status'] ?? '',
                           style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: statusColor,
                           ),
@@ -4007,20 +3963,20 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
   Widget _buildLoanCardDetailRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: const Color(0xFF424242)),
-        const SizedBox(width: 6),
+        Icon(icon, size: 16, color: AppColors.textSecondary),
+        const SizedBox(width: 8),
         Text(
           '$label: ',
           style: TextStyle(
             fontSize: 13,
-            color: Color(0xFF424242),
-            fontWeight: FontWeight.w600,
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w500,
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: TextStyle(fontSize: 13, color: Color(0xFF424242)),
+            style: TextStyle(fontSize: 13, color: AppColors.textPrimary),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -4053,22 +4009,9 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                           controller: _searchController,
                           decoration: InputDecoration(
                             hintText: 'Search Type, Purpose...',
-                    prefixIcon: const Icon(Icons.search),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: AppColors.primary),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(
-                        color: AppColors.primary,
-                        width: 2,
-                      ),
-                    ),
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                    filled: true,
+                    fillColor: AppColors.surface,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 10,
                       vertical: 0,
@@ -4103,18 +4046,20 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                     const SizedBox(width: 10),
                     InkWell(
                       onTap: _pickDate,
+                      borderRadius: BorderRadius.circular(12),
                       child: Container(
                         height: 48,
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
-                          border: Border.all(color: AppColors.primary),
-                          borderRadius: BorderRadius.circular(8),
+                          color: AppColors.surface,
+                          border: Border.all(color: const Color(0xFFE2E5EA)),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
                           children: [
-                            Icon(
-                              Icons.calendar_today,
-                              color: Colors.grey[600],
+                            const Icon(
+                              Icons.calendar_today_rounded,
+                              color: AppColors.textSecondary,
                               size: 20,
                             ),
                             const SizedBox(width: 8),
@@ -4126,11 +4071,12 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                                       'MMM dd, yyyy',
                                     ).format(_startDate!)
                                   : '${DateFormat('MMM dd').format(_startDate!)} - ${DateFormat('MMM dd').format(_endDate!)}',
-                              style: TextStyle(color: Colors.black),
+                              style: AppTextStyles.bodyMedium,
                             ),
                             if (_startDate != null)
                               IconButton(
-                                icon: const Icon(Icons.close, size: 16),
+                                tooltip: 'Clear date',
+                                icon: const Icon(Icons.close_rounded, size: 16),
                                 onPressed: () {
                                   setState(() {
                                     _startDate = null;
@@ -4162,18 +4108,24 @@ class _LoanRequestsTabState extends State<LoanRequestsTab>
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(
-                            Icons.account_balance_wallet_outlined,
-                            size: 64,
-                            color: Colors.grey[400],
+                          Container(
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.account_balance_wallet_outlined,
+                              size: 28,
+                              color: AppColors.primaryText,
+                            ),
                           ),
                           const SizedBox(height: 16),
-                          Text(
+                          const Text(
                             'No loan requests found',
-                            style: TextStyle(
-                              fontSize: 16,
-                              color: Colors.black,
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ],
                       ),
@@ -4377,7 +4329,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
             child: Icon(
               Icons.account_balance_wallet,
               size: 86,
-              color: Colors.white.withOpacity(0.12),
+              color: Colors.white.withValues(alpha: 0.12),
             ),
           ),
           Column(
@@ -4386,7 +4338,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
               Text(
                 'OUTSTANDING LOAN AMOUNT',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.9),
+                  color: Colors.white.withValues(alpha: 0.9),
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.2,
@@ -4398,7 +4350,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 34,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
               const SizedBox(height: 12),
@@ -4408,7 +4360,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                   vertical: 7,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
+                  color: Colors.white.withValues(alpha: 0.18),
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Row(
@@ -4445,25 +4397,15 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.divider),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0F000000),
-            blurRadius: 10,
-            offset: Offset(0, 3),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AppColors.textSecondary,
-            ),
+            style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 8),
           Row(
@@ -4474,7 +4416,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 value,
                 style: const TextStyle(
                   fontSize: 22,
-                  fontWeight: FontWeight.w800,
+                  fontWeight: FontWeight.w700,
                   color: AppColors.textPrimary,
                 ),
               ),
@@ -4503,9 +4445,10 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
       child: Text(
         text.toUpperCase(),
         style: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-          color: AppColors.textPrimary,
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: AppColors.textSecondary,
+          letterSpacing: 0.6,
         ),
       ),
     );
@@ -4525,25 +4468,16 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0F000000),
-            blurRadius: 12,
-            offset: Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
             'Application Details',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingMedium,
           ),
           const SizedBox(height: 20),
 
@@ -4564,7 +4498,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 child: Text(
                   '₹',
                   style: TextStyle(
-                    color: AppColors.primary,
+                    color: AppColors.primaryText,
                     fontWeight: FontWeight.w700,
                     fontSize: 16,
                   ),
@@ -4590,7 +4524,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
           _fieldLabel('Loan Type'),
           DropdownButtonFormField<String>(
             value: _loanType,
-            icon: const Icon(Icons.keyboard_arrow_down),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
             items: _loanTypes
                 .map(
                   (e) => DropdownMenuItem(value: e.value, child: Text(e.label)),
@@ -4633,7 +4567,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 child: Text(
                   '${_tenureMonths.round()} Months',
                   style: TextStyle(
-                    color: AppColors.primaryDark,
+                    color: AppColors.primaryText,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -4647,7 +4581,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
               activeTrackColor: AppColors.primary,
               inactiveTrackColor: AppColors.divider,
               thumbColor: AppColors.primary,
-              overlayColor: AppColors.primary.withOpacity(0.15),
+              overlayColor: AppColors.primary.withValues(alpha: 0.15),
               thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 10),
             ),
             child: Slider(
@@ -4713,7 +4647,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                 child: Text(
                   '%',
                   style: TextStyle(
-                    color: AppColors.primary,
+                    color: AppColors.primaryText,
                     fontWeight: FontWeight.w700,
                     fontSize: 16,
                   ),
@@ -4798,17 +4732,14 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
               child: Row(
                 children: [
                   IconButton(
+                    tooltip: 'Back',
                     onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios, size: 24),
+                    icon: const Icon(Icons.arrow_back_rounded, size: 24),
                     color: AppColors.textPrimary,
                   ),
                   const Text(
                     'Request Loan',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingLarge,
                   ),
                 ],
               ),
@@ -4864,21 +4795,15 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                     child: ElevatedButton(
                       onPressed: _isSubmitting ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        elevation: 0,
+                        minimumSize: const Size.fromHeight(52),
                       ),
                       child: _isSubmitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 22,
                               height: 22,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
                               ),
                             )
                           : Row(
@@ -4892,7 +4817,7 @@ class _RequestLoanDialogState extends State<RequestLoanDialog> {
                                   ),
                                 ),
                                 SizedBox(width: 8),
-                                Icon(Icons.send, size: 18),
+                                Icon(Icons.send_rounded, size: 18),
                               ],
                             ),
                     ),
@@ -4967,7 +4892,6 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Cancel Expense Claim?'),
         content: const Text('Are you sure you want to cancel this reimbursement request?'),
         actions: [
@@ -4978,7 +4902,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFDC2626),
+              backgroundColor: AppColors.error,
               foregroundColor: Colors.white,
             ),
             child: const Text('Cancel Request'),
@@ -5226,34 +5150,15 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
       backgroundColor: Colors.transparent,
       builder: (ctx) => _RequestDetailBottomSheet(
         title: 'Expense Details',
-        icon: Icons.receipt,
-        iconColor: AppColors.primary,
+        icon: Icons.receipt_long_rounded,
+        iconColor: AppColors.primaryText,
         children: detailChildren,
       ),
     );
   }
 
-  Widget _expenseDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  Widget _expenseDetailRow(String label, String value) =>
+      _requestDetailRow(label, value);
 
   // â”€â”€ Figma "Expense Claims" helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   /// Category â†’ icon, matching the Figma claim rows.
@@ -5289,14 +5194,14 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
-          colors: [AppColors.primary, const Color(0xFFF5B841)],
+          colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.25),
+            color: AppColors.primary.withValues(alpha: 0.12),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -5316,10 +5221,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                     Text(
                       'TOTAL REIMBURSED',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        fontSize: 12.5,
+                        color: AppColors.onPrimary.withValues(alpha: 0.85),
+                        fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
+                        letterSpacing: 1,
                       ),
                     ),
                     const SizedBox(height: 6),
@@ -5328,10 +5233,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       alignment: Alignment.centerLeft,
                       child: Text(
                         '${_formatAmount(reimbursed)}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 30,
-                          fontWeight: FontWeight.bold,
+                        style: TextStyle(
+                          color: AppColors.onPrimary,
+                          fontSize: 28,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
@@ -5339,21 +5244,23 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                 ),
               ),
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 44,
+                height: 44,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
+                  color: AppColors.onPrimary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.receipt_long_rounded,
-                  color: Colors.white,
+                  color: AppColors.onPrimary,
                   size: 22,
                 ),
               ),
             ],
           ),
           const SizedBox(height: 16),
-          Divider(color: Colors.white.withValues(alpha: 0.3), height: 1),
+          Divider(color: AppColors.onPrimary.withValues(alpha: 0.18), height: 1),
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -5366,7 +5273,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                     Text(
                       'Pending Amount',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.9),
+                        color: AppColors.onPrimary.withValues(alpha: 0.85),
                         fontSize: 13,
                       ),
                     ),
@@ -5376,8 +5283,8 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       alignment: Alignment.centerLeft,
                       child: Text(
                         '${_formatAmount(pending)}',
-                        style: const TextStyle(
-                          color: Colors.white,
+                        style: TextStyle(
+                          color: AppColors.onPrimary,
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
@@ -5393,13 +5300,13 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.surface,
                   borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   '$pendingCount Pending Claim${pendingCount == 1 ? '' : 's'}',
                   style: TextStyle(
-                    color: AppColors.primary,
+                    color: AppColors.primaryText,
                     fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
@@ -5425,7 +5332,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
         ),
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
-          foregroundColor: Colors.white,
+          foregroundColor: AppColors.onPrimary,
           padding: const EdgeInsets.symmetric(vertical: 15),
           elevation: 0,
           shape: RoundedRectangleBorder(
@@ -5451,19 +5358,14 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   'Reimbursement Claims',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                    letterSpacing: -0.3,
-                  ),
+                  style: AppTextStyles.headingMedium,
                 ),
               ),
               const SizedBox(width: 8),
               // Card / Table View Mode Toggle
               Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: const Color(0xFFECEEF1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 padding: const EdgeInsets.all(3),
@@ -5473,9 +5375,9 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       onTap: () => setState(() => _isTableView = false),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: !_isTableView ? Colors.white : Colors.transparent,
+                          color: !_isTableView ? AppColors.surface : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: !_isTableView
                               ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -5485,8 +5387,8 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                           children: [
                             Icon(
                               Icons.grid_view_rounded,
-                              size: 14,
-                              color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              size: 16,
+                              color: !_isTableView ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -5494,7 +5396,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                color: !_isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -5505,9 +5407,9 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       onTap: () => setState(() => _isTableView = true),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: _isTableView ? Colors.white : Colors.transparent,
+                          color: _isTableView ? AppColors.surface : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: _isTableView
                               ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -5517,8 +5419,8 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                           children: [
                             Icon(
                               Icons.table_rows_rounded,
-                              size: 14,
-                              color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              size: 16,
+                              color: _isTableView ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -5526,7 +5428,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                color: _isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -5544,28 +5446,16 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
               // Search input
               Expanded(
                 child: SizedBox(
-                  height: 38,
+                  height: 44,
                   child: TextField(
                     controller: _searchController,
                     decoration: InputDecoration(
                       hintText: 'Search...',
-                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                      prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      hintStyle: const TextStyle(fontSize: 14, color: AppColors.textCaption),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                       filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                      ),
+                      fillColor: AppColors.surface,
                     ),
                     onSubmitted: (_) {
                       setState(() => _currentPage = 1);
@@ -5611,15 +5501,14 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'paid';
     final isRejected = status.toLowerCase() == 'rejected';
 
-    final Color statusBg = isApproved
-        ? const Color(0xFFECFDF5)
-        : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-    final Color statusBorder = isApproved
-        ? const Color(0xFFA7F3D0)
-        : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-    final Color statusText = isApproved
-        ? const Color(0xFF059669)
-        : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+    // Pill colours come from the shared status palette (approved-like and
+    // rejected-like states keep their existing grouping).
+    final statusPalette = AppColors.statusStyle(
+      isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+    );
+    final Color statusBg = statusPalette.bg;
+    final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+    final Color statusText = statusPalette.fg;
 
     final desc = (expense['description'] ?? '').toString().trim();
     final amount = _formatAmount(expense['amount']);
@@ -5627,16 +5516,10 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Material(
         color: Colors.transparent,
@@ -5644,7 +5527,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
           onTap: () => _showExpenseDetails(expense),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.all(14.0),
+            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -5655,14 +5538,14 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                       child: Row(
                         children: [
                           Container(
-                            width: 32,
-                            height: 32,
+                            width: 40,
+                            height: 40,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFFFBEB),
-                              borderRadius: BorderRadius.circular(8),
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                            child: Icon(_expenseIcon(type), color: const Color(0xFFEFAA1F), size: 18),
+                            child: Icon(_expenseIcon(type), color: AppColors.primaryText, size: 20),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -5673,17 +5556,13 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                                   type,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 14.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFF0F172A),
-                                  ),
+                                  style: AppTextStyles.headingSmall,
                                 ),
                                 Text(
                                   date,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                 ),
                               ],
                             ),
@@ -5699,23 +5578,23 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                           amount,
                           style: const TextStyle(
                             fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.textPrimary,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: statusBg,
-                            borderRadius: BorderRadius.circular(6),
+                            borderRadius: BorderRadius.circular(999),
                             border: Border.all(color: statusBorder),
                           ),
                           child: Text(
                             status,
                             style: TextStyle(
                               fontSize: 12,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w600,
                               color: statusText,
                             ),
                           ),
@@ -5728,7 +5607,7 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   const SizedBox(height: 10),
                   Text(
                     desc,
-                    style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -5739,16 +5618,17 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                     alignment: Alignment.centerRight,
                     child: OutlinedButton.icon(
                       onPressed: () => _cancelExpense(expense),
-                      icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                      icon: const Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                       label: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                       ),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFFFECACA)),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        minimumSize: Size.zero,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        backgroundColor: AppColors.errorBg.withValues(alpha: 0.4),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        minimumSize: const Size(0, 36),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
                   ),
@@ -5765,33 +5645,27 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
-            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingRowColor: WidgetStateProperty.all(AppColors.background),
             headingTextStyle: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w700,
+              color: AppColors.textCaption,
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF1E293B),
+              color: AppColors.textPrimary,
             ),
             columns: const [
               DataColumn(label: Text('TYPE')),
@@ -5810,23 +5684,22 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
               final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'paid';
               final isRejected = status.toLowerCase() == 'rejected';
 
-              final Color statusBg = isApproved
-                  ? const Color(0xFFECFDF5)
-                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-              final Color statusBorder = isApproved
-                  ? const Color(0xFFA7F3D0)
-                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-              final Color statusText = isApproved
-                  ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+              // Pill colours come from the shared status palette (approved-like and
+              // rejected-like states keep their existing grouping).
+              final statusPalette = AppColors.statusStyle(
+                isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+              );
+              final Color statusBg = statusPalette.bg;
+              final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+              final Color statusText = statusPalette.fg;
 
               final desc = (raw['description'] ?? '-').toString().trim();
               final amount = _formatAmount(raw['amount']);
 
               return DataRow(
                 cells: [
-                  DataCell(Text(type, style: const TextStyle(fontWeight: FontWeight.w800))),
-                  DataCell(Text(amount, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(Text(type, style: const TextStyle(fontWeight: FontWeight.w700))),
+                  DataCell(Text(amount, style: const TextStyle(fontWeight: FontWeight.w700))),
                   DataCell(Text(date)),
                   DataCell(
                     ConstrainedBox(
@@ -5836,17 +5709,17 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                   ),
                   DataCell(
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: statusBorder),
                       ),
                       child: Text(
                         status,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                           color: statusText,
                         ),
                       ),
@@ -5860,18 +5733,18 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                             onPressed: () => _cancelExpense(raw),
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: Color(0xFFFECACA)),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              minimumSize: Size.zero,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              minimumSize: const Size(0, 32),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                                 SizedBox(width: 4),
                                 Text(
                                   'Cancel',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error),
                                 ),
                               ],
                             ),
@@ -5892,7 +5765,6 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       builder: (ctx) => ClaimExpenseDialog(onSuccess: _fetchExpenses),
     );
   }
@@ -5934,25 +5806,23 @@ class _ExpenseRequestsTabState extends State<ExpenseRequestsTab>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(18),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFFFFBEB),
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.receipt_long_rounded,
-                              size: 40,
-                              color: Color(0xFFEFAA1F),
+                              size: 28,
+                              color: AppColors.primaryText,
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 16),
                           const Text(
                             'No expense requests found',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ],
                       ),
@@ -6042,10 +5912,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
     setState(() => _errorMessage = null);
     final source = await showModalBottomSheet<_ProofSource>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
+      backgroundColor: AppColors.surface,
       builder: (sheetContext) {
         return SafeArea(
           child: Column(
@@ -6056,43 +5923,43 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 width: 40,
                 height: 4,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE2E8F0),
+                  color: const Color(0xFFE2E5EA),
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
               const SizedBox(height: 12),
               const Text(
                 'Upload Proof Image',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF0F172A),
-                ),
+                style: AppTextStyles.headingMedium,
               ),
               const SizedBox(height: 12),
               ListTile(
                 leading: Container(
-                  padding: const EdgeInsets.all(8),
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(10),
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.camera_alt_rounded, color: Color(0xFFEFAA1F), size: 20),
+                  child: Icon(Icons.camera_alt_rounded, color: AppColors.primaryText, size: 20),
                 ),
-                title: const Text('Take Photo', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
+                title: const Text('Take Photo', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
                 onTap: () => Navigator.pop(sheetContext, _ProofSource.camera),
               ),
               ListTile(
                 leading: Container(
-                  padding: const EdgeInsets.all(8),
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFFBEB),
-                    borderRadius: BorderRadius.circular(10),
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.photo_library_rounded, color: Color(0xFFEFAA1F), size: 20),
+                  child: Icon(Icons.photo_library_rounded, color: AppColors.primaryText, size: 20),
                 ),
-                title: const Text('Choose from Gallery / Files', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15)),
-                subtitle: const Text('JPG, JPEG, PNG, WEBP (Max 5MB)', style: TextStyle(fontSize: 12.5, color: Color(0xFF94A3B8))),
+                title: const Text('Choose from Gallery / Files', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15)),
+                subtitle: const Text('JPG, JPEG, PNG, WEBP (Max 5MB)', style: TextStyle(fontSize: 13, color: AppColors.textSecondary)),
                 onTap: () => Navigator.pop(sheetContext, _ProofSource.files),
               ),
               const SizedBox(height: 12),
@@ -6195,15 +6062,15 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
               insetPadding: const EdgeInsets.symmetric(horizontal: 24),
               child: Container(
                 width: 320,
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x25000000),
+                      color: Color(0x1A000000),
                       blurRadius: 24,
-                      offset: Offset(0, 10),
+                      offset: Offset(0, 8),
                     ),
                   ],
                 ),
@@ -6215,7 +6082,8 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
+                          tooltip: 'Previous month',
+                          icon: const Icon(Icons.chevron_left_rounded, size: 24, color: AppColors.textPrimary),
                           onPressed: DateTime(navDate.year, navDate.month)
                                   .isAfter(DateTime(firstDate.year, firstDate.month))
                               ? () {
@@ -6227,14 +6095,11 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                         ),
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF0F172A),
-                          ),
+                          style: AppTextStyles.headingSmall,
                         ),
                         IconButton(
-                          icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
+                          tooltip: 'Next month',
+                          icon: const Icon(Icons.chevron_right_rounded, size: 24, color: AppColors.textPrimary),
                           onPressed: DateTime(navDate.year, navDate.month)
                                   .isBefore(DateTime(lastDate.year, lastDate.month))
                               ? () {
@@ -6246,18 +6111,18 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                         ),
                       ],
                     ),
-                    const Divider(color: Color(0xFFF1F5F9), height: 16),
+                    const Divider(color: Color(0xFFECEEF1), height: 16),
                     // Weekday headers
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: const [
-                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -6294,19 +6159,19 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                           child: Container(
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent,
+                              color: isSelected ? AppColors.primary : Colors.transparent,
                               shape: BoxShape.circle,
                             ),
                             child: Text(
                               '$dayNumber',
                               style: TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                fontSize: 14,
+                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                                 color: isSelected
-                                    ? Colors.white
+                                    ? AppColors.onPrimary
                                     : isEnabled
-                                        ? const Color(0xFF1E293B)
-                                        : const Color(0xFFCBD5E1),
+                                        ? AppColors.textPrimary
+                                        : AppColors.textHint,
                               ),
                             ),
                           ),
@@ -6405,8 +6270,8 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.only(
         left: 20,
@@ -6430,53 +6295,50 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     children: const [
                       Text(
                         'Claim Expense',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                       SizedBox(height: 2),
                       Text(
                         'Submit a new expense claim',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF94A3B8),
-                        ),
+                        style: AppTextStyles.bodySmall,
                       ),
                     ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textSecondary),
                     onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const Divider(color: Color(0xFFF1F5F9), height: 24),
+              const Divider(color: Color(0xFFECEEF1), height: 24),
 
               // Error banner if any
               if (_errorMessage != null) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
+                    color: AppColors.errorBg,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFFECACA)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.error),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                         ),
                       ),
                       InkWell(
                         onTap: () => setState(() => _errorMessage = null),
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                        borderRadius: BorderRadius.circular(8),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close_rounded, size: 16, color: AppColors.error),
+                        ),
                       ),
                     ],
                   ),
@@ -6490,23 +6352,23 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: const Color(0xFFE2E5EA)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     value: _expenseType,
                     isExpanded: true,
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                     items: _expenseTypeOptions
                         .map((type) => DropdownMenuItem(value: type, child: Text(type)))
                         .toList(),
@@ -6527,7 +6389,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
@@ -6535,25 +6397,13 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 controller: _amountController,
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'Enter expense amount',
-                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: AppColors.background,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                  ),
                 ),
               ),
 
@@ -6567,11 +6417,11 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF334155),
+                      color: AppColors.textPrimary,
                     ),
                   ),
                   SizedBox(width: 3),
-                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13, fontWeight: FontWeight.w700)),
+                  Text('*', style: TextStyle(color: AppColors.error, fontSize: 13, fontWeight: FontWeight.w700)),
                 ],
               ),
               const SizedBox(height: 6),
@@ -6581,9 +6431,9 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: AppColors.background,
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: const Color(0xFFE2E5EA)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -6593,10 +6443,10 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: _date != null ? FontWeight.w600 : FontWeight.w500,
-                          color: _date != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                          color: _date != null ? AppColors.textPrimary : AppColors.textCaption,
                         ),
                       ),
-                      const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
+                      const Icon(Icons.calendar_today_rounded, size: 16, color: AppColors.textSecondary),
                     ],
                   ),
                 ),
@@ -6612,11 +6462,11 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF334155),
+                      color: AppColors.textPrimary,
                     ),
                   ),
                   SizedBox(width: 3),
-                  Text('*', style: TextStyle(color: Color(0xFFEF4444), fontSize: 13, fontWeight: FontWeight.w700)),
+                  Text('*', style: TextStyle(color: AppColors.error, fontSize: 13, fontWeight: FontWeight.w700)),
                 ],
               ),
               const SizedBox(height: 6),
@@ -6624,31 +6474,19 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 controller: _descriptionController,
                 maxLines: 3,
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'e.g., Client meeting travel, Team lunch, Conference accommodation',
-                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: AppColors.background,
                   contentPadding: const EdgeInsets.all(12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                  ),
                 ),
               ),
               const SizedBox(height: 4),
               const Text(
                 'Briefly describe the expense so approvers can verify your claim.',
-                style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+                style: TextStyle(fontSize: 12, color: AppColors.textCaption, fontWeight: FontWeight.w500),
               ),
 
               const SizedBox(height: 14),
@@ -6659,7 +6497,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
@@ -6669,7 +6507,7 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF0FDF4),
+                    color: AppColors.successBg,
                     borderRadius: BorderRadius.circular(14),
                     border: Border.all(color: const Color(0xFFBBF7D0)),
                   ),
@@ -6685,8 +6523,8 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                           errorBuilder: (c, o, s) => Container(
                             width: 50,
                             height: 50,
-                            color: const Color(0xFFE2E8F0),
-                            child: const Icon(Icons.insert_drive_file_outlined, color: Color(0xFF64748B)),
+                            color: const Color(0xFFE2E5EA),
+                            child: const Icon(Icons.insert_drive_file_outlined, color: AppColors.textSecondary),
                           ),
                         ),
                       ),
@@ -6699,12 +6537,12 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                               _selectedFile!.path.split(RegExp(r'[/\\]')).last,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF15803D)),
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success),
                             ),
                             const SizedBox(height: 2),
                             const Text(
                               'Click "Change" or "Remove" to update.',
-                              style: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8)),
+                              style: TextStyle(fontSize: 11.5, color: AppColors.textCaption),
                             ),
                           ],
                         ),
@@ -6716,10 +6554,10 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF1F5F9),
+                                color: const Color(0xFFECEEF1),
                                 borderRadius: BorderRadius.circular(6),
                               ),
-                              child: const Text('Change', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
+                              child: const Text('Change', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.textSecondary)),
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -6728,10 +6566,10 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFFEF2F2),
+                                color: AppColors.errorBg,
                                 borderRadius: BorderRadius.circular(6),
                               ),
-                              child: const Text('Remove', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
+                              child: const Text('Remove', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.error)),
                             ),
                           ),
                         ],
@@ -6745,28 +6583,28 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                   onTap: _isSubmitting ? null : _pickFile,
                   borderRadius: BorderRadius.circular(14),
                   child: CustomPaint(
-                    painter: const _DashedRRectPainter(color: Color(0xFFCBD5E1)),
+                    painter: const _DashedRRectPainter(color: AppColors.textHint),
                     child: Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF8FAFC),
+                        color: AppColors.background,
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: const [
-                          Icon(Icons.file_upload_outlined, size: 24, color: Color(0xFF94A3B8)),
+                          Icon(Icons.file_upload_outlined, size: 24, color: AppColors.textCaption),
                           SizedBox(height: 6),
                           Text(
                             'Upload Proof Image',
-                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                           ),
                           SizedBox(height: 2),
                           Text(
                             'Upload receipt or bill image (JPG, JPEG, PNG, WEBP. Max 5MB).',
                             textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 11.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+                            style: TextStyle(fontSize: 11.5, color: AppColors.textCaption, fontWeight: FontWeight.w500),
                           ),
                         ],
                       ),
@@ -6784,13 +6622,11 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     child: OutlinedButton(
                       onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                       ),
                     ),
                   ),
@@ -6799,21 +6635,17 @@ class _ClaimExpenseDialogState extends State<ClaimExpenseDialog> {
                     child: ElevatedButton(
                       onPressed: _isSubmitting ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEFAA1F),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: _isSubmitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                             )
                           : const Text(
                               'Submit Claim',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                             ),
                     ),
                   ),
@@ -7079,7 +6911,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const BorderRadius.vertical(top: Radius.circular(20)),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
+                    color: Colors.black.withValues(alpha: 0.10),
                     blurRadius: 24,
                     offset: const Offset(0, -4),
                   ),
@@ -7104,11 +6936,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                         alignment: Alignment.centerLeft,
                         child: Text(
                           'Select Month',
-                          style: TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w700,
-                            color: AppColors.textPrimary,
-                          ),
+                          style: AppTextStyles.headingMedium,
                         ),
                       ),
                     ),
@@ -7120,6 +6948,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           IconButton(
+                            tooltip: 'Previous year',
                             icon: const Icon(Icons.chevron_left_rounded),
                             color: AppColors.textPrimary,
                             onPressed: viewYear > firstYear
@@ -7135,6 +6964,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                             ),
                           ),
                           IconButton(
+                            tooltip: 'Next year',
                             icon: const Icon(Icons.chevron_right_rounded),
                             color: AppColors.textPrimary,
                             onPressed: viewYear < lastYear
@@ -7164,7 +6994,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                                 ? AppColors.primary
                                 : enabled
                                     ? AppColors.primary.withValues(alpha: 0.08)
-                                    : const Color(0xFFF1F5F9),
+                                    : const Color(0xFFECEEF1),
                             borderRadius: BorderRadius.circular(12),
                             child: InkWell(
                               borderRadius: BorderRadius.circular(12),
@@ -7180,10 +7010,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                                         ? FontWeight.w700
                                         : FontWeight.w500,
                                     color: selected
-                                        ? Colors.white
+                                        ? AppColors.onPrimary
                                         : enabled
                                             ? AppColors.textPrimary
-                                            : const Color(0xFFCBD5E1),
+                                            : AppColors.textHint,
                                   ),
                                 ),
                               ),
@@ -7257,7 +7087,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       case 'Cancelled':
         return Colors.grey;
       default:
-        return AppColors.brand;
+        return AppColors.primary;
     }
   }
 
@@ -7271,27 +7101,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     return 'System';
   }
 
-  Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              '$label:',
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  Widget _detailRow(String label, String value) =>
+      _requestDetailRow(label, value, labelWidth: 120);
 
   void _showPermissionDetails(Map<String, dynamic> req) {
     final status = (req['status'] ?? '').toString();
@@ -7312,8 +7123,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       backgroundColor: Colors.transparent,
       builder: (ctx) => _RequestDetailBottomSheet(
         title: 'Permission Details',
-        icon: Icons.timelapse,
-        iconColor: AppColors.primary,
+        icon: Icons.timelapse_rounded,
+        iconColor: AppColors.primaryText,
         children: [
           _detailRow('Date', _fmtDate(req['date'])),
           _detailRow('Type', _fmtType(req['type']?.toString())),
@@ -7394,7 +7205,6 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       builder: (ctx) => RequestPermissionDialog(
         onSuccess: () {
           _fetchRequests();
@@ -7418,16 +7228,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
       margin: const EdgeInsets.fromLTRB(16, 12, 16, 10),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 10,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -7440,26 +7244,24 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                 child: Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(7),
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFFBEB),
-                        borderRadius: BorderRadius.circular(10),
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.schedule_rounded,
-                        color: Color(0xFFEFAA1F),
-                        size: 18,
+                        color: AppColors.primaryText,
+                        size: 20,
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 12),
                     const Expanded(
                       child: Text(
                         'Permission Balance',
-                        style: TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style: AppTextStyles.headingSmall,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -7470,22 +7272,25 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
               const SizedBox(width: 6),
               InkWell(
                 onTap: _pickMonth,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(999),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(8),
+                    color: AppColors.background,
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFFE2E5EA)),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.calendar_month_outlined, size: 13, color: Color(0xFF64748B)),
-                      const SizedBox(width: 4),
+                      const Icon(Icons.calendar_month_outlined, size: 16, color: AppColors.textSecondary),
+                      const SizedBox(width: 6),
                       Text(
                         monthLabel,
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                       ),
+                      const SizedBox(width: 2),
+                      const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: AppColors.textSecondary),
                     ],
                   ),
                 ),
@@ -7504,10 +7309,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const Text(
                       'MONTHLY QUOTA',
                       style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF94A3B8),
-                        letterSpacing: 0.4,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textSecondary,
+                        letterSpacing: 0.8,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -7515,8 +7320,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       formatMinutes(hasBalance ? quota : 0),
                       style: const TextStyle(
                         fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -7524,7 +7329,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   ],
                 ),
               ),
-              Container(width: 1, height: 32, color: const Color(0xFFF1F5F9)),
+              Container(width: 1, height: 32, color: const Color(0xFFECEEF1)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -7533,10 +7338,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const Text(
                       'CONSUMED / PENDING',
                       style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF94A3B8),
-                        letterSpacing: 0.4,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textSecondary,
+                        letterSpacing: 0.8,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -7544,8 +7349,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       formatMinutes(hasBalance ? consumed : 0),
                       style: const TextStyle(
                         fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -7553,7 +7358,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   ],
                 ),
               ),
-              Container(width: 1, height: 32, color: const Color(0xFFF1F5F9)),
+              Container(width: 1, height: 32, color: const Color(0xFFECEEF1)),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -7562,19 +7367,19 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     const Text(
                       'REMAINING',
                       style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF94A3B8),
-                        letterSpacing: 0.4,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textSecondary,
+                        letterSpacing: 0.8,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       formatMinutes(hasBalance ? balance : 0),
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.primaryText,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -7604,19 +7409,14 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   'Permission Requests',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                    letterSpacing: -0.3,
-                  ),
+                  style: AppTextStyles.headingMedium,
                 ),
               ),
               const SizedBox(width: 8),
               // Card / Table View Mode Toggle
               Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: const Color(0xFFECEEF1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 padding: const EdgeInsets.all(3),
@@ -7626,9 +7426,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       onTap: () => setState(() => _isTableView = false),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: !_isTableView ? Colors.white : Colors.transparent,
+                          color: !_isTableView ? AppColors.surface : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: !_isTableView
                               ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -7638,8 +7438,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                           children: [
                             Icon(
                               Icons.grid_view_rounded,
-                              size: 14,
-                              color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              size: 16,
+                              color: !_isTableView ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -7647,7 +7447,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                color: !_isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -7658,9 +7458,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                       onTap: () => setState(() => _isTableView = true),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: _isTableView ? Colors.white : Colors.transparent,
+                          color: _isTableView ? AppColors.surface : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: _isTableView
                               ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -7670,8 +7470,8 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                           children: [
                             Icon(
                               Icons.table_rows_rounded,
-                              size: 14,
-                              color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              size: 16,
+                              color: _isTableView ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -7679,7 +7479,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                color: _isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -7697,28 +7497,16 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
               // Search input
               Expanded(
                 child: SizedBox(
-                  height: 38,
+                  height: 44,
                   child: TextField(
                     controller: _searchController,
                     decoration: InputDecoration(
                       hintText: 'Search...',
-                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                      prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      hintStyle: const TextStyle(fontSize: 14, color: AppColors.textCaption),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                       filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                      ),
+                      fillColor: AppColors.surface,
                     ),
                     onChanged: (val) {
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
@@ -7757,27 +7545,26 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     final isApproved = status == 'Approved';
     final isRejected = status == 'Rejected';
 
-    final Color statusBg = isApproved
-        ? const Color(0xFFECFDF5)
-        : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-    final Color statusBorder = isApproved
-        ? const Color(0xFFA7F3D0)
-        : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-    final Color statusText = isApproved
-        ? const Color(0xFF059669)
-        : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+    // Pill colours come from the shared status palette (approved-like and
+    // rejected-like states keep their existing grouping).
+    final statusPalette = AppColors.statusStyle(
+      isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+    );
+    final Color statusBg = statusPalette.bg;
+    final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+    final Color statusText = statusPalette.fg;
 
     final type = _fmtType(req['type']?.toString());
     final isEarly = type.toLowerCase().contains('early');
     final isLate = type.toLowerCase().contains('late');
     final Color typeBg = isEarly
-        ? const Color(0xFFEFF6FF)
-        : (isLate ? const Color(0xFFFFF7ED) : const Color(0xFFFAF5FF));
+        ? AppColors.infoBg
+        : (isLate ? AppColors.brandLight : const Color(0xFFFAF5FF));
     final Color typeBorder = isEarly
         ? const Color(0xFFBFDBFE)
-        : (isLate ? const Color(0xFFFED7AA) : const Color(0xFFE9D5FF));
+        : (isLate ? AppColors.brandBorder : const Color(0xFFE9D5FF));
     final Color typeText = isEarly
-        ? const Color(0xFF1D4ED8)
+        ? AppColors.info
         : (isLate ? AppColors.brandDark : const Color(0xFF7E22CE));
 
     final dateStr = _fmtDate(req['date']);
@@ -7788,16 +7575,10 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Material(
         color: Colors.transparent,
@@ -7805,7 +7586,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
           onTap: () => _showPermissionDetails(req),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.all(14.0),
+            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -7821,26 +7602,22 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                               dateStr,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF0F172A),
-                              ),
+                              style: AppTextStyles.headingSmall,
                             ),
                           ),
                           const SizedBox(width: 8),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
                               color: typeBg,
-                              borderRadius: BorderRadius.circular(6),
+                              borderRadius: BorderRadius.circular(999),
                               border: Border.all(color: typeBorder),
                             ),
                             child: Text(
                               type,
                               style: TextStyle(
                                 fontSize: 12,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w600,
                                 color: typeText,
                               ),
                             ),
@@ -7850,33 +7627,33 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: statusBg,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: statusBorder),
                       ),
                       child: Text(
                         status,
                         style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
                           color: statusText,
                         ),
                       ),
                     ),
                   ],
                 ),
-                const Divider(height: 18, color: Color(0xFFF1F5F9)),
+                const Divider(height: 24, color: Color(0xFFECEEF1)),
 
                 // Duration Row
                 Row(
                   children: [
-                    const Icon(Icons.timelapse_rounded, size: 14, color: Color(0xFF94A3B8)),
+                    const Icon(Icons.timelapse_rounded, size: 18, color: AppColors.textSecondary),
                     const SizedBox(width: 6),
                     Text(
                       'Requested: $durationStr',
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                     ),
                   ],
                 ),
@@ -7885,7 +7662,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   const SizedBox(height: 8),
                   Text(
                     'Reason: $reason',
-                    style: const TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+                    style: AppTextStyles.bodySmall,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -7898,16 +7675,17 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                     alignment: Alignment.centerRight,
                     child: OutlinedButton.icon(
                       onPressed: () => _cancelRequest(req['_id'].toString()),
-                      icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                      icon: const Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                       label: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                       ),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Color(0xFFFECACA)),
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        minimumSize: Size.zero,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                        backgroundColor: AppColors.errorBg.withValues(alpha: 0.4),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        minimumSize: const Size(0, 36),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
                     ),
                   ),
@@ -7924,33 +7702,27 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
-            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingRowColor: WidgetStateProperty.all(AppColors.background),
             headingTextStyle: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w700,
+              color: AppColors.textCaption,
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF1E293B),
+              color: AppColors.textPrimary,
             ),
             columns: const [
               DataColumn(label: Text('DATE')),
@@ -7967,27 +7739,26 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
               final isApproved = status == 'Approved';
               final isRejected = status == 'Rejected';
 
-              final Color statusBg = isApproved
-                  ? const Color(0xFFECFDF5)
-                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-              final Color statusBorder = isApproved
-                  ? const Color(0xFFA7F3D0)
-                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-              final Color statusText = isApproved
-                  ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+              // Pill colours come from the shared status palette (approved-like and
+              // rejected-like states keep their existing grouping).
+              final statusPalette = AppColors.statusStyle(
+                isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+              );
+              final Color statusBg = statusPalette.bg;
+              final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+              final Color statusText = statusPalette.fg;
 
               final type = _fmtType(req['type']?.toString());
               final isEarly = type.toLowerCase().contains('early');
               final isLate = type.toLowerCase().contains('late');
               final Color typeBg = isEarly
-                  ? const Color(0xFFEFF6FF)
-                  : (isLate ? const Color(0xFFFFF7ED) : const Color(0xFFFAF5FF));
+                  ? AppColors.infoBg
+                  : (isLate ? AppColors.brandLight : const Color(0xFFFAF5FF));
               final Color typeBorder = isEarly
                   ? const Color(0xFFBFDBFE)
-                  : (isLate ? const Color(0xFFFED7AA) : const Color(0xFFE9D5FF));
+                  : (isLate ? AppColors.brandBorder : const Color(0xFFE9D5FF));
               final Color typeText = isEarly
-                  ? const Color(0xFF1D4ED8)
+                  ? AppColors.info
                   : (isLate ? AppColors.brandDark : const Color(0xFF7E22CE));
 
               final dateStr = _fmtDate(req['date']);
@@ -7997,20 +7768,20 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
 
               return DataRow(
                 cells: [
-                  DataCell(Text(dateStr, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(Text(dateStr, style: const TextStyle(fontWeight: FontWeight.w700))),
                   DataCell(
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: typeBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: typeBorder),
                       ),
                       child: Text(
                         type,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w800,
+                          fontWeight: FontWeight.w600,
                           color: typeText,
                         ),
                       ),
@@ -8019,17 +7790,17 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                   DataCell(Text(durationStr)),
                   DataCell(
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: statusBorder),
                       ),
                       child: Text(
                         status,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                           color: statusText,
                         ),
                       ),
@@ -8049,18 +7820,18 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                             onPressed: () => _cancelRequest(req['_id'].toString()),
                             style: OutlinedButton.styleFrom(
                               side: const BorderSide(color: Color(0xFFFECACA)),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              minimumSize: Size.zero,
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              minimumSize: const Size(0, 32),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             child: const Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                                 SizedBox(width: 4),
                                 Text(
                                   'Cancel',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error),
                                 ),
                               ],
                             ),
@@ -8147,25 +7918,23 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(18),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFFFFBEB),
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.schedule_rounded,
-                              size: 40,
-                              color: Color(0xFFEFAA1F),
+                              size: 28,
+                              color: AppColors.primaryText,
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 16),
                           const Text(
                             'No permission requests found',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ],
                       ),
@@ -8267,9 +8036,9 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withOpacity(0.4)),
+        border: Border.all(color: color.withValues(alpha: 0.4)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -8316,7 +8085,7 @@ class _PermissionRequestsTabState extends State<PermissionRequestsTab>
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: AppColors.primary.withOpacity(0.25)),
+          border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -8439,15 +8208,15 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               insetPadding: const EdgeInsets.symmetric(horizontal: 24),
               child: Container(
                 width: 320,
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(24),
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(20),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x25000000),
+                      color: Color(0x1A000000),
                       blurRadius: 24,
-                      offset: Offset(0, 10),
+                      offset: Offset(0, 8),
                     ),
                   ],
                 ),
@@ -8459,7 +8228,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.chevron_left_rounded, size: 22, color: Color(0xFF64748B)),
+                          tooltip: 'Previous month',
+                          icon: const Icon(Icons.chevron_left_rounded, size: 24, color: AppColors.textPrimary),
                           onPressed: DateTime(navDate.year, navDate.month)
                                   .isAfter(DateTime(firstDate.year, firstDate.month))
                               ? () {
@@ -8471,14 +8241,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                         ),
                         Text(
                           DateFormat('MMMM yyyy').format(navDate),
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF0F172A),
-                          ),
+                          style: AppTextStyles.headingSmall,
                         ),
                         IconButton(
-                          icon: const Icon(Icons.chevron_right_rounded, size: 22, color: Color(0xFF64748B)),
+                          tooltip: 'Next month',
+                          icon: const Icon(Icons.chevron_right_rounded, size: 24, color: AppColors.textPrimary),
                           onPressed: DateTime(navDate.year, navDate.month)
                                   .isBefore(DateTime(lastDate.year, lastDate.month))
                               ? () {
@@ -8490,18 +8257,18 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                         ),
                       ],
                     ),
-                    const Divider(color: Color(0xFFF1F5F9), height: 16),
+                    const Divider(color: Color(0xFFECEEF1), height: 16),
                     // Weekday headers
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceAround,
                       children: const [
-                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+                        Text('SU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('MO', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('TU', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('WE', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('TH', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('FR', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
+                        Text('SA', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: AppColors.textCaption)),
                       ],
                     ),
                     const SizedBox(height: 10),
@@ -8538,19 +8305,19 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           child: Container(
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent,
+                              color: isSelected ? AppColors.primary : Colors.transparent,
                               shape: BoxShape.circle,
                             ),
                             child: Text(
                               '$dayNumber',
                               style: TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: isSelected ? FontWeight.w900 : FontWeight.w600,
+                                fontSize: 14,
+                                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                                 color: isSelected
-                                    ? Colors.white
+                                    ? AppColors.onPrimary
                                     : isEnabled
-                                        ? const Color(0xFF1E293B)
-                                        : const Color(0xFFCBD5E1),
+                                        ? AppColors.textPrimary
+                                        : AppColors.textHint,
                               ),
                             ),
                           ),
@@ -8648,8 +8415,8 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.only(
         left: 20,
@@ -8671,58 +8438,61 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(8),
+                        width: 44,
+                        height: 44,
+                        alignment: Alignment.center,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFFFBEB),
-                          borderRadius: BorderRadius.circular(10),
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Icon(
+                        child: Icon(
                           Icons.access_time_rounded,
-                          size: 20,
-                          color: Color(0xFFEFAA1F),
+                          size: 22,
+                          color: AppColors.primaryText,
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       const Text(
                         'Request Permission',
-                        style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                     ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textSecondary),
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const Divider(color: Color(0xFFF1F5F9), height: 24),
+              const Divider(color: Color(0xFFECEEF1), height: 32),
 
               // Error banner if any
               if (_errorMessage != null) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
+                    color: AppColors.errorBg,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFFECACA)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.error),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                         ),
                       ),
                       InkWell(
                         onTap: () => setState(() => _errorMessage = null),
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                        borderRadius: BorderRadius.circular(8),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close_rounded, size: 16, color: AppColors.error),
+                        ),
                       ),
                     ],
                   ),
@@ -8734,10 +8504,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               const Text(
                 'DATE *',
                 style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.6,
                 ),
               ),
               const SizedBox(height: 8),
@@ -8747,9 +8517,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
+                    color: AppColors.background,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                    border: Border.all(color: const Color(0xFFE2E5EA)),
                   ),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -8757,7 +8527,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                       Expanded(
                         child: Row(
                           children: [
-                            const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                            Icon(Icons.calendar_today_rounded, size: 16, color: AppColors.primaryText),
                             const SizedBox(width: 8),
                             Flexible(
                               child: Text(
@@ -8766,15 +8536,15 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 14,
-                                  fontWeight: _permDate != null ? FontWeight.w800 : FontWeight.w500,
-                                  color: _permDate != null ? const Color(0xFF0F172A) : const Color(0xFF94A3B8),
+                                  fontWeight: _permDate != null ? FontWeight.w700 : FontWeight.w500,
+                                  color: _permDate != null ? AppColors.textPrimary : AppColors.textCaption,
                                 ),
                               ),
                             ),
                           ],
                         ),
                       ),
-                      const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
+                      const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.textSecondary),
                     ],
                   ),
                 ),
@@ -8786,26 +8556,26 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               const Text(
                 'PERMISSION TYPE',
                 style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.6,
                 ),
               ),
               const SizedBox(height: 8),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: const Color(0xFFE2E5EA)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     value: _permType,
                     isExpanded: true,
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                     items: const [
                       DropdownMenuItem(value: 'Late', child: Text('Late')),
                       DropdownMenuItem(value: 'Early', child: Text('Early')),
@@ -8827,10 +8597,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'LATE DURATION *',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF64748B),
-                    letterSpacing: 0.5,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -8845,26 +8615,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 1)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -8878,26 +8636,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 30)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -8907,10 +8653,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'EARLY DURATION *',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF64748B),
-                    letterSpacing: 0.5,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -8925,26 +8671,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -8958,26 +8692,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 45)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -8988,10 +8710,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'LATE DURATION *',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF64748B),
-                    letterSpacing: 0.5,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -9006,26 +8728,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -9039,26 +8749,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -9068,10 +8766,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                 const Text(
                   'EARLY DURATION *',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF64748B),
-                    letterSpacing: 0.5,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textSecondary,
+                    letterSpacing: 0.6,
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -9086,26 +8784,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Hours', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -9119,26 +8805,14 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             keyboardType: TextInputType.number,
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 30)',
-                              hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
-                              fillColor: const Color(0xFFF8FAFC),
+                              fillColor: AppColors.background,
                               contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                              ),
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w600)),
+                          const Text('Minutes', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -9152,34 +8826,22 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
               const Text(
                 'REASON *',
                 style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF64748B),
-                  letterSpacing: 0.5,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textSecondary,
+                  letterSpacing: 0.6,
                 ),
               ),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _reasonController,
                 maxLines: 3,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'State the reason for permission request...',
-                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                  ),
+                  fillColor: AppColors.background,
                   contentPadding: const EdgeInsets.all(14),
                 ),
               ),
@@ -9193,13 +8855,11 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     child: OutlinedButton(
                       onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                       ),
                     ),
                   ),
@@ -9208,21 +8868,17 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     child: ElevatedButton(
                       onPressed: _isSubmitting ? null : _handleRequestPermissionSubmit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEFAA1F),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: _isSubmitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                             )
                           : const Text(
                               'Submit Request',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                             ),
                     ),
                   ),
@@ -9837,34 +9493,15 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
       backgroundColor: Colors.transparent,
       builder: (ctx) => _RequestDetailBottomSheet(
         title: 'Payslip Request Details',
-        icon: Icons.description,
-        iconColor: AppColors.primary,
+        icon: Icons.description_outlined,
+        iconColor: AppColors.primaryText,
         children: children,
       ),
     );
   }
 
-  Widget _payslipDetailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: Colors.black,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  Widget _payslipDetailRow(String label, String value) =>
+      _requestDetailRow(label, value);
 
   Widget _buildPayslipControlBar() {
     return Padding(
@@ -9881,19 +9518,14 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                   'Payslip Requests',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                    letterSpacing: -0.3,
-                  ),
+                  style: AppTextStyles.headingMedium,
                 ),
               ),
               const SizedBox(width: 8),
               // Card / Table View Mode Toggle
               Container(
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
+                  color: const Color(0xFFECEEF1),
                   borderRadius: BorderRadius.circular(10),
                 ),
                 padding: const EdgeInsets.all(3),
@@ -9903,9 +9535,9 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       onTap: () => setState(() => _isTableView = false),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: !_isTableView ? Colors.white : Colors.transparent,
+                          color: !_isTableView ? AppColors.surface : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: !_isTableView
                               ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -9915,8 +9547,8 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                           children: [
                             Icon(
                               Icons.grid_view_rounded,
-                              size: 14,
-                              color: !_isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              size: 16,
+                              color: !_isTableView ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -9924,7 +9556,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: !_isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                color: !_isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -9935,9 +9567,9 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       onTap: () => setState(() => _isTableView = true),
                       borderRadius: BorderRadius.circular(8),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
-                          color: _isTableView ? Colors.white : Colors.transparent,
+                          color: _isTableView ? AppColors.surface : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
                           boxShadow: _isTableView
                               ? const [BoxShadow(color: Color(0x10000000), blurRadius: 4)]
@@ -9947,8 +9579,8 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                           children: [
                             Icon(
                               Icons.table_rows_rounded,
-                              size: 14,
-                              color: _isTableView ? const Color(0xFFEFAA1F) : const Color(0xFF64748B),
+                              size: 16,
+                              color: _isTableView ? AppColors.primaryText : AppColors.textSecondary,
                             ),
                             const SizedBox(width: 4),
                             Text(
@@ -9956,7 +9588,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                               style: TextStyle(
                                 fontSize: 12.5,
                                 fontWeight: FontWeight.w700,
-                                color: _isTableView ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                color: _isTableView ? AppColors.textPrimary : AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -9974,28 +9606,16 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
               // Search input
               Expanded(
                 child: SizedBox(
-                  height: 38,
+                  height: 44,
                   child: TextField(
                     controller: _searchController,
                     decoration: InputDecoration(
                       hintText: 'Search Reason, Month...',
-                      hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                      prefixIcon: const Icon(Icons.search, size: 16, color: Color(0xFF94A3B8)),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+                      hintStyle: const TextStyle(fontSize: 14, color: AppColors.textCaption),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
                       filled: true,
-                      fillColor: Colors.white,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      enabledBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                      ),
+                      fillColor: AppColors.surface,
                     ),
                     onChanged: (val) {
                       if (_debounce?.isActive ?? false) _debounce!.cancel();
@@ -10055,15 +9675,14 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
     final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'generated';
     final isRejected = status.toLowerCase() == 'rejected';
 
-    final Color statusBg = isApproved
-        ? const Color(0xFFECFDF5)
-        : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-    final Color statusBorder = isApproved
-        ? const Color(0xFFA7F3D0)
-        : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-    final Color statusText = isApproved
-        ? const Color(0xFF059669)
-        : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+    // Pill colours come from the shared status palette (approved-like and
+    // rejected-like states keep their existing grouping).
+    final statusPalette = AppColors.statusStyle(
+      isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+    );
+    final Color statusBg = statusPalette.bg;
+    final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+    final Color statusText = statusPalette.fg;
 
     final reason = (req['reason'] ?? '').toString().trim();
     final rejectionReason = (req['actionReason'] ?? req['rejectionReason'])?.toString().trim();
@@ -10071,16 +9690,10 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Material(
         color: Colors.transparent,
@@ -10088,7 +9701,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
           onTap: () => _showPayslipDetails(req),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.all(14.0),
+            padding: const EdgeInsets.all(16.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -10099,16 +9712,16 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                       child: Row(
                         children: [
                           Container(
-                            width: 34,
-                            height: 34,
+                            width: 40,
+                            height: 40,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFFFBEB),
-                              borderRadius: BorderRadius.circular(8),
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(12),
                             ),
-                            child: const Icon(Icons.receipt_long_rounded, color: Color(0xFFEFAA1F), size: 18),
+                            child: Icon(Icons.receipt_long_rounded, color: AppColors.primaryText, size: 20),
                           ),
-                          const SizedBox(width: 10),
+                          const SizedBox(width: 12),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -10117,17 +9730,13 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                                   periodText,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 14.5,
-                                    fontWeight: FontWeight.w800,
-                                    color: Color(0xFF0F172A),
-                                  ),
+                                  style: AppTextStyles.headingSmall,
                                 ),
                                 Text(
                                   'Applied: $appliedDate',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                                 ),
                               ],
                             ),
@@ -10137,17 +9746,17 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: statusBorder),
                       ),
                       child: Text(
                         status,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                           color: statusText,
                         ),
                       ),
@@ -10158,7 +9767,7 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                   const SizedBox(height: 10),
                   Text(
                     reason,
-                    style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -10166,19 +9775,19 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                 if (isRejected && rejectionReason != null && rejectionReason.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   Container(
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEF2F2),
-                      borderRadius: BorderRadius.circular(8),
+                      color: AppColors.errorBg,
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.info_outline, size: 13, color: Color(0xFFDC2626)),
-                        const SizedBox(width: 6),
+                        const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.error),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'Rejected: $rejectionReason',
-                            style: const TextStyle(fontSize: 12, color: Color(0xFFDC2626), fontWeight: FontWeight.w600),
+                            style: const TextStyle(fontSize: 12, color: AppColors.error, fontWeight: FontWeight.w600),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -10194,27 +9803,23 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                     if (isApproved) ...[
                       OutlinedButton.icon(
                         onPressed: () => _viewPayslipItem(req),
-                        icon: const Icon(Icons.description_outlined, size: 14, color: Color(0xFF0F172A)),
-                        label: const Text('View', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+                        icon: const Icon(Icons.description_outlined, size: 16, color: AppColors.textPrimary),
+                        label: const Text('View', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFFE2E8F0)),
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          minimumSize: Size.zero,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          minimumSize: const Size(0, 36),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                       ),
                       const SizedBox(width: 8),
                       ElevatedButton.icon(
                         onPressed: () => _downloadPayslipItem(req),
-                        icon: const Icon(Icons.download_rounded, size: 14),
-                        label: const Text('Download', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+                        icon: const Icon(Icons.download_rounded, size: 16),
+                        label: const Text('Download', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFEFAA1F),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          minimumSize: Size.zero,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          minimumSize: const Size(0, 36),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                       ),
                     ] else if (isPending) ...[
@@ -10225,16 +9830,17 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                             _cancelPayslipRequest(id);
                           }
                         },
-                        icon: const Icon(Icons.cancel_outlined, size: 14, color: Color(0xFFDC2626)),
+                        icon: const Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                         label: const Text(
                           'Cancel',
-                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                         ),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: Color(0xFFFECACA)),
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                          minimumSize: Size.zero,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          backgroundColor: AppColors.errorBg.withValues(alpha: 0.4),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          minimumSize: const Size(0, 36),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                       ),
                     ],
@@ -10252,33 +9858,27 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x08000000),
-            blurRadius: 8,
-            offset: Offset(0, 2),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(16),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: DataTable(
-            headingRowColor: WidgetStateProperty.all(const Color(0xFFF8FAFC)),
+            headingRowColor: WidgetStateProperty.all(AppColors.background),
             headingTextStyle: const TextStyle(
               fontSize: 12,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w700,
+              color: AppColors.textCaption,
               letterSpacing: 0.5,
             ),
             dataTextStyle: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF1E293B),
+              color: AppColors.textPrimary,
             ),
             columns: const [
               DataColumn(label: Text('MONTH/YEAR')),
@@ -10303,22 +9903,21 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
               final isApproved = status.toLowerCase() == 'approved' || status.toLowerCase() == 'generated';
               final isRejected = status.toLowerCase() == 'rejected';
 
-              final Color statusBg = isApproved
-                  ? const Color(0xFFECFDF5)
-                  : (isRejected ? const Color(0xFFFEF2F2) : const Color(0xFFFFFBEB));
-              final Color statusBorder = isApproved
-                  ? const Color(0xFFA7F3D0)
-                  : (isRejected ? const Color(0xFFFECACA) : const Color(0xFFFDE68A));
-              final Color statusText = isApproved
-                  ? const Color(0xFF059669)
-                  : (isRejected ? const Color(0xFFDC2626) : AppColors.brandDark);
+              // Pill colours come from the shared status palette (approved-like and
+              // rejected-like states keep their existing grouping).
+              final statusPalette = AppColors.statusStyle(
+                isApproved ? 'approved' : (isRejected ? 'rejected' : status),
+              );
+              final Color statusBg = statusPalette.bg;
+              final Color statusBorder = statusPalette.fg.withValues(alpha: 0.22);
+              final Color statusText = statusPalette.fg;
 
               final reason = (raw['reason'] ?? '-').toString().trim();
               final rejReason = (raw['actionReason'] ?? raw['rejectionReason'] ?? '-').toString().trim();
 
               return DataRow(
                 cells: [
-                  DataCell(Text(periodText, style: const TextStyle(fontWeight: FontWeight.w800))),
+                  DataCell(Text(periodText, style: const TextStyle(fontWeight: FontWeight.w700))),
                   DataCell(
                     ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 140),
@@ -10327,17 +9926,17 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                   ),
                   DataCell(
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
                         color: statusBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: statusBorder),
                       ),
                       child: Text(
                         status,
                         style: TextStyle(
                           fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w600,
                           color: statusText,
                         ),
                       ),
@@ -10357,12 +9956,12 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
-                                icon: const Icon(Icons.remove_red_eye_outlined, size: 16, color: Color(0xFF0F172A)),
+                                icon: const Icon(Icons.remove_red_eye_outlined, size: 16, color: AppColors.textPrimary),
                                 onPressed: () => _viewPayslipItem(raw),
                                 tooltip: 'View payslip',
                               ),
                               IconButton(
-                                icon: const Icon(Icons.download_rounded, size: 16, color: Color(0xFFEFAA1F)),
+                                icon: Icon(Icons.download_rounded, size: 16, color: AppColors.primaryText),
                                 onPressed: () => _downloadPayslipItem(raw),
                                 tooltip: 'Download',
                               ),
@@ -10378,18 +9977,18 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                                 },
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(color: Color(0xFFFECACA)),
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                  minimumSize: Size.zero,
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  minimumSize: const Size(0, 32),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                 ),
                                 child: const Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(Icons.cancel_outlined, size: 12, color: Color(0xFFDC2626)),
+                                    Icon(Icons.cancel_outlined, size: 16, color: AppColors.error),
                                     SizedBox(width: 4),
                                     Text(
                                       'Cancel',
-                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFDC2626)),
+                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error),
                                     ),
                                   ],
                                 ),
@@ -10409,20 +10008,20 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
   Widget _buildPayslipCardDetailRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: const Color(0xFF424242)),
+        Icon(icon, size: 14, color: AppColors.textPrimary),
         const SizedBox(width: 6),
         Text(
           '$label: ',
           style: const TextStyle(
             fontSize: 13,
-            color: Color(0xFF424242),
+            color: AppColors.textPrimary,
             fontWeight: FontWeight.w600,
           ),
         ),
         Expanded(
           child: Text(
             value,
-            style: const TextStyle(fontSize: 13, color: Color(0xFF424242)),
+            style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
@@ -10435,7 +10034,6 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       builder: (ctx) => RequestPayslipDialog(onSuccess: _fetchRequests),
     );
   }
@@ -10493,25 +10091,23 @@ class _PayslipRequestsTabState extends State<PayslipRequestsTab>
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(18),
-                            decoration: const BoxDecoration(
-                              color: Color(0xFFFFFBEB),
+                            width: 64,
+                            height: 64,
+                            alignment: Alignment.center,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
                               shape: BoxShape.circle,
                             ),
-                            child: const Icon(
+                            child: Icon(
                               Icons.description_outlined,
-                              size: 40,
-                              color: Color(0xFFEFAA1F),
+                              size: 28,
+                              color: AppColors.primaryText,
                             ),
                           ),
-                          const SizedBox(height: 14),
+                          const SizedBox(height: 16),
                           const Text(
                             'No payslip requests found',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ],
                       ),
@@ -10646,8 +10242,8 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
   Widget build(BuildContext context) {
     return Container(
       decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       padding: EdgeInsets.only(
         left: 20,
@@ -10671,53 +10267,50 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                     children: const [
                       Text(
                         'Request Payslip',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                       SizedBox(height: 2),
                       Text(
                         'Request a payslip for a specific month',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF94A3B8),
-                        ),
+                        style: AppTextStyles.bodySmall,
                       ),
                     ],
                   ),
                   IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textSecondary),
                     onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                   ),
                 ],
               ),
-              const Divider(color: Color(0xFFF1F5F9), height: 24),
+              const Divider(color: Color(0xFFECEEF1), height: 24),
 
               // Error banner if any
               if (_errorMessage != null) ...[
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFEF2F2),
+                    color: AppColors.errorBg,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(color: const Color(0xFFFECACA)),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
+                      const Icon(Icons.error_outline_rounded, size: 16, color: AppColors.error),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           _errorMessage!,
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFDC2626)),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.error),
                         ),
                       ),
                       InkWell(
                         onTap: () => setState(() => _errorMessage = null),
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFFDC2626)),
+                        borderRadius: BorderRadius.circular(8),
+                        child: const Padding(
+                          padding: EdgeInsets.all(4),
+                          child: Icon(Icons.close_rounded, size: 16, color: AppColors.error),
+                        ),
                       ),
                     ],
                   ),
@@ -10731,23 +10324,23 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF8FAFC),
+                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: const Color(0xFFE2E5EA)),
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
                     value: _month,
                     isExpanded: true,
-                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B)),
-                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                    icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+                    style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                     items: _months
                         .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                         .toList(),
@@ -10768,7 +10361,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
@@ -10776,25 +10369,13 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 controller: _yearController,
                 keyboardType: TextInputType.number,
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'e.g., 2026',
-                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: AppColors.background,
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                  ),
                 ),
               ),
 
@@ -10806,7 +10387,7 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
+                  color: AppColors.textPrimary,
                 ),
               ),
               const SizedBox(height: 6),
@@ -10814,25 +10395,13 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 controller: _reasonController,
                 maxLines: 3,
                 enabled: !_isSubmitting,
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
                 decoration: InputDecoration(
                   hintText: 'Enter reason for payslip request',
-                  hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                  hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                   filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
+                  fillColor: AppColors.background,
                   contentPadding: const EdgeInsets.all(12),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                  ),
                 ),
               ),
 
@@ -10845,13 +10414,11 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                     child: OutlinedButton(
                       onPressed: _isSubmitting ? null : () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: const Text(
                         'Cancel',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF64748B)),
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textSecondary),
                       ),
                     ),
                   ),
@@ -10860,21 +10427,17 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                     child: ElevatedButton(
                       onPressed: _isSubmitting ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEFAA1F),
-                        foregroundColor: Colors.white,
-                        elevation: 0,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: _isSubmitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               width: 20,
                               height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                             )
                           : const Text(
                               'Submit Request',
-                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
                             ),
                     ),
                   ),
@@ -10909,19 +10472,27 @@ class _StatusFilterPill extends StatelessWidget {
     final current = unique.contains(value) ? value : unique.first;
     final isActive = current != unique.first;
     return Container(
-      height: 38,
+      height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: AppColors.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(14),
+        color: isActive
+            ? AppColors.primary.withValues(alpha: 0.10)
+            : AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: AppColors.primary.withValues(alpha: isActive ? 0.5 : 0.25),
+          color: isActive
+              ? AppColors.primary.withValues(alpha: 0.5)
+              : const Color(0xFFE2E5EA),
         ),
       ),
       child: Row(
         mainAxisSize: expanded ? MainAxisSize.max : MainAxisSize.min,
         children: [
-          Icon(Icons.filter_list_rounded, size: 16, color: AppColors.primary),
+          Icon(
+            Icons.filter_list_rounded,
+            size: 18,
+            color: isActive ? AppColors.primaryText : AppColors.textSecondary,
+          ),
           const SizedBox(width: 6),
           Flexible(
             fit: expanded ? FlexFit.tight : FlexFit.loose,
@@ -10931,13 +10502,13 @@ class _StatusFilterPill extends StatelessWidget {
                 isExpanded: expanded,
                 isDense: true,
                 borderRadius: BorderRadius.circular(14),
-                dropdownColor: Colors.white,
+                dropdownColor: AppColors.surface,
                 elevation: 4,
-                icon: Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: AppColors.primary),
+                icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: AppColors.textSecondary),
                 style: const TextStyle(
                   fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF1E293B),
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
                 items: unique
                     .map((s) => DropdownMenuItem(value: s, child: Text(s)))
@@ -10969,19 +10540,18 @@ class _RowActions extends StatelessWidget {
         OutlinedButton(
           onPressed: onView,
           style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            minimumSize: Size.zero,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            minimumSize: const Size(0, 32),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           ),
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.visibility_outlined, size: 12, color: Color(0xFF0F172A)),
+              Icon(Icons.visibility_outlined, size: 16, color: AppColors.textPrimary),
               SizedBox(width: 4),
               Text(
                 'View',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
               ),
             ],
           ),
@@ -11049,23 +10619,23 @@ class _DateRangeFilterField extends StatelessWidget {
     }
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
-        height: 38,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(
-          color: active ? AppColors.primary.withValues(alpha: 0.08) : Colors.white,
-          borderRadius: BorderRadius.circular(10),
+          color: active ? AppColors.primary.withValues(alpha: 0.08) : AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: active ? AppColors.primary.withValues(alpha: 0.5) : const Color(0xFFE2E8F0),
+            color: active ? AppColors.primary.withValues(alpha: 0.5) : const Color(0xFFE2E5EA),
           ),
         ),
         child: Row(
           children: [
             Icon(
               Icons.calendar_month_outlined,
-              size: 16,
-              color: active ? AppColors.primary : const Color(0xFF94A3B8),
+              size: 18,
+              color: active ? AppColors.primaryText : AppColors.textSecondary,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -11075,8 +10645,8 @@ class _DateRangeFilterField extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
-                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                  color: active ? const Color(0xFF1E293B) : const Color(0xFF94A3B8),
+                  fontWeight: active ? FontWeight.w600 : FontWeight.w500,
+                  color: active ? AppColors.textPrimary : AppColors.textSecondary,
                 ),
               ),
             ),
@@ -11086,7 +10656,7 @@ class _DateRangeFilterField extends StatelessWidget {
                 customBorder: const CircleBorder(),
                 child: const Padding(
                   padding: EdgeInsets.all(4),
-                  child: Icon(Icons.close_rounded, size: 16, color: Color(0xFF64748B)),
+                  child: Icon(Icons.close_rounded, size: 16, color: AppColors.textSecondary),
                 ),
               ),
           ],

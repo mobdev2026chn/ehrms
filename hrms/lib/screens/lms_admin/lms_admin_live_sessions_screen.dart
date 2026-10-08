@@ -3,9 +3,11 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../widgets/app_card.dart';
 import 'lms_admin_utils.dart';
 import 'widgets/lms_admin_stat_card.dart';
 
@@ -79,11 +81,7 @@ class _LmsAdminLiveSessionsScreenState
                 const Expanded(
                   child: Text(
                     'Live Sessions',
-                    style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingLarge,
                   ),
                 ),
                 ElevatedButton.icon(
@@ -91,16 +89,11 @@ class _LmsAdminLiveSessionsScreenState
                     context,
                     'Scheduling sessions is managed from the web admin console.',
                   ),
-                  icon: const Icon(Icons.add, size: 18),
+                  icon: const Icon(Icons.add_rounded, size: 18),
                   label: const Text('Schedule'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   ),
                 ),
               ],
@@ -155,7 +148,7 @@ class _LmsAdminLiveSessionsScreenState
             )
           else
             ...list.map((m) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: _SessionCard(session: m, status: _status(m)),
                 )),
         ],
@@ -166,14 +159,14 @@ class _LmsAdminLiveSessionsScreenState
   Widget _toggle(String label, bool active, VoidCallback onTap) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(999),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         decoration: BoxDecoration(
           color: active ? AppColors.primary : AppColors.surface,
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(999),
           border: Border.all(
-            color: active ? AppColors.primary : AppColors.divider,
+            color: active ? AppColors.primary : const Color(0xFFE2E5EA),
           ),
         ),
         child: Text(
@@ -181,7 +174,7 @@ class _LmsAdminLiveSessionsScreenState
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
-            color: active ? Colors.white : AppColors.textSecondary,
+            color: active ? AppColors.onPrimary : AppColors.textSecondary,
           ),
         ),
       ),
@@ -212,11 +205,12 @@ class _SessionCard extends StatelessWidget {
         .toString();
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -243,23 +237,23 @@ class _SessionCard extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
               color: AppColors.indigoBg,
-              borderRadius: BorderRadius.circular(6),
+              borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               type,
               style: const TextStyle(
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: FontWeight.w600,
                 color: AppColors.indigo,
               ),
             ),
           ),
-          const SizedBox(height: 10),
-          _row(Icons.schedule, sessionAt),
-          const SizedBox(height: 4),
+          const SizedBox(height: 12),
+          _row(Icons.schedule_rounded, sessionAt),
+          const SizedBox(height: 6),
           _row(Icons.timer_outlined, '$duration min'),
-          const SizedBox(height: 4),
-          _row(Icons.person_outline, hostName),
+          const SizedBox(height: 6),
+          _row(Icons.person_outline_rounded, hostName),
         ],
       ),
     );
@@ -268,12 +262,12 @@ class _SessionCard extends StatelessWidget {
   Widget _row(IconData icon, String text) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: AppColors.textCaption),
-        const SizedBox(width: 6),
+        Icon(icon, size: 16, color: AppColors.textSecondary),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
             text,
-            style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),

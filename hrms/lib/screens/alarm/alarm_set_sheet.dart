@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/alarm_service.dart';
 import '../../services/fcm_service.dart';
 import '../../utils/snackbar_utils.dart';
@@ -120,10 +121,10 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
 
     return Container(
       padding: EdgeInsets.only(
-        left: 24,
-        right: 24,
-        top: 24,
-        bottom: MediaQuery.of(context).padding.bottom + 24,
+        left: 20,
+        right: 20,
+        top: 12,
+        bottom: MediaQuery.of(context).padding.bottom + 20,
       ),
       decoration: BoxDecoration(
         color: colorScheme.surface,
@@ -133,40 +134,67 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.divider,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
           Row(
             children: [
-              Icon(Icons.alarm_rounded, color: AppColors.primary, size: 28),
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.alarm_rounded,
+                  color: AppColors.primaryText,
+                  size: 22,
+                ),
+              ),
               const SizedBox(width: 12),
               Text(
                 'Set Alarm',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
+                style: AppTextStyles.headingMedium.copyWith(
                   color: colorScheme.onSurface,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           InkWell(
             onTap: _pickTime,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 20),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
+                color: AppColors.primary.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.35),
+                ),
               ),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.access_time_rounded, color: AppColors.primary, size: 28),
+                  Icon(
+                    Icons.access_time_rounded,
+                    color: AppColors.primaryText,
+                    size: 24,
+                  ),
                   const SizedBox(width: 12),
                   Text(
                     timeStr,
-                    style: TextStyle(
+                    style: AppTextStyles.displayLarge.copyWith(
                       fontSize: 32,
-                      fontWeight: FontWeight.bold,
                       color: colorScheme.onSurface,
                     ),
                   ),
@@ -177,11 +205,10 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
           const SizedBox(height: 16),
           TextField(
             controller: _noteController,
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               labelText: 'Note (optional)',
               hintText: 'Add a reminder note...',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              prefixIcon: const Icon(Icons.note_outlined),
+              prefixIcon: Icon(Icons.note_outlined),
             ),
             maxLines: 2,
             textCapitalization: TextCapitalization.sentences,
@@ -190,8 +217,7 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
             const SizedBox(height: 16),
             Text(
               'Next alarm: ${DateFormat.jm().format(_nextAlarm!)}',
-              style: TextStyle(
-                fontSize: 14,
+              style: AppTextStyles.bodyMedium.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
             ),
@@ -210,15 +236,11 @@ class _AlarmSetSheetState extends State<AlarmSetSheet> {
                   child: const Text('Cancel'),
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 flex: 2,
                 child: FilledButton(
                   onPressed: _setAlarm,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                  ),
                   child: const Text('Set Alarm'),
                 ),
               ),

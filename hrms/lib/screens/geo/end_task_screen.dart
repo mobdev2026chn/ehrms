@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
 
 class EndTaskScreen extends StatelessWidget {
@@ -8,6 +10,7 @@ class EndTaskScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Task Completed'),
         automaticallyImplyLeading: false,
@@ -18,46 +21,48 @@ class EndTaskScreen extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(
-                Icons.check_circle_outline,
-                color: Colors.green,
-                size: 100,
+              Container(
+                width: 112,
+                height: 112,
+                decoration: BoxDecoration(
+                  color: AppColors.successBg,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_outline_rounded,
+                  color: AppColors.success,
+                  size: 64,
+                ),
               ),
               const SizedBox(height: 24),
               const Text(
                 'Task Completed Successfully!',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                style: AppTextStyles.headingLarge,
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 16),
-              const Text(
+              const SizedBox(height: 8),
+              Text(
                 'Your task has been successfully completed and tracking has stopped.',
-                style: TextStyle(fontSize: 16),
+                style: AppTextStyles.bodyLarge.copyWith(
+                  color: AppColors.textSecondary,
+                ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 48),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const MyTasksScreen(),
-                    ),
-                    (route) => false,
-                  );
-                },
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 40,
-                    vertical: 15,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                child: const Text(
-                  'Back to Task List',
-                  style: TextStyle(fontSize: 18),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                height: 52,
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const MyTasksScreen(),
+                      ),
+                      (route) => false,
+                    );
+                  },
+                  child: const Text('Back to Task List'),
                 ),
               ),
             ],

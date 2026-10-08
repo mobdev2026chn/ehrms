@@ -5,6 +5,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/performance_service.dart';
 import '../../utils/snackbar_utils.dart';
@@ -206,16 +208,10 @@ class _SelfAssessmentCreateScreenState
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text(
-          'Create Self Assessment',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('Create Self Assessment'),
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
       body: _isLoading
@@ -223,14 +219,13 @@ class _SelfAssessmentCreateScreenState
           : _error != null
               ? _buildErrorState()
               : SingleChildScrollView(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Form(
                     key: _formKey,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildCycleSection(),
-                        const SizedBox(height: 16),
                         _buildRatingSection(),
                         _buildListSection('Strengths', _strengthsControllers),
                         _buildListSection(
@@ -241,25 +236,20 @@ class _SelfAssessmentCreateScreenState
                         _buildListSection(
                             'Goals Achieved', _goalsAchievedControllers),
                         _buildCommentsSection(),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 8),
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
                             onPressed: _isSubmitting ? null : _submit,
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 16),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                              minimumSize: const Size(0, 52),
                             ),
                             child: _isSubmitting
-                                ? const SizedBox(
-                                    height: 24,
-                                    width: 24,
+                                ? SizedBox(
+                                    height: 22,
+                                    width: 22,
                                     child: CircularProgressIndicator(
-                                      color: Colors.white,
+                                      color: AppColors.onPrimary,
                                       strokeWidth: 2,
                                     ),
                                   )
@@ -281,19 +271,25 @@ class _SelfAssessmentCreateScreenState
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, size: 64, color: AppColors.error),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 32, color: AppColors.error),
+            ),
             const SizedBox(height: 16),
             Text(_error ?? 'Failed to load cycles',
-                textAlign: TextAlign.center),
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodySmall),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _fetchCycles,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
             ),
           ],
         ),
@@ -302,25 +298,31 @@ class _SelfAssessmentCreateScreenState
   }
 
   Widget _sectionCard({required String title, required Widget child}) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: SizedBox(
+        width: double.infinity,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
+            Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(title, style: AppTextStyles.headingSmall),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             child,
           ],
         ),
@@ -352,7 +354,7 @@ class _SelfAssessmentCreateScreenState
             items: cycleItems,
             onChanged: (v) => setState(() => _selectedCycle = v),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           DropdownButtonFormField<String>(
             initialValue: _selectedType,
             isExpanded: true,
@@ -364,7 +366,7 @@ class _SelfAssessmentCreateScreenState
             onChanged: (v) =>
                 setState(() => _selectedType = v ?? 'Quarterly'),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -392,9 +394,8 @@ class _SelfAssessmentCreateScreenState
   InputDecoration _inputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       contentPadding:
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     );
   }
 
@@ -407,9 +408,12 @@ class _SelfAssessmentCreateScreenState
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: InputDecorator(
-        decoration: _inputDecoration(label),
+        decoration: _inputDecoration(label).copyWith(
+          suffixIcon: const Icon(Icons.calendar_today_outlined, size: 18),
+        ),
         child: Text(
           value != null ? DateFormat('MMM dd, yyyy').format(value) : label,
+          overflow: TextOverflow.ellipsis,
           style: TextStyle(
             fontSize: 14,
             color: value != null
@@ -431,7 +435,7 @@ class _SelfAssessmentCreateScreenState
             children: List.generate(5, (i) {
               final rating = i + 1;
               return Padding(
-                padding: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.only(right: 4),
                 child: GestureDetector(
                   onTap: () => setState(() => _overallRating = rating),
                   child: Icon(
@@ -445,9 +449,10 @@ class _SelfAssessmentCreateScreenState
               );
             }),
           ),
+          const SizedBox(height: 4),
           Text('$_overallRating/5',
-              style:
-                  TextStyle(fontSize: 14, color: AppColors.textSecondary)),
+              style: AppTextStyles.bodySmall
+                  .copyWith(fontWeight: FontWeight.w600)),
         ],
       ),
     );
@@ -473,7 +478,9 @@ class _SelfAssessmentCreateScreenState
                   ),
                   if (controllers.length > 1)
                     IconButton(
-                      icon: const Icon(Icons.remove_circle_outline_rounded),
+                      icon: const Icon(Icons.remove_circle_outline_rounded,
+                          size: 20),
+                      tooltip: 'Remove',
                       onPressed: () => _removeItem(controllers, i),
                       color: AppColors.error,
                     ),
@@ -485,7 +492,6 @@ class _SelfAssessmentCreateScreenState
             onPressed: () => _addItem(controllers),
             icon: const Icon(Icons.add_rounded, size: 20),
             label: const Text('Add'),
-            style: TextButton.styleFrom(foregroundColor: AppColors.primary),
           ),
         ],
       ),

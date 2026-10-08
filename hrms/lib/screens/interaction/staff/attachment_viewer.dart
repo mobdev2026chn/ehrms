@@ -110,14 +110,9 @@ class _AttachmentViewerScreenState extends State<_AttachmentViewerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFE2E8F0),
+      backgroundColor: const Color(0xFFE9ECF0),
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: kInteractionInk,
-        title: Text(_a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        title: Text(_a.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk)),
         actions: [
           if (_bytes != null)
             IconButton(tooltip: 'Open in another app', icon: const Icon(Icons.open_in_new_rounded), onPressed: _openExternally),
@@ -127,8 +122,18 @@ class _AttachmentViewerScreenState extends State<_AttachmentViewerScreen> {
       bottomNavigationBar: _pdf != null && _pages > 1
           ? SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                child: Text('Page $_page of $_pages', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700, color: kInteractionMuted)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: kInteractionLine),
+                    ),
+                    child: Text('Page $_page of $_pages', textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kInteractionMuted)),
+                  ),
+                ),
               ),
             )
           : null,
@@ -161,7 +166,7 @@ class _AttachmentViewerScreenState extends State<_AttachmentViewerScreen> {
       message: 'This file type opens in another app on your phone.',
       action: ElevatedButton.icon(
         onPressed: _openExternally,
-        icon: const Icon(Icons.open_in_new_rounded),
+        icon: const Icon(Icons.open_in_new_rounded, size: 18),
         label: const Text('Open file'),
       ),
     );

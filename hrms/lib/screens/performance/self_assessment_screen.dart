@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -90,20 +92,18 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
 
   Widget _buildCreateBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       child: SizedBox(
         width: double.infinity,
         child: OutlinedButton.icon(
           onPressed: _openCreateSelfAssessment,
-          icon: const Icon(Icons.add_rounded, size: 18),
+          icon: const Icon(Icons.add_rounded, size: 20),
           label: const Text('Create Self Assessment'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: AppColors.primary,
-            side: BorderSide(color: AppColors.primary),
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+            foregroundColor: AppColors.primaryText,
+            backgroundColor: AppColors.surface,
+            side: BorderSide(color: AppColors.primary, width: 1.2),
+            minimumSize: const Size(0, 48),
           ),
         ),
       ),
@@ -122,7 +122,7 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
             onRefresh: _fetchPendingReviews,
             color: AppColors.primary,
             child: ListView.builder(
-              padding: const EdgeInsets.fromLTRB(24, 16, 24, 24),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               itemCount: _pendingReviews.length,
               itemBuilder: (context, index) {
                 final review = _pendingReviews[index] as Map<String, dynamic>;
@@ -144,14 +144,7 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text(
-          'Self Assessment',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('Self Assessment'),
       ),
       body: body,
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
@@ -165,22 +158,27 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, size: 64, color: AppColors.error),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 32, color: AppColors.error),
+            ),
             const SizedBox(height: 16),
             Text(
               _error ?? 'Failed to load reviews',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textSecondary),
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _fetchPendingReviews,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: const Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
             ),
           ],
         ),
@@ -194,31 +192,22 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
       color: AppColors.primary,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
         child: Column(
           children: [
-            const SizedBox(height: 12),
             _buildEmptyIllustration(),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             Text(
               'No Pending Reviews',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.headingMedium,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               "You don't have any pending self-assessments at the moment. "
               'Take a break and celebrate your progress!',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 14,
-                height: 1.4,
-                color: AppColors.textSecondary,
-              ),
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 24),
             ElevatedButton(
@@ -229,26 +218,12 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
                 );
               },
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 28,
-                  vertical: 14,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 24),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: const [
-                  Text(
-                    'View All Reviews',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  Text('View All Reviews'),
                   SizedBox(width: 8),
                   Icon(Icons.arrow_forward_rounded, size: 18),
                 ],
@@ -262,67 +237,55 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
 
   Widget _buildEmptyIllustration() {
     return SizedBox(
-      width: 120,
-      height: 110,
+      width: 96,
+      height: 88,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
           Container(
-            width: 96,
-            height: 96,
+            width: 80,
+            height: 80,
             decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(24),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
-                ),
-              ],
+              color: AppColors.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
             ),
-            child: Center(
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  Icons.coffee_rounded,
-                  size: 28,
-                  color: AppColors.primary,
-                ),
-              ),
+            child: Icon(
+              Icons.coffee_outlined,
+              size: 34,
+              color: AppColors.primaryText,
             ),
           ),
           Positioned(
             right: 0,
-            bottom: 6,
+            bottom: 0,
             child: Container(
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.06),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
+                shape: BoxShape.circle,
+                border: Border.all(color: const Color(0xFFECEEF1)),
+                boxShadow: kSoftCardShadow,
               ),
-              child: Icon(
+              child: const Icon(
                 Icons.done_all_rounded,
-                size: 20,
-                color: AppColors.primary,
+                size: 18,
+                color: AppColors.success,
               ),
             ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildMetaRow(IconData icon, String text) {
+    return Row(
+      children: [
+        Icon(icon, size: 14, color: AppColors.textSecondary),
+        const SizedBox(width: 6),
+        Expanded(child: Text(text, style: AppTextStyles.bodySmall)),
+      ],
     );
   }
 
@@ -345,125 +308,111 @@ class _SelfAssessmentScreenState extends State<SelfAssessmentScreen> {
       } catch (_) {}
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
+    final pending = AppColors.statusStyle('pending');
+
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(Icons.assignment_ind_outlined,
+                    size: 20, color: AppColors.primaryText),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
                   child: Text(
                     reviewCycle,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingSmall,
                   ),
                 ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.warning.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: const Text(
-                    'Pending',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.warning,
-                    ),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: pending.bg,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  'Pending',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: pending.fg,
                   ),
                 ),
-              ],
-            ),
-            if (periodStr.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Icon(
-                    Icons.calendar_today_rounded,
-                    size: 16,
-                    color: AppColors.textSecondary,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    periodStr,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
               ),
             ],
-            if (reviewType.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Type: $reviewType',
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-              ),
-            ],
-            if (goalIds != null && goalIds.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                '${goalIds.length} goal${goalIds.length != 1 ? 's' : ''} linked',
-                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
-              ),
-            ],
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const MyReviewsScreen(),
-                        ),
-                      );
-                    },
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.primary),
-                    ),
-                    child: const Text('View Details'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => SelfAssessmentFormScreen(reviewId: id),
-                        ),
-                      ).then((_) => _fetchPendingReviews());
-                    },
-                    icon: const Icon(Icons.edit_rounded, size: 14),
-                    label: const Text('Start Assessment'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
+          ),
+          if (periodStr.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            _buildMetaRow(Icons.calendar_today_outlined, periodStr),
+          ],
+          if (reviewType.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _buildMetaRow(Icons.category_outlined, 'Type: $reviewType'),
+          ],
+          if (goalIds != null && goalIds.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            _buildMetaRow(
+              Icons.flag_outlined,
+              '${goalIds.length} goal${goalIds.length != 1 ? 's' : ''} linked',
             ),
           ],
-        ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const MyReviewsScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text('View Details'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => SelfAssessmentFormScreen(reviewId: id),
+                      ),
+                    ).then((_) => _fetchPendingReviews());
+                  },
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text(
+                    'Start Assessment',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }

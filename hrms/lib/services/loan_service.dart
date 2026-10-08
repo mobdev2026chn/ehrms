@@ -116,13 +116,54 @@ class LoanService {
 
   Future<Map<String, dynamic>> adminDashboard() => _get('/admin/loans/dashboard', 'Could not load the loan dashboard');
 
-  /// Filters: status, category, search ('All' / empty are ignored by the server).
-  Future<List<LoanRequest>> adminRequests({String? status, String? category, String? search}) async {
-    final d = await _get('/admin/loans/requests', 'Could not load loan requests', query: {
-      if (status != null && status != 'All') 'status': status,
-      if (category != null && category != 'All') 'category': category,
+  /// Query for the admin list endpoints (adminLoan.service.ts `ListQuery`): status, category,
+  /// loanType, department, branch, search, from/to (YYYY-MM-DD). 'All' / empty are dropped.
+  static Map<String, dynamic> _listQuery({
+    String? status,
+    String? category,
+    String? search,
+    String? loanType,
+    String? department,
+    String? branch,
+    DateTime? from,
+    DateTime? to,
+  }) {
+    String day(DateTime d) =>
+        '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+    bool set(String? v) => v != null && v.trim().isNotEmpty && v != 'All';
+    return {
+      if (set(status)) 'status': status,
+      if (set(category)) 'category': category,
+      if (set(loanType)) 'loanType': loanType,
+      if (set(department)) 'department': department,
+      if (set(branch)) 'branch': branch,
       if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
-    });
+      if (from != null) 'from': day(from),
+      if (to != null) 'to': day(to),
+    };
+  }
+
+  /// Filters: status, category, search, loanType, department, branch, from/to (applied date).
+  Future<List<LoanRequest>> adminRequests({
+    String? status,
+    String? category,
+    String? search,
+    String? loanType,
+    String? department,
+    String? branch,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final d = await _get('/admin/loans/requests', 'Could not load loan requests',
+        query: _listQuery(
+            status: status,
+            category: category,
+            search: search,
+            loanType: loanType,
+            department: department,
+            branch: branch,
+            from: from,
+            to: to));
     final list = d['requests'];
     return list is List ? list.whereType<Map>().map((e) => LoanRequest.fromJson(Map<String, dynamic>.from(e))).toList() : [];
   }
@@ -150,12 +191,27 @@ class LoanService {
   Future<void> adminAskClarification(String id, String question) =>
       _send('POST', '/admin/loans/requests/$id/clarification', {'question': question}, 'Could not send the question');
 
-  Future<List<Loan>> adminLoans({String? status, String? category, String? search}) async {
-    final d = await _get('/admin/loans', 'Could not load loans', query: {
-      if (status != null && status != 'All') 'status': status,
-      if (category != null && category != 'All') 'category': category,
-      if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
-    });
+  /// Filters as [adminRequests]; from/to apply to the loan's creation date.
+  Future<List<Loan>> adminLoans({
+    String? status,
+    String? category,
+    String? search,
+    String? loanType,
+    String? department,
+    String? branch,
+    DateTime? from,
+    DateTime? to,
+  }) async {
+    final d = await _get('/admin/loans', 'Could not load loans',
+        query: _listQuery(
+            status: status,
+            category: category,
+            search: search,
+            loanType: loanType,
+            department: department,
+            branch: branch,
+            from: from,
+            to: to));
     final list = d['loans'];
     return list is List ? list.whereType<Map>().map((e) => Loan.fromJson(Map<String, dynamic>.from(e))).toList() : [];
   }
@@ -190,4 +246,27 @@ class LoanService {
   Future<Loan> adminSetStatus(String id, String status, String reason) async =>
       Loan.fromJson(await _send('PATCH', '/admin/loans/$id/status', {'status': status, 'reason': reason},
           'Could not change the loan status'));
+
+  // ── Payroll recovery & settings ──
+
+  /// GET /admin/loans/payroll-recovery?month=YYYY-MM -> {month, payrollStatus, rows}.
+  Future<Map<String, dynamic>> adminPayrollRecovery(String month) =>
+      _get('/admin/loans/payroll-recovery', 'Could not load payroll recovery', query: {'month': month});
+
+  /// POST /admin/loans/payroll-recovery/run. [rowIds] limits the run to those rows; null runs all.
+  /// Returns how many EMIs were recovered.
+  Future<int> adminRunPayrollRecovery(String month, {List<String>? rowIds}) async {
+    final d = await _send('POST', '/admin/loans/payroll-recovery/run', {
+      'month': month,
+      if (rowIds != null) 'rowIds': rowIds,
+    }, 'Could not run the payroll recovery');
+    return (d['processed'] as num?)?.toInt() ?? 0;
+  }
+
+  /// GET /admin/loans/settings -> {general, loanTypes, salaryAdvance, payroll, workflow, notifications}.
+  Future<Map<String, dynamic>> adminSettings() => _get('/admin/loans/settings', 'Could not load the loan settings');
+
+  /// PUT /admin/loans/settings with whole sections; returns the saved settings.
+  Future<Map<String, dynamic>> adminUpdateSettings(Map<String, dynamic> sections) =>
+      _send('PUT', '/admin/loans/settings', sections, 'Could not save the loan settings');
 }

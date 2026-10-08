@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/performance_service.dart';
 import '../../utils/snackbar_utils.dart';
@@ -244,16 +246,10 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text(
-          'Self Assessment',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-        ),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('Self Assessment'),
       ),
       bottomNavigationBar: const AppBottomNavigationBar(currentIndex: -1),
       body: _isLoading
@@ -261,16 +257,17 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
           : _error != null
           ? _buildErrorState()
           : _review == null
-          ? const Center(child: Text('Review not found'))
+          ? const Center(
+              child: Text('Review not found', style: AppTextStyles.bodySmall))
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildReviewHeader(),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
                     _buildRatingSection(),
                     _buildListSection('Strengths', _strengthsControllers),
                     _buildListSection(
@@ -284,25 +281,20 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
                       _goalsAchievedControllers,
                     ),
                     _buildCommentsSection(),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 8),
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: _isSubmitting ? null : _submit,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+                          minimumSize: const Size(0, 52),
                         ),
                         child: _isSubmitting
-                            ? const SizedBox(
-                                height: 24,
-                                width: 24,
+                            ? SizedBox(
+                                height: 22,
+                                width: 22,
                                 child: CircularProgressIndicator(
-                                  color: Colors.white,
+                                  color: AppColors.onPrimary,
                                   strokeWidth: 2,
                                 ),
                               )
@@ -323,21 +315,27 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, size: 64, color: AppColors.error),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 32, color: AppColors.error),
+            ),
             const SizedBox(height: 16),
             Text(
               _error ?? 'Failed to load review',
               textAlign: TextAlign.center,
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _fetchReview,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
             ),
           ],
         ),
@@ -359,27 +357,75 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
         }
       } catch (_) {}
     }
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.primary.withOpacity(0.08),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.assignment_ind_outlined,
+                size: 22, color: AppColors.primaryText),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  r['reviewCycle'] ?? 'Review',
+                  style: AppTextStyles.headingMedium,
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${r['reviewType'] ?? ''} · $periodStr',
+                  style: AppTextStyles.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionCard({required String title, required Widget child}) {
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: SizedBox(
+        width: double.infinity,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              r['reviewCycle'] ?? 'Review',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+            Row(
+              children: [
+                Container(
+                  width: 4,
+                  height: 16,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(title, style: AppTextStyles.headingSmall),
+                ),
+              ],
             ),
-            Text(
-              '${r['reviewType'] ?? ''} · $periodStr',
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
-            ),
+            const SizedBox(height: 16),
+            child,
           ],
         ),
       ),
@@ -387,49 +433,36 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
   }
 
   Widget _buildRatingSection() {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Overall Rating',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: List.generate(5, (i) {
-                final rating = i + 1;
-                return Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: GestureDetector(
-                    onTap: () => setState(() => _overallRating = rating),
-                    child: Icon(
-                      Icons.star_rounded,
-                      size: 40,
-                      color: rating <= _overallRating
-                          ? AppColors.warning
-                          : AppColors.divider,
-                    ),
+    return _sectionCard(
+      title: 'Overall Rating',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: List.generate(5, (i) {
+              final rating = i + 1;
+              return Padding(
+                padding: const EdgeInsets.only(right: 4),
+                child: GestureDetector(
+                  onTap: () => setState(() => _overallRating = rating),
+                  child: Icon(
+                    Icons.star_rounded,
+                    size: 40,
+                    color: rating <= _overallRating
+                        ? AppColors.warning
+                        : AppColors.divider,
                   ),
-                );
-              }),
-            ),
-            Text(
-              '$_overallRating/5',
-              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
-            ),
-          ],
-        ),
+                ),
+              );
+            }),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$_overallRating/5',
+            style: AppTextStyles.bodySmall
+                .copyWith(fontWeight: FontWeight.w600),
+          ),
+        ],
       ),
     );
   }
@@ -438,100 +471,60 @@ class _SelfAssessmentFormScreenState extends State<SelfAssessmentFormScreen> {
     String title,
     List<TextEditingController> controllers,
   ) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            ...List.generate(controllers.length, (i) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: controllers[i],
-                        decoration: InputDecoration(
-                          hintText: 'Enter $title.toLowerCase()',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
+    return _sectionCard(
+      title: title,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ...List.generate(controllers.length, (i) {
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: controllers[i],
+                      decoration: InputDecoration(
+                        hintText: 'Enter $title.toLowerCase()',
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
                         ),
                       ),
                     ),
-                    if (controllers.length > 1)
-                      IconButton(
-                        icon: const Icon(Icons.remove_circle_outline_rounded),
-                        onPressed: () => _removeItem(controllers, i),
-                        color: AppColors.error,
-                      ),
-                  ],
-                ),
-              );
-            }),
-            TextButton.icon(
-              onPressed: () => _addItem(controllers),
-              icon: const Icon(Icons.add_rounded, size: 20),
-              label: Text('Add'),
-              style: TextButton.styleFrom(foregroundColor: AppColors.primary),
-            ),
-          ],
-        ),
+                  ),
+                  if (controllers.length > 1)
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline_rounded,
+                          size: 20),
+                      tooltip: 'Remove',
+                      onPressed: () => _removeItem(controllers, i),
+                      color: AppColors.error,
+                    ),
+                ],
+              ),
+            );
+          }),
+          TextButton.icon(
+            onPressed: () => _addItem(controllers),
+            icon: const Icon(Icons.add_rounded, size: 20),
+            label: Text('Add'),
+          ),
+        ],
       ),
     );
   }
 
   Widget _buildCommentsSection() {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 0,
-      color: AppColors.surface,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Additional Comments',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _commentsController,
-              maxLines: 5,
-              decoration: InputDecoration(
-                hintText:
-                    'Add any additional comments about your performance...',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                contentPadding: const EdgeInsets.all(16),
-              ),
-            ),
-          ],
+    return _sectionCard(
+      title: 'Additional Comments',
+      child: TextFormField(
+        controller: _commentsController,
+        maxLines: 5,
+        decoration: InputDecoration(
+          hintText:
+              'Add any additional comments about your performance...',
+          contentPadding: const EdgeInsets.all(16),
         ),
       ),
     );

@@ -1,479 +1,491 @@
 // lib/screens/admin/recruitment/admin_verification_detail_screen.dart
+// One candidate's onboarding documents: checklist with upload / view / verify / reject /
+// remove, request extra documents, submit for verification, save verification, skip,
+// verification decision (hold / reject / blacklist), lift blacklist, convert to staff.
+
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
-import '../../../utils/snackbar_utils.dart';
-import 'admin_verifications_screen.dart';
+import '../../../models/admin_recruitment_models.dart';
+import '../../../services/admin_recruitment_service.dart';
+import 'admin_convert_to_staff_screen.dart';
+import 'rec_widgets.dart';
 
 class AdminVerificationDetailScreen extends StatefulWidget {
-  final AdminCandidateVerification candidate;
-
-  const AdminVerificationDetailScreen({super.key, required this.candidate});
+  final String candidateId;
+  const AdminVerificationDetailScreen({super.key, required this.candidateId});
 
   @override
   State<AdminVerificationDetailScreen> createState() => _AdminVerificationDetailScreenState();
 }
 
 class _AdminVerificationDetailScreenState extends State<AdminVerificationDetailScreen> {
-  final ApiClient _api = ApiClient();
-  late AdminCandidateVerification _c;
+  final AdminRecruitmentService _service = AdminRecruitmentService();
+  RecCandidateDocuments? _d;
+  bool _loading = true;
+  String? _error;
+  String? _busy;
 
   @override
   void initState() {
     super.initState();
-    _c = widget.candidate;
+    _load();
   }
 
-  int get _verifiedDocs => _c.documents.where((d) => d.status == 'Verified').length;
-  int get _pendingReviewDocs => _c.documents.where((d) => d.status == 'Pending Review').length;
-  int get _outstandingDocs => _c.documents.where((d) => d.status == 'Missing' || d.status == 'Not Submitted').length;
+  Future<void> _load({bool showLoader = true}) async {
+    if (showLoader) setState(() => _loading = true);
+    try {
+      final d = await _service.getCandidateDocuments(widget.candidateId);
+      if (!mounted) return;
+      setState(() {
+        _d = d;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
 
-  void _showDocumentPreview(VerificationDoc doc) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+  Future<void> _run(String key, Future<String> Function() op) async {
+    setState(() => _busy = key);
+    try {
+      final msg = await op();
+      if (!mounted) return;
+      recShowSuccess(context, msg);
+      await _load(showLoader: false);
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  String get _stage => _d?.c('verificationStage').isNotEmpty == true ? _d!.c('verificationStage') : 'pending';
+  bool get _converted => _stage == 'converted' || (_d?.c('staffId').isNotEmpty ?? false);
+  bool get _closed => _stage == 'verificationReject' || _stage == 'verificationBlacklist';
+
+  Future<void> _upload(RecChecklistItem? item) async {
+    String? customName;
+    if (item == null) {
+      customName = await recPromptText(context,
+          title: 'Add a document', label: 'Document name (e.g. Passport)', confirmLabel: 'Choose file');
+      if (customName == null || !mounted) return;
+    }
+    final f = await recPickFile(context, const ['pdf', 'jpg', 'jpeg', 'png']);
+    if (f == null || !mounted) return;
+    await _run('upload:${item?.documentType ?? customName}', () => _service.uploadCandidateDocument(
+          widget.candidateId,
+          documentType: item?.documentType,
+          documentName: item == null ? customName : null,
+          fileName: f.name,
+          bytes: f.bytes,
+          mimeType: f.mimeType,
+        ));
+  }
+
+  Future<void> _view(RecDocument doc) async {
+    setState(() => _busy = 'view:${doc.id}');
+    try {
+      final url = await _service.getDocumentViewUrl(doc.id);
+      if (mounted) await recOpenUrl(context, url);
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = null);
+    }
+  }
+
+  Future<void> _reject(RecDocument doc) async {
+    final reason = await recPromptText(context,
+        title: 'Reject document', label: 'Reason *', maxLines: 3, confirmLabel: 'Reject',
+        message: 'The candidate is asked to upload it again.');
+    if (reason == null) return;
+    await _run('reject:${doc.id}', () => _service.rejectDocument(doc.id, reason));
+  }
+
+  Future<void> _remove(RecDocument doc) async {
+    final ok = await recConfirm(context,
+        title: 'Remove upload?',
+        message: '${doc.fileName} is deleted and the item goes back to Not Submitted.',
+        confirmLabel: 'Remove',
+        destructive: true);
+    if (ok) await _run('remove:${doc.id}', () => _service.deleteDocument(doc.id));
+  }
+
+  Future<void> _request() async {
+    final name = TextEditingController();
+    final note = TextEditingController();
+    final key = GlobalKey<FormState>();
+    final ok = await recShowSheet<bool>(
+      context,
+      title: 'Request a document',
+      builder: (ctx) => Form(
+        key: key,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Icon(Icons.picture_as_pdf_outlined, color: Color(0xFFEFAA1F), size: 22),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${doc.title} Preview', style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800)),
-                  Text(doc.fileName, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                ],
-              ),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 12),
+              child: Text('The candidate uploads it from the candidate portal.', style: TextStyle(fontSize: 12.5, color: kRecMuted)),
+            ),
+            RecTextField(controller: name, label: 'Document name * (max 60)', validator: (v) {
+              if (recRequired(v) != null) return 'Required';
+              return v!.trim().length > 60 ? 'Too long' : null;
+            }),
+            RecTextField(controller: note, label: 'Note for the candidate (optional)', maxLines: 3),
+            RecPrimaryButton(
+              label: 'Request',
+              icon: Icons.send_outlined,
+              onPressed: () {
+                if (key.currentState?.validate() ?? false) Navigator.pop(ctx, true);
+              },
             ),
           ],
         ),
-        content: Container(
-          width: double.maxFinite,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Icon(Icons.insert_drive_file_outlined, size: 54, color: Color(0xFFEFAA1F)),
-              const SizedBox(height: 12),
-              Text(doc.fileName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              const SizedBox(height: 4),
-              const Text('Format: PDF Document • Size: 1.4 MB', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                child: Text(
-                  '[Simulated PDF Document View - High-resolution scanned copy of the candidate\'s official ${doc.title} submitted during onboarding.]',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF475569), height: 1.4),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFEFAA1F),
-              foregroundColor: const Color(0xFF0F172A),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
-            child: const Text('Close Preview', style: TextStyle(fontWeight: FontWeight.w800)),
-          ),
-        ],
       ),
     );
+    if (ok == true) {
+      await _run('request', () => _service.requestCandidateDocument(widget.candidateId,
+          documentName: name.text.trim(), note: note.text.trim()));
+    }
   }
 
-  void _verifyDoc(VerificationDoc doc) {
-    setState(() => doc.status = 'Verified');
-    try {
-      _api.request('/admin/recruitment/verifications/${_c.id}/verify', method: 'POST', data: {'document': doc.title});
-    } catch (_) {}
-    SnackBarUtils.showSnackBar(context, '${doc.title} marked as Verified');
-  }
-
-  void _rejectDoc(VerificationDoc doc) {
-    setState(() => doc.status = 'Missing');
-    try {
-      _api.request('/admin/recruitment/verifications/${_c.id}/reject', method: 'POST', data: {'document': doc.title});
-    } catch (_) {}
-    SnackBarUtils.showSnackBar(context, '${doc.title} rejected / marked as missing');
-  }
-
-  void _simulateUpload(VerificationDoc doc) {
-    setState(() {
-      doc.status = 'Pending Review';
-    });
-    SnackBarUtils.showSnackBar(context, 'Document uploaded for ${doc.title}. Now ready for review.');
-  }
-
-  void _convertToStaff() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
-            Icon(Icons.how_to_reg_rounded, color: Color(0xFF16A34A), size: 22),
-            SizedBox(width: 8),
-            Text('Convert to Staff', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-          ],
-        ),
-        content: Text('All documents verified! Are you ready to convert ${_c.fullName} into an active employee staff record?', style: const TextStyle(fontSize: 12, color: Color(0xFF475569))),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B)))),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              try {
-                await _api.request('/admin/recruitment/verifications/${_c.id}/convert-to-staff', method: 'POST');
-              } catch (_) {}
-              if (mounted) {
-                SnackBarUtils.showSnackBar(context, '${_c.fullName} converted to Staff successfully!');
-                Navigator.pop(context, true);
-              }
-            },
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-            child: const Text('Confirm Onboard', style: TextStyle(fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
+  Future<void> _decide(String stage) async {
+    final needsReason = stage != 'verificationHold';
+    final label = {'verificationHold': 'Put on hold', 'verificationReject': 'Reject', 'verificationBlacklist': 'Blacklist'}[stage]!;
+    final reason = await recPromptText(
+      context,
+      title: label,
+      label: needsReason ? 'Reason *' : 'Reason (optional)',
+      required: needsReason,
+      maxLines: 3,
+      confirmLabel: label,
+      message: stage == 'verificationBlacklist'
+          ? 'The candidate is rejected and cannot be added or apply again until the blacklist is lifted.'
+          : stage == 'verificationReject'
+              ? 'The candidate is rejected and cannot be converted to staff.'
+              : 'The candidate stays in verification, on hold.',
     );
+    if (reason == null) return;
+    await _run('stage', () => _service.setVerificationStage(widget.candidateId, stage, reason: reason));
   }
 
   @override
   Widget build(BuildContext context) {
-    final progress = _c.documents.isNotEmpty ? _verifiedDocs / _c.documents.length : 0.0;
-    final submittedDocs = _c.documents.where((d) => d.status == 'Verified' || d.status == 'Pending Review').toList();
-    final missingDocs = _c.documents.where((d) => d.status == 'Missing' || d.status == 'Not Submitted').toList();
-
+    final d = _d;
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF0F172A)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Verification Checklist Details',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
-        centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // ── CANDIDATE PROFILE & STATUS SUMMARY CARD ──
-          Container(
+      backgroundColor: kRecBg,
+      appBar: recAppBar(context, 'Document Verification', onRefresh: () => _load()),
+      body: RecAsyncBody(
+        loading: _loading,
+        error: _error,
+        isEmpty: d == null,
+        emptyText: 'Candidate not found',
+        onRetry: _load,
+        builder: () => RefreshIndicator(
+          onRefresh: () => _load(showLoader: false),
+          color: AppColors.primary,
+          child: ListView(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 20,
-                      backgroundColor: const Color(0xFFF1F5F9),
-                      child: Text(_c.initials, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(_c.fullName, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                          Text(_c.position, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(6)),
-                      child: Text('ID: ${_c.id}', style: const TextStyle(fontSize: 9.5, fontFamily: 'monospace', fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                // Overall Progress
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Overall Progress', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-                    Text('$_verifiedDocs of ${_c.documents.length} Verified', style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(
-                    value: progress,
-                    backgroundColor: const Color(0xFFE2E8F0),
-                    valueColor: AlwaysStoppedAnimation<Color>(_c.isCompleted ? const Color(0xFF16A34A) : const Color(0xFFEFAA1F)),
-                    minHeight: 6,
-                  ),
-                ),
-                const Divider(height: 20, color: Color(0xFFE2E8F0)),
-
-                _infoRow('EMAIL', _c.email),
-                _infoRow('PHONE', _c.phone),
-                const Divider(height: 20, color: Color(0xFFE2E8F0)),
-
-                // Status Summary Metrics
-                const Text('STATUS SUMMARY', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                const SizedBox(height: 8),
-                _metricRow('Verified Documents', '$_verifiedDocs', const Color(0xFF16A34A), const Color(0xFFDCFCE7)),
-                _metricRow('Pending Review', '$_pendingReviewDocs', AppColors.brandDark, const Color(0xFFFEF3C7)),
-                _metricRow('Outstanding Documents', '$_outstandingDocs', const Color(0xFFDC2626), const Color(0xFFFEE2E2)),
-                const SizedBox(height: 14),
-
-                // Final Verification Buttons
-                const Text('FINAL VERIFICATION', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-                const SizedBox(height: 8),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _c.isCompleted ? _convertToStaff : null,
-                    icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
-                    label: const Text('Convert to Staff', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: const Color(0xFFCBD5E1),
-                      disabledForegroundColor: const Color(0xFF94A3B8),
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => SnackBarUtils.showSnackBar(context, 'Process held for ${_c.fullName}'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppColors.brandDark,
-                          side: const BorderSide(color: Color(0xFFFDE68A)),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                        ),
-                        child: const Text('Hold Process', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => SnackBarUtils.showSnackBar(context, '${_c.fullName} candidate verification rejected'),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFFDC2626),
-                          side: const BorderSide(color: Color(0xFFFECACA)),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                        ),
-                        child: const Text('Reject Candidate', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+            children: [
+              if (_busy != null) const LinearProgressIndicator(minHeight: 2),
+              _header(d!),
+              _summary(d),
+              RecSectionTitle('Documents (${d.checklist.length})',
+                  trailing: _converted || _closed
+                      ? null
+                      : PopupMenuButton<String>(
+                          tooltip: 'Add document',
+                          icon: const Icon(Icons.add_circle_outline_rounded, color: AppColors.brandDark),
+                          onSelected: (v) => v == 'add' ? _upload(null) : _request(),
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(value: 'add', child: Text('Upload an extra document')),
+                            PopupMenuItem(value: 'request', child: Text('Request from candidate')),
+                          ],
+                        )),
+              ...d.checklist.map(_item),
+              _actions(d),
+            ],
           ),
-          const SizedBox(height: 16),
+        ),
+      ),
+    );
+  }
 
-          // ── SUBMITTED DOCUMENTS SECTION ──
-          if (submittedDocs.isNotEmpty) ...[
-            Row(
-              children: const [
-                Icon(Icons.check_circle_outline_rounded, size: 16, color: Color(0xFF16A34A)),
-                SizedBox(width: 6),
-                Text('Submitted Documents', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              ],
+  Widget _header(RecCandidateDocuments d) {
+    return RecCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            RecAvatar(d.fullName, size: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(d.fullName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kRecInk)),
+                  const SizedBox(height: 2),
+                  Text('${d.c('position')}${d.c('department').isNotEmpty ? ' • ${d.c('department')}' : ''}',
+                      style: const TextStyle(fontSize: 13, color: kRecMuted, fontWeight: FontWeight.w500)),
+                  const SizedBox(height: 2),
+                  Text('${d.c('email')} • ${d.c('phone')}', style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
-            ...submittedDocs.map((doc) => _buildSubmittedDocCard(doc)),
-          ],
+          ]),
+          const SizedBox(height: 12),
+          Wrap(spacing: 6, runSpacing: 6, children: [
+            RecBadge(d.c('status')),
+            RecBadge(kVerificationStageLabels[_stage] ?? _stage),
+            if (d.c('documentsSkippedAt').isNotEmpty) const RecBadge('Docs Skipped', colorKey: 'skipped'),
+            if (d.c('documentsSavedAt').isNotEmpty) const RecBadge('Verification saved', colorKey: 'verified'),
+          ]),
+          if (d.c('verificationStageReason').isNotEmpty)
+            RecNotice('Reason: ${d.c('verificationStageReason')}',
+              margin: const EdgeInsets.only(top: 12)),
+          if (d.c('documentsSkipReason').isNotEmpty)
+            Text('Skip reason: ${d.c('documentsSkipReason')}', style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+        ],
+      ),
+    );
+  }
 
-          // ── NEED TO BE SUBMITTED SECTION ──
-          if (missingDocs.isNotEmpty) ...[
+  Widget _summary(RecCandidateDocuments d) {
+    final s = d.summary;
+    Widget cell(String label, int v, Color c) => Expanded(
+          child: Column(children: [
+            Text('$v', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: c)),
+            const SizedBox(height: 2),
+            Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w500, color: kRecMuted)),
+          ]),
+        );
+    return RecCard(
+      child: Row(children: [
+        cell('Verified', s.verified, AppColors.success),
+        cell('To review', s.pendingReview, AppColors.brandDark),
+        cell('Rejected', s.rejected, AppColors.error),
+        cell('Missing', s.notSubmitted, kRecMuted),
+        cell('Extra', s.additional, AppColors.info),
+      ]),
+    );
+  }
+
+  Widget _item(RecChecklistItem item) {
+    final doc = item.document;
+    final status = doc?.status ?? 'Not Submitted';
+    final locked = _converted || _closed;
+    final busyHere = _busy != null && (_busy!.endsWith(item.documentType) || (doc != null && _busy!.endsWith(doc.id)));
+    return RecCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(item.name, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kRecInk)),
+                  if (item.description.isNotEmpty)
+                    Text(item.description, style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+                  if (item.isRequested) const Text('Requested from the candidate', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.info)),
+                  if (item.isAdditional && !item.isRequested)
+                    const Text('Extra document', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.info)),
+                ],
+              ),
+            ),
+            busyHere
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : RecBadge(status),
+          ]),
+          if (doc != null) ...[
             const SizedBox(height: 8),
-            Row(
-              children: const [
-                Icon(Icons.error_outline_rounded, size: 16, color: Color(0xFFDC2626)),
-                SizedBox(width: 6),
-                Text('Need to be Submitted', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              ],
-            ),
-            const SizedBox(height: 10),
-            ...missingDocs.map((doc) => _buildMissingDocCard(doc)),
+            Text('${doc.fileName} • ${(doc.fileSize / 1024).ceil()} KB • ${recFormatDate(doc.uploadedAt)}',
+                style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+            if (doc.rejectReason.isNotEmpty && doc.status == 'Rejected')
+              Text('Rejected: ${doc.rejectReason}', style: const TextStyle(fontSize: 12.5, color: AppColors.error)),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        children: [
-          SizedBox(width: 70, child: Text(label, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8)))),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF1E293B)))),
-        ],
-      ),
-    );
-  }
-
-  Widget _metricRow(String label, String count, Color color, Color bg) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(10)),
-            child: Text(count, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: color)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSubmittedDocCard(VerificationDoc doc) {
-    final isVerified = doc.status == 'Verified';
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(doc.title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
-                decoration: BoxDecoration(
-                  color: isVerified ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  isVerified ? 'VERIFIED' : 'PENDING REVIEW',
-                  style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: isVerified ? const Color(0xFF16A34A) : AppColors.brandDark),
-                ),
+          const SizedBox(height: 8),
+          Wrap(spacing: 4, runSpacing: 4, children: [
+            if (doc != null)
+              TextButton.icon(
+                onPressed: _busy != null ? null : () => _view(doc),
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text('View'),
               ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(doc.fileName, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-          const SizedBox(height: 2),
-          Text('Uploaded: ${DateFormat('yyyy-MM-dd').format(DateTime.now().subtract(const Duration(days: 2)))}', style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
-          const SizedBox(height: 10),
-
-          Row(
-            children: [
-              OutlinedButton.icon(
-                onPressed: () => _showDocumentPreview(doc),
-                icon: const Icon(Icons.remove_red_eye_outlined, size: 14),
-                label: const Text('Preview', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: const Color(0xFF475569),
-                  side: const BorderSide(color: Color(0xFFCBD5E1)),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                ),
+            if (doc != null && doc.status != 'Verified' && !locked)
+              TextButton.icon(
+                onPressed: _busy != null ? null : () => _run('verify:${doc.id}', () => _service.verifyDocument(doc.id)),
+                icon: const Icon(Icons.check_circle_outline_rounded, size: 18, color: AppColors.success),
+                label: const Text('Verify', style: TextStyle(color: AppColors.success)),
               ),
-              const Spacer(),
-              if (!isVerified) ...[
-                ElevatedButton.icon(
-                  onPressed: () => _verifyDoc(doc),
-                  icon: const Icon(Icons.check_rounded, size: 14),
-                  label: const Text('Verify', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF16A34A),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                    elevation: 0,
-                  ),
-                ),
-                const SizedBox(width: 6),
-                OutlinedButton.icon(
-                  onPressed: () => _rejectDoc(doc),
-                  icon: const Icon(Icons.close_rounded, size: 14),
-                  label: const Text('Reject', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: const Color(0xFFDC2626),
-                    side: const BorderSide(color: Color(0xFFFECACA)),
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-                  ),
-                ),
-              ],
-            ],
-          ),
+            if (doc != null && doc.status != 'Rejected' && !locked)
+              TextButton.icon(
+                onPressed: _busy != null ? null : () => _reject(doc),
+                icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.error),
+                label: const Text('Reject', style: TextStyle(color: AppColors.error)),
+              ),
+            if ((doc == null || doc.status == 'Rejected') && !locked)
+              TextButton.icon(
+                onPressed: _busy != null ? null : () => _upload(item),
+                icon: const Icon(Icons.upload_file_rounded, size: 18),
+                label: Text(doc == null ? 'Upload' : 'Upload again'),
+              ),
+            if (doc != null && !locked)
+              TextButton.icon(
+                onPressed: _busy != null ? null : () => _remove(doc),
+                icon: const Icon(Icons.delete_outline_rounded, size: 18, color: kRecMuted),
+                label: const Text('Remove', style: TextStyle(color: kRecMuted)),
+              ),
+            if (item.isRequested && doc == null && !locked)
+              TextButton.icon(
+                onPressed: _busy != null
+                    ? null
+                    : () async {
+                        final ok = await recConfirm(context,
+                            title: 'Cancel request?', message: 'Stop asking the candidate for ${item.name}.', confirmLabel: 'Cancel request');
+                        if (ok) await _run('cancel:${item.documentType}', () => _service.cancelDocumentRequest(widget.candidateId, item.documentType));
+                      },
+                icon: const Icon(Icons.block_rounded, size: 18, color: kRecMuted),
+                label: const Text('Cancel request', style: TextStyle(color: kRecMuted)),
+              ),
+          ]),
         ],
       ),
     );
   }
 
-  Widget _buildMissingDocCard(VerificationDoc doc) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-      ),
+  Widget _actions(RecCandidateDocuments d) {
+    final s = d.summary;
+    final skipped = d.c('documentsSkippedAt').isNotEmpty;
+    final saved = d.c('documentsSavedAt').isNotEmpty;
+    final submitted = d.c('documentsSubmittedAt').isNotEmpty;
+    final busy = _busy != null;
+    final canConvert = !_closed && (_converted || ((saved || skipped) && d.c('status') == 'Offer Accepted'));
+    return RecCard(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(doc.title, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-          const SizedBox(height: 4),
-          const Text('Document has not been uploaded by candidate yet.', style: TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-          const SizedBox(height: 10),
-
-          ElevatedButton.icon(
-            onPressed: () => _simulateUpload(doc),
-            icon: const Icon(Icons.upload_file_rounded, size: 14),
-            label: const Text('Simulate Upload', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFEFAA1F),
-              foregroundColor: const Color(0xFF0F172A),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              elevation: 0,
+          const RecSectionTitle('Actions'),
+          if (_converted)
+            const RecNotice('This candidate has been converted to staff.',
+                color: AppColors.success, background: AppColors.successBg, icon: Icons.check_circle_outline_rounded),
+          if (!_converted && !_closed && !skipped && !submitted && !saved) ...[
+            RecPrimaryButton(
+              label: 'Next: send for verification',
+              icon: Icons.arrow_forward_rounded,
+              busy: _busy == 'submit',
+              onPressed: busy || !s.allSubmitted
+                  ? null
+                  : () => _run('submit', () => _service.submitDocumentsForVerification(widget.candidateId)),
             ),
-          ),
+            if (!s.allSubmitted)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text('Add every document (including requested or rejected ones) first.',
+                    style: TextStyle(fontSize: 12.5, color: kRecMuted)),
+              ),
+            const SizedBox(height: 12),
+          ],
+          if (!_converted && !_closed && !skipped && !saved) ...[
+            RecPrimaryButton(
+              label: 'Save verification',
+              icon: Icons.verified_outlined,
+              outlined: !s.readyToSave,
+              busy: _busy == 'save',
+              onPressed: busy || !s.readyToSave
+                  ? null
+                  : () => _run('save', () => _service.saveDocumentVerification(widget.candidateId)),
+            ),
+            if (!s.readyToSave)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text('Approve every document to save the verification.', style: TextStyle(fontSize: 12.5, color: kRecMuted)),
+              ),
+            const SizedBox(height: 12),
+          ],
+          if (canConvert)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: RecPrimaryButton(
+                label: _converted ? 'View conversion' : 'Convert to staff',
+                icon: Icons.badge_outlined,
+                onPressed: () async {
+                  await Navigator.push(
+                      context, MaterialPageRoute(builder: (_) => AdminConvertToStaffScreen(candidateId: widget.candidateId)));
+                  _load(showLoader: false);
+                },
+              ),
+            ),
+          if (!_converted && !_closed)
+            RecPrimaryButton(
+              label: skipped ? 'Undo skip - collect documents' : 'Skip documents',
+              icon: skipped ? Icons.undo_rounded : Icons.skip_next_rounded,
+              outlined: true,
+              busy: _busy == 'skip',
+              onPressed: busy
+                  ? null
+                  : () async {
+                      if (skipped) {
+                        await _run('skip', () => _service.undoSkipDocuments(widget.candidateId));
+                        return;
+                      }
+                      final reason = await recPromptText(context,
+                          title: 'Skip documents',
+                          label: 'Reason (optional)',
+                          required: false,
+                          maxLines: 3,
+                          confirmLabel: 'Skip',
+                          message: 'Document collection and verification are skipped; the candidate can go straight to Convert to Staff.');
+                      if (reason != null) await _run('skip', () => _service.skipDocuments(widget.candidateId, reason: reason));
+                    },
+            ),
+          if (!_converted) ...[
+            const Divider(height: 32),
+            const Text('Verification decision', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kRecInk)),
+            const SizedBox(height: 12),
+            if (_stage == 'verificationBlacklist')
+              RecPrimaryButton(
+                label: 'Lift blacklist',
+                icon: Icons.lock_open_rounded,
+                outlined: true,
+                busy: _busy == 'lift',
+                onPressed: busy
+                    ? null
+                    : () async {
+                        final ok = await recConfirm(context,
+                            title: 'Lift blacklist?',
+                            message: 'The person may be added or apply again. This record stays rejected.',
+                            confirmLabel: 'Lift');
+                        if (ok) await _run('lift', () => _service.liftBlacklist(widget.candidateId));
+                      },
+              )
+            else
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                if (_stage != 'verificationHold' && _stage != 'verificationReject')
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : () => _decide('verificationHold'),
+                    icon: const Icon(Icons.pause_circle_outline_rounded, size: 18, color: AppColors.brandDark),
+                    label: const Text('Hold'),
+                  ),
+                if (_stage != 'verificationReject')
+                  OutlinedButton.icon(
+                    onPressed: busy ? null : () => _decide('verificationReject'),
+                    icon: const Icon(Icons.cancel_outlined, size: 18, color: AppColors.error),
+                    label: const Text('Reject'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: busy ? null : () => _decide('verificationBlacklist'),
+                  icon: const Icon(Icons.block_rounded, size: 18, color: AppColors.error),
+                  label: const Text('Blacklist'),
+                ),
+              ]),
+          ],
         ],
       ),
     );

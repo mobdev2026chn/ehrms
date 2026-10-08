@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../services/attendance_service.dart';
 import '../../utils/salary_structure_calculator.dart';
 import '../../utils/salary_fine_summary.dart';
@@ -208,7 +210,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
       appBar: AppBar(
         title: Text(
           'Salary Details - $monthName',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          style: const TextStyle(fontSize: 16),
         ),
       ),
       body: _isLoading
@@ -220,27 +222,28 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      Icons.error_outline,
-                      size: 64,
-                      color: Colors.grey.shade500,
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: const BoxDecoration(
+                        color: AppColors.errorBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.error_outline_rounded,
+                        size: 32,
+                        color: AppColors.error,
+                      ),
                     ),
                     const SizedBox(height: 16),
                     Text(
                       _error,
-                      style: TextStyle(
-                        color: Colors.grey.shade700,
-                        fontSize: 14,
-                      ),
+                      style: AppTextStyles.bodySmall,
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),
                     ElevatedButton(
                       onPressed: _loadData,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                      ),
                       child: const Text('Retry'),
                     ),
                   ],
@@ -249,6 +252,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             )
           : RefreshIndicator(
               onRefresh: _loadData,
+              color: AppColors.primary,
               child: _buildContent(monthName),
             ),
     );
@@ -292,7 +296,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
     }
 
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -333,75 +337,75 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
     int pendingDays,
   ) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [AppColors.primary, AppColors.primaryDark],
+        gradient: const LinearGradient(
+          colors: [AppColors.surfaceDark, AppColors.ink],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'This Month Net Salary',
             style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
+              color: AppColors.primary,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.2,
             ),
           ),
           const SizedBox(height: 8),
-          Text(
-            currencyFormat.format(thisMonthNet),
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              currencyFormat.format(thisMonthNet),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 30,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.5,
+              ),
             ),
           ),
-          const SizedBox(height: 12),
-          const Divider(color: Colors.white24, thickness: 1),
-          const SizedBox(height: 12),
+          const SizedBox(height: 16),
+          Divider(color: Colors.white.withValues(alpha: 0.12), thickness: 1, height: 1),
+          const SizedBox(height: 16),
           Wrap(
-            spacing: 16,
+            spacing: 8,
             runSpacing: 8,
             children: [
               _buildStatChip(
                 'Present: ${_formatDayChip(presentDays)}',
-                Colors.green,
+                AppColors.success,
               ),
-              _buildStatChip('Half Day: $halfDays', Colors.blue),
+              _buildStatChip('Half Day: $halfDays', AppColors.info),
               _buildStatChip(
                 'Leave: ${_formatDayChip(leaveDays)}',
                 AppColors.brand,
               ),
               _buildStatChip(
                 'Absent: ${_formatDayChip(absentDays)}',
-                Colors.red,
+                AppColors.error,
               ),
               if (pendingDays > 0)
                 _buildStatChip('Pending: $pendingDays', AppColors.brand),
             ],
           ),
           if (leaveDays > 0) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Padding(
               padding: const EdgeInsets.only(left: 2),
               child: Text(
                 'Leave = approved leave days this month (from attendance).',
                 style: TextStyle(
-                  color: Colors.white.withOpacity(0.85),
-                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.65),
+                  fontSize: 12,
                 ),
               ),
             ),
@@ -413,19 +417,30 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
 
   Widget _buildStatChip(String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.2),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.3)),
+        color: Colors.white.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
       ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-        ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -438,23 +453,23 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.blue.shade50,
+        color: AppColors.infoBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue.shade100),
+        border: Border.all(color: AppColors.infoBg),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+              Icon(Icons.info_outline, color: AppColors.info, size: 20),
               const SizedBox(width: 8),
               Text(
                 'Salary Calculation Info',
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
-                  color: Colors.blue.shade700,
+                  color: AppColors.info,
                 ),
               ),
             ],
@@ -492,7 +507,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             padding: const EdgeInsets.only(left: 12, top: 2, bottom: 4),
             child: Text(
               'Same way: Monthly gross ÷ This month WD | Monthly net ÷ This month WD (${widget.workingDaysInfo.workingDaysFullMonth ?? widget.workingDaysInfo.workingDays} days)',
-              style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+              style: TextStyle(fontSize: 10, color: AppColors.textSecondary),
             ),
           ),
           const Divider(height: 16),
@@ -544,7 +559,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             '* Tap on any date below to see detailed attendance information',
             style: TextStyle(
               fontSize: 11,
-              color: Colors.blue.shade700,
+              color: AppColors.info,
               fontStyle: FontStyle.italic,
             ),
           ),
@@ -571,7 +586,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
               label,
               style: TextStyle(
                 fontSize: 12,
-                color: Colors.black87,
+                color: AppColors.textPrimary,
                 fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
               ),
             ),
@@ -582,7 +597,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             style: TextStyle(
               fontSize: 12,
               fontWeight: isBold ? FontWeight.bold : FontWeight.w600,
-              color: isBold ? AppColors.success : Colors.black87,
+              color: isBold ? AppColors.success : AppColors.textPrimary,
             ),
           ),
         ],
@@ -597,41 +612,37 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         .toSet();
 
     return Container(
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.05),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.1),
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(16),
-                topRight: Radius.circular(16),
-              ),
+            decoration: const BoxDecoration(
+              border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
             ),
             child: Row(
               children: [
-                Icon(Icons.calendar_today, color: AppColors.primary, size: 20),
-                const SizedBox(width: 8),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(Icons.calendar_today_outlined,
+                      color: AppColors.primaryText, size: 20),
+                ),
+                const SizedBox(width: 12),
                 Text(
                   'Daily Breakdown',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.primary,
-                  ),
+                  style: AppTextStyles.headingSmall,
                 ),
               ],
             ),
@@ -641,7 +652,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             physics: const NeverScrollableScrollPhysics(),
             itemCount: lastDay,
             separatorBuilder: (context, index) =>
-                Divider(height: 1, color: Colors.grey.shade200),
+                Divider(height: 1, color: const Color(0xFFECEEF1)),
             itemBuilder: (context, index) {
               final day = index + 1;
               final date = DateTime(widget.year, widget.month, day);
@@ -694,7 +705,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
     final dateStr = DateFormat('dd MMM').format(date);
 
     String status = 'Not Marked';
-    Color statusColor = Colors.grey;
+    Color statusColor = AppColors.textCaption;
     double salaryForDay = 0;
     double fineAmount = 0; // Initialize fine amount
     int fineMinutes =
@@ -715,11 +726,11 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
 
       if (recordStatus == 'present' || recordStatus == 'approved') {
         if (isHalfDay) {
-          statusColor = Colors.blue;
+          statusColor = AppColors.info;
           statusIcon = Icons.schedule;
           salaryForDay = widget.dailySalary * 0.5;
         } else {
-          statusColor = Colors.green;
+          statusColor = AppColors.success;
           statusIcon = Icons.check_circle;
           salaryForDay = widget.dailySalary;
         }
@@ -737,17 +748,17 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             : ((record['lateMinutes'] as num?)?.toInt() ?? 0);
       } else if (recordStatus == 'on leave') {
         if (status == 'Comp Off') {
-          statusColor = Colors.purple;
+          statusColor = const Color(0xFF7C3AED);
           statusIcon = Icons.event_busy;
         } else if (status == 'Week Off') {
-          statusColor = Colors.purple;
+          statusColor = const Color(0xFF7C3AED);
           statusIcon = Icons.weekend;
         } else if (status == 'Paid Leave') {
-          statusColor = Colors.blue;
+          statusColor = AppColors.info;
           statusIcon = Icons.event_busy;
           salaryForDay = widget.dailySalary;
         } else {
-          statusColor = Colors.blue;
+          statusColor = AppColors.info;
           statusIcon = Icons.event_busy;
         }
         if (status != 'Paid Leave') {
@@ -755,33 +766,33 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
         }
         fineAmount = 0;
       } else if (recordStatus == 'absent' || recordStatus == 'rejected') {
-        statusColor = Colors.red;
+        statusColor = AppColors.error;
         statusIcon = Icons.cancel;
         salaryForDay = 0;
         fineAmount = 0;
       } else if (recordStatus == 'pending') {
-        statusColor = AppColors.brand;
+        statusColor = AppColors.warning;
         statusIcon = Icons.pending;
         salaryForDay = 0;
         fineAmount = 0;
       }
     } else if (isHoliday) {
       status = 'Holiday';
-      statusColor = AppColors.brand;
+      statusColor = AppColors.warning;
       statusIcon = Icons.celebration;
     } else if (isWeekOff) {
       status = 'Week Off';
-      statusColor = Colors.purple;
+      statusColor = const Color(0xFF7C3AED);
       statusIcon = Icons.weekend;
     } else if (isLeave) {
       status = 'On Leave';
-      statusColor = Colors.blue;
+      statusColor = AppColors.info;
       statusIcon = Icons.event_busy;
     } else {
       final now = DateTime.now();
       if (date.isAfter(DateTime(now.year, now.month, now.day))) {
         status = 'Future';
-        statusColor = Colors.grey;
+        statusColor = AppColors.textCaption;
         statusIcon = Icons.schedule;
       }
     }
@@ -807,26 +818,27 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
           : null,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        color: record != null ? Colors.transparent : Colors.grey.shade50,
+        color: record != null ? Colors.transparent : AppColors.background,
         child: Row(
           children: [
             // Date
             SizedBox(
-              width: 60,
+              width: 56,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     dateStr,
                     style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
                     ),
                   ),
+                  const SizedBox(height: 2),
                   Text(
                     dayName,
-                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -835,22 +847,35 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
 
             // Status
             Expanded(
-              child: Row(
-                children: [
-                  Icon(statusIcon, size: 16, color: statusColor),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      status,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: statusColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
                   ),
-                ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(statusIcon, size: 14, color: statusColor),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          status,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: statusColor == AppColors.textCaption
+                                ? AppColors.textSecondary
+                                : statusColor,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
 
@@ -865,7 +890,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
-                      color: Colors.green,
+                      color: AppColors.success,
                     ),
                   ),
                 // Show late login fine on that day when applicable (amount + fine duration in mins from attendances)
@@ -877,7 +902,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                       Icon(
                         Icons.schedule,
                         size: 11,
-                        color: Colors.red.shade700,
+                        color: AppColors.error,
                       ),
                       const SizedBox(width: 4),
                       Flexible(
@@ -888,7 +913,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                           style: TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
-                            color: Colors.red.shade700,
+                            color: AppColors.error,
                           ),
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -905,7 +930,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                       vertical: 2,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
+                      color: AppColors.inputFill,
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -913,7 +938,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: Colors.grey.shade700,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ),
@@ -924,7 +949,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
             // Only show chevron if details can be shown
             if (canShowDetails) ...[
               const SizedBox(width: 8),
-              Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
+              const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.textCaption),
             ],
           ],
         ),
@@ -1004,11 +1029,12 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
         height: MediaQuery.of(context).size.height * 0.75,
+        clipBehavior: Clip.antiAlias,
         decoration: const BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.only(
-            topLeft: Radius.circular(20),
-            topRight: Radius.circular(20),
+            topLeft: Radius.circular(24),
+            topRight: Radius.circular(24),
           ),
         ),
         child: Column(
@@ -1019,39 +1045,34 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: AppColors.textHint,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
 
             // Header
             Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                border: Border(bottom: BorderSide(color: Colors.grey.shade200)),
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     dateStr,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.primary,
-                    ),
+                    style: AppTextStyles.headingMedium,
                   ),
                   const SizedBox(height: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
+                      horizontal: 10,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: Colors.green),
+                      color: AppColors.successBg,
+                      borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       AttendanceDisplayUtil.formatAttendanceDisplayStatus(
@@ -1060,8 +1081,8 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                       ),
                       style: const TextStyle(
                         fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.success,
                       ),
                     ),
                   ),
@@ -1079,7 +1100,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                     // Salary Section
                     _buildDetailSection(
                       'Salary Information',
-                      Icons.account_balance_wallet,
+                      Icons.account_balance_wallet_outlined,
                       [
                         _buildDetailRow(
                           'Daily Salary Rate',
@@ -1089,7 +1110,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                           _buildDetailRow(
                             'Salary Earned',
                             currencyFormat.format(salaryForDay),
-                            valueColor: Colors.green,
+                            valueColor: AppColors.success,
                             isBold: true,
                           ),
                         if (actualFineAmount > 0) ...[
@@ -1097,14 +1118,14 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                           _buildDetailRow(
                             'Attendance Fine',
                             '- ${currencyFormat.format(actualFineAmount)}',
-                            valueColor: Colors.red,
+                            valueColor: AppColors.error,
                             isBold: true,
                           ),
                           if (actualLateMinutes > 0)
                             _buildDetailRow(
                               'Fine Minutes',
                               '$actualLateMinutes minutes',
-                              valueColor: Colors.red.shade600,
+                              valueColor: AppColors.error,
                             ),
                         ],
                         if (salaryForDay > 0) ...[
@@ -1114,7 +1135,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                             currencyFormat.format(
                               salaryForDay - actualFineAmount,
                             ),
-                            valueColor: Colors.green.shade700,
+                            valueColor: AppColors.success,
                             isBold: true,
                           ),
                         ],
@@ -1125,7 +1146,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                           _buildDetailRow(
                             'Note',
                             'No salary for ${status.toLowerCase()} status',
-                            valueColor: Colors.grey.shade700,
+                            valueColor: AppColors.textSecondary,
                             isFullWidth: true,
                           ),
                         ],
@@ -1137,7 +1158,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                     // Attendance Section
                     _buildDetailSection(
                       'Attendance Details',
-                      Icons.access_time,
+                      Icons.access_time_rounded,
                       [
                         _buildDetailRow('Punch In', formatTime(punchIn)),
                         _buildDetailRow('Punch Out', formatTime(punchOut)),
@@ -1151,12 +1172,12 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                           _buildDetailRow(
                             'Late Minutes',
                             '$actualLateMinutes minutes',
-                            valueColor: Colors.red.shade600,
+                            valueColor: AppColors.error,
                           ),
                           _buildDetailRow(
                             'Fine Applied',
                             currencyFormat.format(actualFineAmount),
-                            valueColor: Colors.red,
+                            valueColor: AppColors.error,
                             isBold: true,
                           ),
                         ],
@@ -1165,7 +1186,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
 
                     if (address != null) ...[
                       const SizedBox(height: 20),
-                      _buildDetailSection('Location', Icons.location_on, [
+                      _buildDetailSection('Location', Icons.location_on_outlined, [
                         _buildDetailRow('Address', address, isFullWidth: true),
                       ]),
                     ],
@@ -1189,25 +1210,21 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
       children: [
         Row(
           children: [
-            Icon(icon, size: 18, color: AppColors.primary),
+            Icon(icon, size: 18, color: AppColors.primaryText),
             const SizedBox(width: 8),
             Text(
               title,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-              ),
+              style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
             ),
           ],
         ),
         const SizedBox(height: 12),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade200),
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFECEEF1)),
           ),
           child: Column(children: children),
         ),
@@ -1230,7 +1247,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
               children: [
                 Text(
                   label,
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 const SizedBox(height: 4),
                 Text(
@@ -1238,7 +1255,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
-                    color: valueColor ?? Colors.black87,
+                    color: valueColor ?? AppColors.textPrimary,
                   ),
                 ),
               ],
@@ -1250,7 +1267,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                 Expanded(
                   child: Text(
                     label,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -1260,7 +1277,7 @@ class _MonthSalaryDetailsScreenState extends State<MonthSalaryDetailsScreen> {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: isBold ? FontWeight.bold : FontWeight.w500,
-                      color: valueColor ?? Colors.black87,
+                      color: valueColor ?? AppColors.textPrimary,
                     ),
                     textAlign: TextAlign.right,
                   ),

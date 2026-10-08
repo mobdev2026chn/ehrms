@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../services/admin_approvals_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
+import 'approval_shared_widgets.dart';
 
 class AdminPermissionRecord {
   final String id;
@@ -15,6 +17,7 @@ class AdminPermissionRecord {
   final String department;
   final String designation;
   final String date;
+  final String rawDate;
   final String type; // 'Late' | 'Early' | 'Custom'
   final String durationText;
   final int durationMins;
@@ -31,6 +34,7 @@ class AdminPermissionRecord {
     required this.department,
     required this.designation,
     required this.date,
+    this.rawDate = '',
     required this.type,
     required this.durationText,
     this.durationMins = 30,
@@ -46,40 +50,51 @@ class AdminPermissionRecord {
     return name.isNotEmpty ? name[0].toUpperCase() : 'U';
   }
 
+  /// One row of GET /admin/approvals/permission (`data.requests[]`).
   factory AdminPermissionRecord.fromJson(Map<String, dynamic> json) {
-    final staffObj = json['staffId'] is Map ? json['staffId'] : json;
-    final pType = (json['type'] ?? json['permissionType'] ?? 'Late').toString();
-    final dMins = int.tryParse((json['durationMins'] ?? '30').toString()) ?? 30;
+    final pType = (json['type'] ?? 'Custom').toString();
+    final lateMins = (int.tryParse((json['lateHours'] ?? 0).toString()) ?? 0) * 60 + (int.tryParse((json['lateMinutes'] ?? 0).toString()) ?? 0);
+    final earlyMins = (int.tryParse((json['earlyHours'] ?? 0).toString()) ?? 0) * 60 + (int.tryParse((json['earlyMinutes'] ?? 0).toString()) ?? 0);
+    final dMins = int.tryParse((json['durationMins'] ?? '').toString()) ??
+        (pType == 'Late' ? lateMins : (pType == 'Early' ? earlyMins : lateMins + earlyMins));
 
-    String dText = (json['durationText'] ?? '').toString();
-    if (dText.isEmpty) {
-      if (pType == 'Late') {
-        dText = 'Late: ${dMins}m';
-      } else if (pType == 'Early') {
-        dText = 'Early: ${dMins >= 60 ? "${(dMins / 60).toStringAsFixed(0)}h" : "${dMins}m"}';
-      } else {
-        dText = 'Custom: ${dMins}m';
-      }
+    String fmt(int m) => m >= 60 ? '${m ~/ 60}h${m % 60 > 0 ? ' ${m % 60}m' : ''}' : '${m}m';
+    String dText;
+    if (pType == 'Late') {
+      dText = 'Late: ${fmt(dMins)}';
+    } else if (pType == 'Early') {
+      dText = 'Early: ${fmt(dMins)}';
+    } else {
+      final parts = <String>[];
+      if (lateMins > 0) parts.add('Late ${fmt(lateMins)}');
+      if (earlyMins > 0) parts.add('Early ${fmt(earlyMins)}');
+      dText = parts.isEmpty ? 'Custom: ${fmt(dMins)}' : 'Custom: ${parts.join(', ')}';
     }
 
+    final rawDate = (json['date'] ?? '').toString();
+    final status = (json['status'] ?? 'Pending').toString();
     return AdminPermissionRecord(
-      id: (json['_id'] ?? json['id'] ?? '').toString(),
-      requestId: (json['requestId'] ?? 'PM-${(json['_id'] ?? json['id'] ?? '001').toString().toUpperCase().padLeft(3, '0')}').toString(),
-      employeeId: (staffObj['employeeId'] ?? json['employeeId'] ?? 'EMP-007').toString(),
-      name: (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString().isNotEmpty
-          ? (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString()
-          : (json['name'] ?? 'personal notouch').toString(),
-      department: (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? json['department'] ?? 'Engineering')).toString(),
-      designation: (staffObj['designation'] is Map ? staffObj['designation']['name'] : (staffObj['designation'] ?? json['designation'] ?? 'Staff')).toString(),
-      date: (json['date'] ?? json['permissionDate'] ?? 'Aug 28, 2026').toString(),
+      id: (json['id'] ?? json['_id'] ?? '').toString(),
+      requestId: (json['requestId'] ?? '').toString(),
+      employeeId: (json['employeeId'] ?? '—').toString(),
+      name: (json['employeeName'] ?? json['name'] ?? 'Staff Member').toString(),
+      department: (json['department'] ?? '—').toString(),
+      designation: (json['designation'] ?? '—').toString(),
+      date: formatApprovalDate(rawDate),
+      rawDate: rawDate,
       type: pType,
       durationText: dText,
       durationMins: dMins,
-      status: (json['status'] ?? 'Approved').toString(),
-      approvedBy: (json['approvedBy'] ?? (json['status'] == 'Approved' ? 'Admin' : '—')).toString(),
-      reason: (json['reason'] ?? 's').toString(),
+      status: status,
+      approvedBy: (json['approvedBy'] ?? '—').toString(),
+      reason: (json['reason'] ?? '').toString(),
       remarks: (json['remarks'] ?? '').toString(),
     );
+  }
+
+  DateTime? get day {
+    final d = DateTime.tryParse(rawDate)?.toLocal();
+    return d == null ? null : DateTime(d.year, d.month, d.day);
   }
 }
 
@@ -92,7 +107,8 @@ class AdminPermissionApprovalsScreen extends StatefulWidget {
 
 class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApprovalsScreen> with SingleTickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final ApiClient _api = ApiClient();
+  final AdminApprovalsService _service = AdminApprovalsService();
+  String? _loadError;
 
   late TabController _tabController;
   bool _isLoading = true;
@@ -103,7 +119,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
   String _endDateFilter = '';
   String _sortOrder = 'Newest First (Descending)';
 
-  DateTime _calendarMonth = DateTime(2026, 8, 1);
+  DateTime _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
   List<AdminPermissionRecord> _records = [];
 
   @override
@@ -120,306 +136,130 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
   }
 
   Future<void> _loadData({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
-    try {
-      final res = await _api.request(
-        '/admin/staff/approvals/permission',
-        queryParameters: {
-          'search': _searchQuery.isNotEmpty ? _searchQuery : null,
-          'status': _statusFilter != 'All Statuses' ? _statusFilter : null,
-          'tab': _timelineFilter == 'Upcoming' ? 'upcoming' : (_timelineFilter == 'Past Only' ? 'previous' : null),
-        },
-      );
-
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data']?['requests'] as List?) ?? (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _records = list.map((e) => AdminPermissionRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRecords();
-        }
-      } else {
-        _setMockRecords();
-      }
-    } catch (_) {
-      _setMockRecords();
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
     }
 
-    if (showLoader && mounted) setState(() => _isLoading = false);
-  }
-
-  void _setMockRecords() {
-    _records = [
-      AdminPermissionRecord(
-        id: 'PM-001',
-        requestId: 'PM-001',
-        employeeId: 'EMP-007',
-        name: 'personal notouch',
-        department: 'Engineering',
-        designation: 'Staff',
-        date: 'Aug 28, 2026',
-        type: 'Late',
-        durationText: 'Late: 30m',
-        durationMins: 30,
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 's',
-      ),
-      AdminPermissionRecord(
-        id: 'PM-002',
-        requestId: 'PM-002',
-        employeeId: 'EMP-007',
-        name: 'personal notouch',
-        department: 'Engineering',
-        designation: 'Staff',
-        date: 'Aug 29, 2026',
-        type: 'Late',
-        durationText: 'Late: 30m',
-        durationMins: 30,
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: '1',
-      ),
-      AdminPermissionRecord(
-        id: 'PM-003',
-        requestId: 'PM-003',
-        employeeId: 'EMP-007',
-        name: 'personal notouch',
-        department: 'Engineering',
-        designation: 'Staff',
-        date: 'Aug 31, 2026',
-        type: 'Late',
-        durationText: 'Late: 30m',
-        durationMins: 30,
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'a',
-      ),
-      AdminPermissionRecord(
-        id: 'PM-004',
-        requestId: 'PM-004',
-        employeeId: 'EMP-006',
-        name: 'hp haith',
-        department: 'IT',
-        designation: 'Manager',
-        date: 'Aug 28, 2026',
-        type: 'Late',
-        durationText: 'Late: 1m',
-        durationMins: 1,
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'e',
-      ),
-      AdminPermissionRecord(
-        id: 'PM-005',
-        requestId: 'PM-005',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        date: 'Aug 26, 2026',
-        type: 'Early',
-        durationText: 'Early: 1h',
-        durationMins: 60,
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'fcgb',
-      ),
-      AdminPermissionRecord(
-        id: 'PM-006',
-        requestId: 'PM-006',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        date: 'Aug 26, 2026',
-        type: 'Custom',
-        durationText: 'Early: 30m',
-        durationMins: 30,
-        status: 'Rejected',
-        approvedBy: '—',
-        reason: 'hyiikl',
-        remarks: 'no',
-      ),
-      AdminPermissionRecord(
-        id: 'PM-007',
-        requestId: 'PM-007',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        date: 'Aug 25, 2026',
-        type: 'Early',
-        durationText: 'Early: 3h',
-        durationMins: 180,
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'ghn',
-      ),
-    ];
+    try {
+      final page = await _service.getPermissionRequests(
+        status: _statusFilter != 'All Statuses' ? _statusFilter : null,
+        tab: _timelineFilter == 'Upcoming' ? 'upcoming' : (_timelineFilter == 'Past Only' ? 'previous' : null),
+        startDate: _startDateFilter.isNotEmpty ? _startDateFilter : null,
+        endDate: _endDateFilter.isNotEmpty ? _endDateFilter : null,
+        sort: _sortOrder.startsWith('Oldest') ? 'Oldest' : 'Newest',
+      );
+      if (!mounted) return;
+      setState(() {
+        _records = page.requests.map(AdminPermissionRecord.fromJson).toList();
+        _loadError = null;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final msg = AdminApprovalsService.messageOf(e, fallback: 'Failed to load permission requests');
+      setState(() {
+        _loadError = msg;
+        _isLoading = false;
+      });
+      if (!showLoader) SnackBarUtils.showSnackBar(context, msg, isError: true);
+    }
   }
 
   List<AdminPermissionRecord> get _filteredRecords {
+    final q = _searchQuery.toLowerCase();
+    if (q.isEmpty) return _records;
     return _records.where((r) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          r.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.employeeId.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.reason.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.type.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesStatus = _statusFilter == 'All Statuses' || r.status.toLowerCase() == _statusFilter.toLowerCase();
-
-      return matchesSearch && matchesStatus;
+      return r.name.toLowerCase().contains(q) ||
+          r.employeeId.toLowerCase().contains(q) ||
+          r.reason.toLowerCase().contains(q) ||
+          r.type.toLowerCase().contains(q);
     }).toList();
   }
 
-  // ── Action: View Permission Details Modal (Screenshot 3) ──
-  void _showPermissionDetailModal(AdminPermissionRecord r) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.all(20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.description_outlined, color: AppColors.brandDark, size: 18),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Permission Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text(r.requestId, style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
-                    ],
-                  ),
-                ),
-                IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => Navigator.pop(ctx)),
-              ],
-            ),
-            const SizedBox(height: 14),
-
-            // Staff Info
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 14,
-                    backgroundColor: const Color(0xFFEFF6FF),
-                    child: Text(r.initials, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF2563EB))),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text('${r.employeeId} • ${r.department}', style: const TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            _detailRow('PERMISSION TYPE', r.type),
-            _detailRow('DURATION', '⏱ ${r.durationMins} Mins'),
-            _detailRow('REQUESTED DATE', '📅 ${r.date}'),
-            _detailRow('STATUS', r.status, isStatus: true),
-            _detailRow('APPROVED BY', r.approvedBy),
-            _detailRow('REASON', r.reason.isNotEmpty ? r.reason : '—'),
-            _detailRow('REMARKS / NOTES', r.remarks.isNotEmpty ? r.remarks : 'No remarks provided.'),
-            const SizedBox(height: 14),
-
-            if (r.status == 'Pending')
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        setState(() => r.status = 'Rejected');
-                        try {
-                          await _api.request('/admin/staff/approvals/permission/${r.id}/reject', method: 'POST', data: {'reason': 'Rejected'});
-                        } catch (_) {}
-                        if (mounted) SnackBarUtils.showSnackBar(context, 'Permission request rejected');
-                      },
-                      style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFDC2626), side: const BorderSide(color: Color(0xFFFECACA))),
-                      child: const Text('Reject', style: TextStyle(fontWeight: FontWeight.w700)),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        setState(() => r.status = 'Approved');
-                        try {
-                          await _api.request('/admin/staff/approvals/permission/${r.id}/approve', method: 'POST', data: {'remarks': 'Approved'});
-                        } catch (_) {}
-                        if (mounted) SnackBarUtils.showSnackBar(context, 'Permission request approved');
-                      },
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white),
-                      child: const Text('Approve', style: TextStyle(fontWeight: FontWeight.w800)),
-                    ),
-                  ),
-                ],
-              )
-            else
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                  child: const Text('Close Details', style: TextStyle(fontWeight: FontWeight.w800)),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
+  // ── Actions (list refreshes only after the backend accepts) ──
+  Future<void> _approve(AdminPermissionRecord r) async {
+    try {
+      final msg = await _service.approvePermission(r.id, remarks: 'Approved');
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to approve permission');
+    }
   }
 
-  Widget _detailRow(String label, String value, {bool isStatus = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
-          const SizedBox(width: 8),
-          if (isStatus)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: value == 'Approved' ? const Color(0xFFDCFCE7) : (value == 'Pending' ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2)),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                value,
-                style: TextStyle(
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.w900,
-                  color: value == 'Approved' ? const Color(0xFF16A34A) : (value == 'Pending' ? AppColors.brandDark : const Color(0xFFDC2626)),
+  Future<void> _reject(AdminPermissionRecord r) async {
+    final reason = await showApprovalReasonDialog(
+      context,
+      title: 'Reject Permission Request',
+      subtitle: 'Please provide a reason for rejecting ${r.name}\'s request:',
+    );
+    if (reason == null || !mounted) return;
+    try {
+      final msg = await _service.rejectPermission(r.id, reason: reason, remarks: reason);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to reject permission');
+    }
+  }
+
+  // ── Action: View Permission Details (GET /admin/approvals/permission/:id) ──
+  void _showPermissionDetailModal(AdminPermissionRecord r) {
+    showApprovalDetailSheet(
+      context,
+      title: 'Permission Request Details',
+      loader: () => _service.getPermissionDetail(r.id),
+      buildRows: (d) {
+        final staff = d['staffId'];
+        final reviewer = d['reviewedBy'];
+        return [
+          MapEntry('REQUEST ID', r.requestId.isNotEmpty ? r.requestId : r.id),
+          MapEntry('EMPLOYEE', approvalStaffName(staff, fallback: r.name)),
+          MapEntry('EMPLOYEE ID', (staff is Map ? staff['employeeId'] : null)?.toString() ?? r.employeeId),
+          MapEntry('DEPARTMENT', (staff is Map ? staff['department'] : null)?.toString() ?? r.department),
+          MapEntry('TYPE', (d['type'] ?? r.type).toString()),
+          MapEntry('REQUESTED DATE', formatApprovalDate(d['date'])),
+          MapEntry('DURATION', r.durationText),
+          if ((d['arrivalTime'] ?? '').toString().isNotEmpty) MapEntry('ARRIVAL TIME', d['arrivalTime'].toString()),
+          if ((d['leavingTime'] ?? '').toString().isNotEmpty) MapEntry('LEAVING TIME', d['leavingTime'].toString()),
+          MapEntry('STATUS', (d['status'] ?? r.status).toString()),
+          MapEntry('REVIEWED BY', approvalStaffName(reviewer, fallback: r.approvedBy)),
+          if (d['reviewedAt'] != null) MapEntry('REVIEWED ON', formatApprovalDate(d['reviewedAt'])),
+          MapEntry('REASON', (d['reason'] ?? '').toString()),
+          if ((d['rejectionReason'] ?? '').toString().isNotEmpty) MapEntry('REJECTION REASON', d['rejectionReason'].toString()),
+          MapEntry('REMARKS', (d['remarks'] ?? '').toString()),
+        ];
+      },
+      actions: r.status == 'Pending'
+          ? (sheetCtx, d) => [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () {
+                      Navigator.pop(sheetCtx);
+                      _reject(r);
+                    },
+                    style: approvalRejectStyle(),
+                    child: const Text('Reject'),
+                  ),
                 ),
-              ),
-            )
-          else
-            Expanded(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)))),
-        ],
-      ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(sheetCtx);
+                      _approve(r);
+                    },
+                    style: approvalApproveStyle(),
+                    child: const Text('Approve'),
+                  ),
+                ),
+              ]
+          : null,
     );
   }
 
@@ -432,38 +272,57 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDrawerState) {
           return Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            child: Column(
+            child: SafeArea(
+              top: false,
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(999)),
+                  ),
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
-                      children: const [
-                        Icon(Icons.filter_alt_outlined, color: Color(0xFFEFAA1F), size: 20),
-                        SizedBox(width: 8),
-                        Text('ADVANCED FILTERS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                          child: Icon(Icons.filter_alt_outlined, color: AppColors.primaryText, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('ADVANCED FILTERS', style: AppTextStyles.headingSmall),
                       ],
                     ),
-                    IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(ctx)),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
 
                 // Permission Status (Screenshot 1)
-                const Text('PERMISSION STATUS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('PERMISSION STATUS', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_statusFilter, ['All Statuses', 'Pending', 'Approved', 'Rejected', 'Cancelled'], (v) {
                   setDrawerState(() => _statusFilter = v);
                   setState(() => _statusFilter = v);
                 }),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Start & End Date (Screenshot 1)
                 Row(
@@ -472,107 +331,95 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('START DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
+                          const Text('START DATE', style: AppTextStyles.sectionLabel),
+                          const SizedBox(height: 8),
                           InkWell(
+                            borderRadius: BorderRadius.circular(12),
                             onTap: () async {
                               final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2024), lastDate: DateTime(2028));
                               if (picked != null) {
-                                final s = DateFormat('MM/dd/yyyy').format(picked);
+                                final s = DateFormat('yyyy-MM-dd').format(picked);
                                 setDrawerState(() => _startDateFilter = s);
                                 setState(() => _startDateFilter = s);
                               }
                             },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(_startDateFilter.isNotEmpty ? _startDateFilter : 'mm/dd/yyyy', style: TextStyle(fontSize: 11, color: _startDateFilter.isNotEmpty ? const Color(0xFF0F172A) : const Color(0xFF94A3B8))),
-                                  const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF64748B)),
-                                ],
-                              ),
-                            ),
+                            child: _dateBox(_startDateFilter),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('END DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
+                          const Text('END DATE', style: AppTextStyles.sectionLabel),
+                          const SizedBox(height: 8),
                           InkWell(
+                            borderRadius: BorderRadius.circular(12),
                             onTap: () async {
                               final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2024), lastDate: DateTime(2028));
                               if (picked != null) {
-                                final s = DateFormat('MM/dd/yyyy').format(picked);
+                                final s = DateFormat('yyyy-MM-dd').format(picked);
                                 setDrawerState(() => _endDateFilter = s);
                                 setState(() => _endDateFilter = s);
                               }
                             },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(_endDateFilter.isNotEmpty ? _endDateFilter : 'mm/dd/yyyy', style: TextStyle(fontSize: 11, color: _endDateFilter.isNotEmpty ? const Color(0xFF0F172A) : const Color(0xFF94A3B8))),
-                                  const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF64748B)),
-                                ],
-                              ),
-                            ),
+                            child: _dateBox(_endDateFilter),
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Sort Order (Screenshot 2)
-                const Text('SORT ORDER', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('SORT ORDER', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_sortOrder, ['Newest First (Descending)', 'Oldest First (Ascending)'], (v) {
                   setDrawerState(() => _sortOrder = v);
                   setState(() => _sortOrder = v);
                 }),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
 
                 Row(
                   children: [
                     Expanded(
-                      child: TextButton(
+                      child: OutlinedButton(
                         onPressed: () {
                           setDrawerState(() {
                             _statusFilter = 'All Statuses';
                             _sortOrder = 'Newest First (Descending)';
+                            _startDateFilter = '';
+                            _endDateFilter = '';
                           });
                           setState(() {
                             _statusFilter = 'All Statuses';
                             _sortOrder = 'Newest First (Descending)';
+                            _startDateFilter = '';
+                            _endDateFilter = '';
                           });
                           Navigator.pop(ctx);
+                          _loadData();
                         },
-                        child: const Text('Clear All', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
+                        child: const Text('Clear All'),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                        child: const Text('Apply Filters', style: TextStyle(fontWeight: FontWeight.w800)),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _loadData();
+                        },
+                        child: const Text('Apply Filters'),
                       ),
                     ),
                   ],
                 ),
               ],
+              ),
             ),
           );
         },
@@ -580,16 +427,34 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
     );
   }
 
+  /// Read-only date field look used by the filter sheet.
+  Widget _dateBox(String value) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(value.isNotEmpty ? value : 'yyyy-mm-dd', style: TextStyle(fontSize: 14, color: value.isNotEmpty ? AppColors.textPrimary : AppColors.textCaption)),
+          const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.textSecondary),
+        ],
+      ),
+    );
+  }
+
   Widget _drawerDropdown(String value, List<String> items, Function(String) onChanged) {
     return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: items.contains(value) ? value : items.first,
           isExpanded: true,
-          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)))).toList(),
+          borderRadius: BorderRadius.circular(12),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500)))).toList(),
           onChanged: (v) {
             if (v != null) onChanged(v);
           },
@@ -602,29 +467,20 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          icon: const Icon(Icons.menu_rounded),
+          tooltip: 'Open menu',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Permission Requests',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Permission Requests'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          labelColor: AppColors.brandDark,
-          unselectedLabelColor: const Color(0xFF64748B),
-          indicatorColor: const Color(0xFFEFAA1F),
-          indicatorWeight: 3,
-          labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+          tabAlignment: TabAlignment.start,
           tabs: [
             Tab(text: 'All Requests (${_records.length})'),
             const Tab(text: 'Permission Calendar'),
@@ -654,21 +510,25 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
           // Search & Filter Row
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+            decoration: approvalCardDecoration(),
             child: Column(
               children: [
                 // Search
                 Container(
-                  height: 38,
-                  decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+                  height: 44,
+                  decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                   child: TextField(
                     onChanged: (v) => setState(() => _searchQuery = v),
+                    style: AppTextStyles.bodyMedium,
                     decoration: const InputDecoration(
                       hintText: 'Search employee, ID, reason...',
-                      hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                      prefixIcon: Icon(Icons.search_rounded, size: 16, color: Color(0xFF94A3B8)),
+                      hintStyle: TextStyle(fontSize: 14, color: AppColors.textCaption),
+                      prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.textCaption),
+                      filled: false,
                       border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(vertical: 9),
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -679,15 +539,17 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                     // Timeline Dropdown (Screenshot 4)
                     Expanded(
                       child: Container(
-                        height: 36,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFE2E8F0))),
+                        height: 44,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String>(
                             value: _timelineFilter,
                             isExpanded: true,
+                            borderRadius: BorderRadius.circular(12),
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
                             items: ['All Time', 'Upcoming', 'Past Only']
-                                .map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700))))
+                                .map((t) => DropdownMenuItem(value: t, child: Text(t, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500))))
                                 .toList(),
                             onChanged: (v) {
                               if (v != null) {
@@ -704,13 +566,12 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                     // Filters Button
                     OutlinedButton.icon(
                       onPressed: _showAdvancedFiltersDrawer,
-                      icon: const Icon(Icons.filter_alt_outlined, size: 14),
-                      label: const Text('Filters', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                      icon: const Icon(Icons.filter_alt_outlined, size: 18),
+                      label: const Text('Filters'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF475569),
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        minimumSize: const Size(0, 44),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                       ),
                     ),
                   ],
@@ -718,25 +579,29 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
 
           // Header
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('List of Permission Requests', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              Text('Showing ${_filteredRecords.length} requests', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+              const Expanded(child: Text('List of Permission Requests', style: AppTextStyles.headingSmall)),
+              const SizedBox(width: 8),
+              Text('Showing ${_filteredRecords.length} requests', style: AppTextStyles.bodySmall),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
           // Records List
-          if (_filteredRecords.isEmpty)
+          if (_loadError != null)
+            ApprovalErrorView(message: _loadError!, onRetry: () => _loadData())
+          else if (_filteredRecords.isEmpty)
             Container(
-              padding: const EdgeInsets.all(36),
               alignment: Alignment.center,
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-              child: const Text('No permission requests found', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+              decoration: approvalCardDecoration(),
+              child: const ApprovalEmptyView(
+                icon: Icons.more_time_rounded,
+                title: 'No permission requests found',
+              ),
             )
           else
             ..._filteredRecords.map((r) => _buildPermissionCard(r)),
@@ -746,115 +611,125 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
   }
 
   Widget _buildPermissionCard(AdminPermissionRecord r) {
-    final isApproved = r.status == 'Approved';
     final isPending = r.status == 'Pending';
     final isLate = r.type == 'Late';
     final isEarly = r.type == 'Early';
 
-    Color typeBg = isLate ? const Color(0xFFFEF3C7) : (isEarly ? const Color(0xFFEFF6FF) : const Color(0xFFF3E8FF));
-    Color typeFg = isLate ? AppColors.brandDark : (isEarly ? const Color(0xFF2563EB) : const Color(0xFF7C3AED));
+    Color typeBg = isLate ? AppColors.warningBg : (isEarly ? AppColors.infoBg : const Color(0xFFEDE9FE));
+    Color typeFg = isLate ? AppColors.warning : (isEarly ? AppColors.info : const Color(0xFF7C3AED));
 
-    return InkWell(
-      onTap: () => _showPermissionDetailModal(r),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFF1F5F9)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: () => _showPermissionDetailModal(r),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: kApprovalBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: const Color(0xFFEFF6FF),
-                  child: Text(r.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF2563EB))),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text('${r.employeeId} • ${r.department}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: isApproved ? const Color(0xFFDCFCE7) : (isPending ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(isApproved ? Icons.check_circle_outline_rounded : (isPending ? Icons.schedule_rounded : Icons.cancel_outlined), size: 11, color: isApproved ? const Color(0xFF16A34A) : (isPending ? AppColors.brandDark : const Color(0xFFDC2626))),
-                      const SizedBox(width: 4),
-                      Text(r.status, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isApproved ? const Color(0xFF16A34A) : (isPending ? AppColors.brandDark : const Color(0xFFDC2626)))),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 4),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, size: 18, color: Color(0xFF64748B)),
-                  onSelected: (val) {
-                    if (val == 'view') {
-                      _showPermissionDetailModal(r);
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(
-                      value: 'view',
-                      child: Row(
-                        children: [
-                          Icon(Icons.visibility_outlined, size: 16, color: Color(0xFF2563EB)),
-                          SizedBox(width: 8),
-                          Text('View Details', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-                        ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: ApprovalCardHeader(
+                        leading: ApprovalAvatar(name: r.name, initials: r.initials),
+                        title: r.name,
+                        subtitle: '${r.employeeId} • ${r.department}',
+                        trailing: ApprovalStatusPill(status: r.status, label: r.status),
                       ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.textSecondary),
+                      tooltip: 'More actions',
+                      onSelected: (val) {
+                        if (val == 'view') {
+                          _showPermissionDetailModal(r);
+                        } else if (val == 'approve') {
+                          _approve(r);
+                        } else if (val == 'reject') {
+                          _reject(r);
+                        }
+                      },
+                      itemBuilder: (ctx) => [
+                        const PopupMenuItem(
+                          value: 'view',
+                          child: Row(
+                            children: [
+                              Icon(Icons.visibility_outlined, size: 18, color: AppColors.info),
+                              SizedBox(width: 12),
+                              Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                        ),
+                        if (isPending)
+                          const PopupMenuItem(
+                            value: 'approve',
+                            child: Row(
+                              children: [
+                                Icon(Icons.check_circle_outline_rounded, size: 18, color: AppColors.success),
+                                SizedBox(width: 12),
+                                Text('Approve', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.success)),
+                              ],
+                            ),
+                          ),
+                        if (isPending)
+                          const PopupMenuItem(
+                            value: 'reject',
+                            child: Row(
+                              children: [
+                                Icon(Icons.cancel_outlined, size: 18, color: AppColors.error),
+                                SizedBox(width: 12),
+                                Text('Reject', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.error)),
+                              ],
+                            ),
+                          ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Type
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text(r.type, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: typeFg)),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          // Type
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(999)),
+                            child: Text(r.type, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: typeFg)),
+                          ),
+                          // Duration
+                          Text(r.durationText, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                          // Date
+                          Text(r.date, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w500)),
+                        ],
                       ),
-                      // Duration
-                      Text(r.durationText, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1E293B))),
-                      // Date
-                      Text(r.date, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                      const SizedBox(height: 8),
+                      // Reason
+                      Text('Reason: ${r.reason}', maxLines: 2, overflow: TextOverflow.ellipsis, style: AppTextStyles.bodySmall),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  // Reason
-                  Text('Reason: ${r.reason}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -867,28 +742,32 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
       children: [
         Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+          decoration: approvalCardDecoration(),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Flexible(
                 child: Row(
-                  children: const [
-                    Icon(Icons.calendar_month_outlined, color: AppColors.brandDark, size: 18),
-                    SizedBox(width: 6),
-                    Flexible(child: Text('Permission Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800))),
+                  children: [
+                    Icon(Icons.calendar_month_outlined, color: AppColors.primaryText, size: 20),
+                    const SizedBox(width: 8),
+                    const Flexible(child: Text('Permission Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.headingSmall)),
                   ],
                 ),
               ),
               Row(
                 children: [
                   IconButton(
-                    icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                    icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                    tooltip: 'Previous month',
+                    visualDensity: VisualDensity.compact,
                     onPressed: () => setState(() => _calendarMonth = DateTime(_calendarMonth.year, _calendarMonth.month - 1, 1)),
                   ),
-                  Text(DateFormat('MMMM yyyy').format(_calendarMonth), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                  Text(DateFormat('MMMM yyyy').format(_calendarMonth), style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
                   IconButton(
-                    icon: const Icon(Icons.chevron_right_rounded, size: 18),
+                    icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                    tooltip: 'Next month',
+                    visualDensity: VisualDensity.compact,
                     onPressed: () => setState(() => _calendarMonth = DateTime(_calendarMonth.year, _calendarMonth.month + 1, 1)),
                   ),
                 ],
@@ -901,32 +780,29 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
         Row(
           children: ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d) {
             return Expanded(
-              child: Center(child: Text(d, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
+              child: Center(child: Text(d, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary))),
             );
           }).toList(),
         ),
+        const SizedBox(height: 8),
         // Grid of month days
         _buildCalendarGrid(),
         const SizedBox(height: 16),
 
         // Bottom Legend Bar (Screenshot 4)
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: approvalCardDecoration(),
           child: Wrap(
             spacing: 12,
-            runSpacing: 6,
+            runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text('Legend:', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-              _legendItem('Late Arrival', AppColors.brandDark),
-              _legendItem('Early Leaving', const Color(0xFF2563EB)),
+              Text('Legend:', style: AppTextStyles.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+              _legendItem('Late Arrival', AppColors.warning),
+              _legendItem('Early Leaving', AppColors.info),
               _legendItem('Custom Break', const Color(0xFF7C3AED)),
-              _legendItem('Rejected / Cancelled', const Color(0xFFDC2626)),
+              _legendItem('Rejected / Cancelled', AppColors.error),
             ],
           ),
         ),
@@ -940,7 +816,7 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
       children: [
         Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
+        Text(label, style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
       ],
     );
   }
@@ -954,26 +830,27 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
     final List<Widget> dayWidgets = [];
 
     for (int i = 0; i < firstDayWeekday; i++) {
-      dayWidgets.add(Container(margin: const EdgeInsets.all(2), decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(6))));
+      dayWidgets.add(Container(margin: const EdgeInsets.all(2), decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(8))));
     }
 
     for (int d = 1; d <= totalDays; d++) {
-      final permsForDay = _records.where((r) => r.date.contains('$d,') || r.date.contains('$d ')).toList();
+      final day = DateTime(year, month, d);
+      final permsForDay = _records.where((r) => r.day == day && r.status != 'Rejected' && r.status != 'Cancelled').toList();
 
       dayWidgets.add(
         Container(
           margin: const EdgeInsets.all(2),
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: permsForDay.isNotEmpty ? AppColors.brandBorder : kApprovalBorder),
           ),
           child: ClipRect(
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('$d', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+              Text('$d', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
               if (permsForDay.isNotEmpty) ...[
                 const SizedBox(height: 2),
                 ...permsForDay.take(2).map((p) => InkWell(
@@ -981,8 +858,8 @@ class _AdminPermissionApprovalsScreenState extends State<AdminPermissionApproval
                       child: Container(
                         margin: const EdgeInsets.only(bottom: 1),
                         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-                        decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(2)),
-                        child: Text(p.name, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: AppColors.brandDark), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        decoration: BoxDecoration(color: AppColors.warningBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(p.name, style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w600, color: AppColors.warning), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     )),
               ],

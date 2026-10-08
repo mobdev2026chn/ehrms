@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../services/salary_service.dart';
 import '../../utils/mongo_date_parse.dart';
 import '../../utils/salary_ctc_helpers.dart';
@@ -67,14 +69,10 @@ class SalaryRevisionOverviewScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text(
-          'Salary Revision History',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        centerTitle: true,
+        title: const Text('Salary Revision History'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           _EmployeeHeader(
             name: name,
@@ -85,29 +83,45 @@ class SalaryRevisionOverviewScreen extends StatelessWidget {
             phone: phone,
             salaryText: curCtc != null ? currency.format(curCtc) : '—',
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           if (pts.length >= 2)
             _ChartCard(points: pts)
           else
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                pts.isEmpty
-                    ? 'Not enough revision data to plot a trend.'
-                    : 'Add another revision to see a trend line.',
-                style: TextStyle(color: Colors.grey.shade700),
+            AppCard(
+              border: Border.all(color: const Color(0xFFECEEF1)),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(Icons.show_chart_rounded,
+                        size: 20, color: AppColors.primaryText),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      pts.isEmpty
+                          ? 'Not enough revision data to plot a trend.'
+                          : 'Add another revision to see a trend line.',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ),
+                ],
               ),
             ),
           const SizedBox(height: 24),
-          const Text(
-            'Salary Revision Details',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Text(
+              'Salary Revision Details',
+              style: AppTextStyles.headingSmall,
+            ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           for (final e in historyDesc) ...[
             _RevisionListTile(
               entry: e,
@@ -124,7 +138,7 @@ class SalaryRevisionOverviewScreen extends StatelessWidget {
                 );
               },
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
           ],
         ],
       ),
@@ -155,51 +169,64 @@ class _EmployeeHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.25)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            AppColors.primary.withValues(alpha: 0.16),
+            AppColors.primary.withValues(alpha: 0.06),
+          ],
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
-            radius: 28,
+            radius: 26,
             backgroundColor: AppColors.primary,
-            child: const Icon(Icons.person, color: Colors.white, size: 32),
+            child: Icon(Icons.person_rounded,
+                color: AppColors.onPrimary, size: 28),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 16),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 16,
-                  ),
+                  style: AppTextStyles.headingSmall,
                 ),
                 if (subtitle.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade800),
+                    style: AppTextStyles.bodySmall,
                   ),
                 ],
                 if (phone != null && phone!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 2),
                   Text(
                     'Mobile No: $phone',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade800),
+                    style: AppTextStyles.bodySmall,
                   ),
                 ],
-                const SizedBox(height: 6),
-                Text(
-                  'Salary: $salaryText',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
+                const SizedBox(height: 12),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: AppColors.surface,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Salary: $salaryText',
+                    style: AppTextStyles.label.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -234,37 +261,32 @@ class _ChartCard extends StatelessWidget {
     ];
 
     return Container(
-      height: 260,
-      padding: const EdgeInsets.fromLTRB(8, 16, 16, 8),
+      height: 272,
+      padding: const EdgeInsets.fromLTRB(8, 20, 20, 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Padding(
-            padding: EdgeInsets.only(left: 8, right: 8),
+            padding: EdgeInsets.only(left: 12, right: 8),
             child: Text(
               'Salary Revision Overview',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              style: AppTextStyles.headingSmall,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 8, right: 8, top: 4),
+          const Padding(
+            padding: EdgeInsets.only(left: 12, right: 8, top: 4),
             child: Text(
               'Revised yearly CTC at each effective date',
-              style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+              style: AppTextStyles.bodySmall,
             ),
           ),
-          SizedBox(height: 12),
+          SizedBox(height: 16),
           Expanded(
             child: LineChart(
               LineChartData(
@@ -274,8 +296,8 @@ class _ChartCard extends StatelessWidget {
                   show: true,
                   drawVerticalLine: false,
                   horizontalInterval: (maxY - minY) > 0 ? (maxY - minY) / 4 : 1,
-                  getDrawingHorizontalLine: (v) => FlLine(
-                    color: Colors.grey.shade200,
+                  getDrawingHorizontalLine: (v) => const FlLine(
+                    color: Color(0xFFECEEF1),
                     strokeWidth: 1,
                   ),
                 ),
@@ -297,9 +319,9 @@ class _ChartCard extends StatelessWidget {
                             : NumberFormat.compact().format(v);
                         return Text(
                           t,
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Colors.grey.shade700,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            color: AppColors.textSecondary,
                           ),
                         );
                       },
@@ -320,9 +342,9 @@ class _ChartCard extends StatelessWidget {
                           child: Text(
                             DateFormat('MMM\nyyyy').format(points[i].date),
                             textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 9,
-                              color: Colors.grey.shade700,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: AppColors.textSecondary,
                             ),
                           ),
                         );
@@ -337,13 +359,23 @@ class _ChartCard extends StatelessWidget {
                     isCurved: true,
                     color: AppColors.primary,
                     barWidth: 3,
-                    dotData: const FlDotData(show: true),
+                    isStrokeCapRound: true,
+                    dotData: FlDotData(
+                      show: true,
+                      getDotPainter: (spot, percent, bar, index) =>
+                          FlDotCirclePainter(
+                        radius: 4,
+                        color: AppColors.surface,
+                        strokeWidth: 2.5,
+                        strokeColor: AppColors.primary,
+                      ),
+                    ),
                     belowBarData: BarAreaData(
                       show: true,
                       gradient: LinearGradient(
                         colors: [
-                          AppColors.primary.withOpacity(0.35),
-                          AppColors.primary.withOpacity(0.02),
+                          AppColors.primary.withValues(alpha: 0.28),
+                          AppColors.primary.withValues(alpha: 0.02),
                         ],
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
@@ -385,15 +417,16 @@ class _RevisionListTile extends StatelessWidget {
     final rCtc = yearlyCtcFromSalaryMap(revMap);
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      elevation: 1,
-      shadowColor: Colors.black12,
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFECEEF1)),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(16),
           child: Row(
             children: [
               Expanded(
@@ -402,34 +435,53 @@ class _RevisionListTile extends StatelessWidget {
                   children: [
                     Row(
                       children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(Icons.trending_up_rounded,
+                              size: 20, color: AppColors.primaryText),
+                        ),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: Text(
                             title,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                              fontSize: 15,
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ),
-                        Icon(Icons.chevron_right, color: Colors.grey.shade500),
+                        const Icon(Icons.chevron_right_rounded,
+                            color: AppColors.textCaption),
                       ],
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _mini(
-                            'Previous CTC',
-                            pCtc != null ? currency.format(pCtc) : '—',
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppColors.background,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: _mini(
+                              'Previous CTC',
+                              pCtc != null ? currency.format(pCtc) : '—',
+                            ),
                           ),
-                        ),
-                        Expanded(
-                          child: _mini(
-                            'Revised CTC',
-                            rCtc != null ? currency.format(rCtc) : '—',
+                          const Icon(Icons.arrow_forward_rounded,
+                              size: 16, color: AppColors.textCaption),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: _mini(
+                              'Revised CTC',
+                              rCtc != null ? currency.format(rCtc) : '—',
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -447,12 +499,19 @@ class _RevisionListTile extends StatelessWidget {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
         ),
         const SizedBox(height: 2),
-        Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: AppTextStyles.bodyMedium.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ),
       ],
     );

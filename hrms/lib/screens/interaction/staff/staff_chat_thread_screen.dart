@@ -12,6 +12,7 @@ import 'package:flutter_image_compress/flutter_image_compress.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 
+import '../../../config/app_colors.dart';
 import '../../../services/staff_interaction_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import 'staff_interaction_widgets.dart';
@@ -258,11 +259,9 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
   Future<void> _pickAttachment() async {
     final choice = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -291,9 +290,17 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(radius: 26, backgroundColor: color, child: Icon(icon, color: Colors.white)),
-            const SizedBox(height: 6),
-            Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+            Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, color: color, size: 26),
+            ),
+            const SizedBox(height: 8),
+            Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: kInteractionInk)),
           ],
         ),
       ),
@@ -386,13 +393,9 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF3F4F6),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0.5,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: kInteractionInk,
+        centerTitle: false,
         titleSpacing: 0,
         title: Row(
           children: [
@@ -405,7 +408,7 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
                   : null,
               online: online,
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -414,7 +417,7 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
                     widget.title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk),
                   ),
                   if (status.isNotEmpty)
                     Text(
@@ -424,7 +427,7 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
-                        color: typingNames.isNotEmpty || online ? const Color(0xFF059669) : kInteractionMuted,
+                        color: typingNames.isNotEmpty || online ? AppColors.success : kInteractionMuted,
                       ),
                     ),
                 ],
@@ -477,7 +480,7 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
     return ListView.builder(
       controller: _scroll,
       reverse: true,
-      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       itemCount: items.length,
       itemBuilder: (_, i) {
         final item = items[items.length - 1 - i];
@@ -494,16 +497,16 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
   Widget _daySeparator(DateTime d) {
     return Center(
       child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 10),
+        margin: const EdgeInsets.symmetric(vertical: 12),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 4)],
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: kInteractionLine),
         ),
         child: Text(
           chatDayLabel(d),
-          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: kInteractionMuted),
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: kInteractionMuted),
         ),
       ),
     );
@@ -516,22 +519,28 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
           margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 24),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFFFEF3C7),
-            borderRadius: BorderRadius.circular(10),
+            color: AppColors.warningBg,
+            borderRadius: BorderRadius.circular(12),
           ),
-          child: Text(m.content, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12.5, color: Color(0xFF92400E))),
+          child: Text(m.content, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.warning)),
         ),
       );
     }
     final mine = m.senderId == _myId;
     final time = DateFormat('hh:mm a').format(m.createdAt);
-    final bg = mine ? const Color(0xFFFFF1D6) : Colors.white;
+    final bg = mine ? AppColors.primary : Colors.white;
+    final fg = mine ? AppColors.onPrimary : kInteractionInk;
+    final metaColor = mine ? AppColors.onPrimary.withValues(alpha: 0.72) : AppColors.textSecondary;
 
     Widget statusIcon() {
-      if (m.failed) return const Icon(Icons.error_outline_rounded, size: 14, color: Color(0xFFDC2626));
-      if (m.pending) return const Icon(Icons.schedule_rounded, size: 13, color: kInteractionMuted);
+      if (m.failed) return const Icon(Icons.error_outline_rounded, size: 14, color: AppColors.error);
+      if (m.pending) return Icon(Icons.schedule_rounded, size: 13, color: metaColor);
       final read = m.status == 'read' || (isLastMine && _otherRead);
-      return Icon(Icons.done_all_rounded, size: 15, color: read ? const Color(0xFF0EA5E9) : kInteractionMuted);
+      return Icon(
+        Icons.done_all_rounded,
+        size: 15,
+        color: read ? AppColors.onPrimary : AppColors.onPrimary.withValues(alpha: 0.5),
+      );
     }
 
     final content = Column(
@@ -540,23 +549,23 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
       children: [
         if (!mine && showName)
           Padding(
-            padding: const EdgeInsets.only(bottom: 3),
+            padding: const EdgeInsets.only(bottom: 4),
             child: Text(
               m.senderName,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: avatarTint(m.senderName)),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: avatarTint(m.senderName)),
             ),
           ),
         for (final a in m.attachments) _attachmentView(a),
         if (m.content.isNotEmpty)
           Padding(
             padding: EdgeInsets.only(top: m.attachments.isNotEmpty ? 6 : 0),
-            child: Text(m.content, style: const TextStyle(fontSize: 14.5, color: kInteractionInk, height: 1.35)),
+            child: Text(m.content, style: TextStyle(fontSize: 14.5, color: fg, height: 1.4)),
           ),
-        const SizedBox(height: 3),
+        const SizedBox(height: 4),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(time, style: const TextStyle(fontSize: 10.5, color: kInteractionMuted)),
+            Text(time, style: TextStyle(fontSize: 11, color: metaColor)),
             if (mine) ...[const SizedBox(width: 4), statusIcon()],
           ],
         ),
@@ -568,16 +577,16 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
       child: Container(
         constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.76),
         margin: EdgeInsets.only(top: showName || mine ? 4 : 2, bottom: 2),
-        padding: const EdgeInsets.fromLTRB(11, 8, 11, 6),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.only(
-            topLeft: const Radius.circular(14),
-            topRight: const Radius.circular(14),
-            bottomLeft: Radius.circular(mine ? 14 : 4),
-            bottomRight: Radius.circular(mine ? 4 : 14),
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(mine ? 16 : 4),
+            bottomRight: Radius.circular(mine ? 4 : 16),
           ),
-          boxShadow: const [BoxShadow(color: Color(0x0D000000), blurRadius: 3, offset: Offset(0, 1))],
+          border: mine ? null : Border.all(color: kInteractionLine),
         ),
         child: content,
       ),
@@ -590,7 +599,7 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
         if (m.failed)
           const Padding(
             padding: EdgeInsets.only(bottom: 4),
-            child: Text('Not sent · tap to retry', style: TextStyle(fontSize: 11, color: Color(0xFFDC2626))),
+            child: Text('Not sent · tap to retry', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: AppColors.error)),
           ),
       ],
     );
@@ -626,18 +635,27 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
       child: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
-          color: const Color(0x0F000000),
-          borderRadius: BorderRadius.circular(10),
+          color: AppColors.background,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kInteractionLine),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              isPdf ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_rounded,
-              color: isPdf ? const Color(0xFFDC2626) : const Color(0xFF6366F1),
-              size: 30,
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: (isPdf ? AppColors.error : AppColors.indigo).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                isPdf ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_rounded,
+                color: isPdf ? AppColors.error : AppColors.indigo,
+                size: 22,
+              ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 10),
             Flexible(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -646,10 +664,10 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
                     a.name,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kInteractionInk),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kInteractionInk),
                   ),
                   if (a.size > 0)
-                    Text(fileSizeLabel(a.size), style: const TextStyle(fontSize: 11, color: kInteractionMuted)),
+                    Text(fileSizeLabel(a.size), style: const TextStyle(fontSize: 12, color: kInteractionMuted)),
                 ],
               ),
             ),
@@ -664,8 +682,11 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
       top: false,
       child: Container(
         width: double.infinity,
-        color: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: kInteractionLine)),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         child: const Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -675,7 +696,7 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
               child: Text(
                 'Only admins can send messages in this broadcast channel.',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12.5, color: kInteractionMuted),
+                style: TextStyle(fontSize: 13, color: kInteractionMuted),
               ),
             ),
           ],
@@ -689,22 +710,25 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
     return SafeArea(
       top: false,
       child: Container(
-        color: Colors.transparent,
-        padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: kInteractionLine)),
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: AppColors.background,
                   borderRadius: BorderRadius.circular(24),
-                  boxShadow: const [BoxShadow(color: Color(0x12000000), blurRadius: 4, offset: Offset(0, 1))],
+                  border: Border.all(color: const Color(0xFFE2E5EA)),
                 ),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    const SizedBox(width: 14),
+                    const SizedBox(width: 16),
                     Expanded(
                       child: TextField(
                         controller: _input,
@@ -712,9 +736,13 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
                         minLines: 1,
                         maxLines: 5,
                         textCapitalization: TextCapitalization.sentences,
+                        style: const TextStyle(fontSize: 15, color: kInteractionInk),
                         decoration: const InputDecoration(
                           hintText: 'Message',
                           border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          filled: false,
                           isDense: true,
                           contentPadding: EdgeInsets.symmetric(vertical: 12),
                         ),
@@ -722,26 +750,31 @@ class _StaffChatThreadScreenState extends State<StaffChatThreadScreen> {
                     ),
                     IconButton(
                       onPressed: _pickAttachment,
-                      icon: const Icon(Icons.attach_file_rounded, color: kInteractionMuted),
+                      icon: const Icon(Icons.attach_file_rounded, color: kInteractionMuted, size: 22),
                       tooltip: 'Attach',
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
             AnimatedScale(
               duration: const Duration(milliseconds: 150),
-              scale: hasText ? 1 : 0.9,
+              scale: hasText ? 1 : 0.94,
               child: Material(
-                color: hasText ? kInteractionAccent : const Color(0xFFCBD5E1),
-                shape: const CircleBorder(),
+                color: hasText ? AppColors.primary : const Color(0xFFE2E5EA),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                clipBehavior: Clip.antiAlias,
                 child: InkWell(
-                  customBorder: const CircleBorder(),
                   onTap: hasText ? _sendText : null,
-                  child: const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Icon(Icons.send_rounded, color: Colors.white, size: 22),
+                  child: SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: Icon(
+                      Icons.send_rounded,
+                      color: hasText ? AppColors.onPrimary : AppColors.textCaption,
+                      size: 22,
+                    ),
                   ),
                 ),
               ),

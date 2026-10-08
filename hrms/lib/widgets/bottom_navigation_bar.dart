@@ -99,6 +99,11 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
 
   // ignore: unused_field
   bool _isCandidate = false;
+
+  /// Admin sign-ins get no bottom bar. Starts from the last known role so the bar
+  /// does not flash on each screen before the stored user is read.
+  static bool _lastKnownIsAdmin = false;
+  bool _isAdmin = _lastKnownIsAdmin;
   bool _isPunchedIn = false;
   bool _isPunchCompletedToday = false;
   bool _isPunchStateResolved = false;
@@ -195,11 +200,19 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
       final userString = prefs.getString('user');
       if (userString != null) {
         final userData = jsonDecode(userString);
+        final role = (userData['role'] ?? '').toString().toLowerCase();
+        final staffType = (userData['staffType'] ?? '').toString().toLowerCase();
+        // Same admin check as the side menu (AppDrawer._isAdmin).
+        final isAdmin = role == 'admin' ||
+            role == 'superadmin' ||
+            role == 'hr' ||
+            role == 'hr_admin' ||
+            staffType == 'admin';
+        _lastKnownIsAdmin = isAdmin;
         if (mounted) {
           setState(() {
-            _isCandidate =
-                (userData['role'] ?? '').toString().toLowerCase() ==
-                'candidate';
+            _isCandidate = role == 'candidate';
+            _isAdmin = isAdmin;
           });
         }
       }
@@ -349,6 +362,8 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
 
   @override
   Widget build(BuildContext context) {
+    // Admins navigate from the side menu; the employee bottom bar is not shown to them.
+    if (_isAdmin) return const SizedBox.shrink();
     final navItems = widget.items ?? _buildItems();
     final usesInternalPunchState =
         widget.isPunchedInToday == null && widget.isPunchCompletedToday == null;
@@ -357,7 +372,7 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
     final isPunchedInForBreak = widget.isPunchedInToday ?? _isPunchedIn;
     final isPunchedIn = widget.isPunchedInToday ?? _isPunchedIn;
 
-    const barBg = Color(0xFF1C1C1E);
+    const barBg = AppColors.surfaceDark;
     const unselected = Color(0xFF8E8E93);
     final selected = AppColors.primary;
 
@@ -396,28 +411,44 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            busy
-                ? SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(selected),
+            // Selected-state pill behind the icon (gold tint on the dark bar).
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut,
+              width: 44,
+              height: 28,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: isActive
+                    ? selected.withValues(alpha: 0.18)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: busy
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(selected),
+                      ),
+                    )
+                  : Icon(
+                      isActive ? item.activeIcon : item.icon,
+                      size: 22,
+                      color: isActive ? selected : unselected,
                     ),
-                  )
-                : Icon(
-                    isActive ? item.activeIcon : item.icon,
-                    size: 22,
-                    color: isActive ? selected : unselected,
-                  ),
+            ),
             const SizedBox(height: 4),
             Text(
               busy ? 'Please wait' : item.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 10,
-                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
+                fontSize: 10.5,
+                height: 1.2,
+                letterSpacing: 0.1,
+                fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
                 color: isActive ? selected : unselected,
               ),
             ),
@@ -462,14 +493,18 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
           child: Container(
             height: 72,
             margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.symmetric(horizontal: 4),
             decoration: BoxDecoration(
               color: barBg,
               borderRadius: BorderRadius.circular(36),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.06),
+              ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.25),
+                  color: Colors.black.withValues(alpha: 0.18),
                   blurRadius: 20,
-                  offset: const Offset(0, 4),
+                  offset: const Offset(0, 6),
                 ),
               ],
             ),
@@ -530,10 +565,10 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                                     boxShadow: [
                                       BoxShadow(
                                         color: AppColors.primary.withValues(
-                                          alpha: 0.5,
+                                          alpha: 0.35,
                                         ),
-                                        blurRadius: 12,
-                                        offset: const Offset(0, 3),
+                                        blurRadius: 14,
+                                        offset: const Offset(0, 4),
                                       ),
                                     ],
                                   ),
@@ -544,14 +579,16 @@ class _AppBottomNavigationBarState extends State<AppBottomNavigationBar>
                                         isPunchedIn
                                             ? Icons.fingerprint
                                             : Icons.fingerprint,
-                                        color: Colors.white,
-                                        size: 26,
+                                        color: AppColors.onPrimary,
+                                        size: 24,
                                       ),
+                                      const SizedBox(height: 1),
                                       Text(
                                         isPunchedIn ? 'Punch out' : 'Punch in',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 7,
+                                        style: TextStyle(
+                                          color: AppColors.onPrimary,
+                                          fontSize: 8,
+                                          height: 1.1,
                                           fontWeight: FontWeight.w700,
                                           letterSpacing: 0.2,
                                         ),

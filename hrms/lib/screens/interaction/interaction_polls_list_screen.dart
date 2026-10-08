@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../utils/error_message_utils.dart';
 import '../../services/interaction_service.dart';
 import 'interaction_poll_detail_screen.dart';
@@ -82,25 +83,25 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
     final active = p['isActive'] == true;
     final label = closed ? 'Closed' : (active ? 'Active' : 'Scheduled');
     final color = closed
-        ? Colors.grey.shade600
-        : (active ? const Color(0xFF16A34A) : Colors.blue.shade700);
+        ? AppColors.textSecondary
+        : (active ? AppColors.success : AppColors.info);
     final bg = closed
-        ? Colors.grey.shade200
-        : (active ? const Color(0xFFDCFCE7) : Colors.blue.shade50);
+        ? AppColors.inputFill
+        : (active ? AppColors.successBg : AppColors.infoBg);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           Container(
-            width: 8,
-            height: 8,
+            width: 6,
+            height: 6,
             decoration: BoxDecoration(
-              color: closed ? Colors.grey.shade500 : color,
+              color: closed ? AppColors.textCaption : color,
               shape: BoxShape.circle,
             ),
           ),
@@ -123,7 +124,13 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(_error!, textAlign: TextAlign.center),
+              _emptyIcon(Icons.wifi_off_rounded, fg: AppColors.error, bg: AppColors.errorBg),
+              const SizedBox(height: 16),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
+              ),
               const SizedBox(height: 16),
               FilledButton(onPressed: _load, child: const Text('Retry')),
             ],
@@ -133,19 +140,32 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
     }
 
     return ColoredBox(
-      color: const Color(0xFFF5F5F5),
+      color: AppColors.background,
       child: RefreshIndicator(
       onRefresh: _load,
       child: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         slivers: [
           if (_polls.isEmpty)
-            const SliverFillRemaining(
+            SliverFillRemaining(
               hasScrollBody: false,
-              child: Center(child: Text('No polls available right now.')),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _emptyIcon(Icons.poll_outlined),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'No polls available right now.',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
             ),
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(12, 0, 12, 24),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
             sliver: SliverList(
               delegate: SliverChildBuilderDelegate(
                 (context, i) {
@@ -158,14 +178,9 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
                   final progress = targets > 0 ? (responses / targets).clamp(0.0, 1.0) : 0.0;
                   final id = _pollId(p);
                   return Card(
-                    elevation: 0,
                     margin: const EdgeInsets.only(bottom: 12),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      side: BorderSide(color: Colors.grey.shade200),
-                    ),
                     child: Padding(
-                      padding: const EdgeInsets.all(14),
+                      padding: const EdgeInsets.all(16),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -178,23 +193,20 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
                                   children: [
                                     Text(
                                       title,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                        color: Color(0xFF0F172A),
-                                      ),
+                                      style: AppTextStyles.headingSmall,
                                     ),
                                     if (desc.isNotEmpty)
                                       Padding(
                                         padding: const EdgeInsets.only(top: 4),
                                         child: Text(
                                           desc,
-                                          style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                                          style: AppTextStyles.bodySmall,
                                         ),
                                       ),
                                   ],
                                 ),
                               ),
+                              const SizedBox(width: 12),
                               _statusPill(p),
                             ],
                           ),
@@ -212,25 +224,31 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
                             children: [
                               Text(
                                 'Responses',
-                                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                               ),
                               const Spacer(),
                               Text(
                                 targets > 0 ? '$responses / $targets' : '$responses',
-                                style: const TextStyle(fontWeight: FontWeight.w600),
+                                style: AppTextStyles.label.copyWith(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textPrimary,
+                                ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 6),
+                          const SizedBox(height: 8),
                           ClipRRect(
-                            borderRadius: BorderRadius.circular(4),
+                            borderRadius: BorderRadius.circular(999),
                             child: LinearProgressIndicator(
                               value: targets > 0 ? progress : null,
                               minHeight: 6,
-                              backgroundColor: Colors.grey.shade200,
+                              backgroundColor: const Color(0xFFEDEFF2),
                               valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
                             ),
                           ),
+                          const SizedBox(height: 12),
+                          const Divider(height: 1),
                           const SizedBox(height: 12),
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.end,
@@ -241,14 +259,17 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
                                   children: [
                                     Text(
                                       'Ends',
-                                      style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                                      style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
                                       end != null
                                           ? DateFormat.yMd().add_jm().format(end)
                                           : '—',
-                                      style: const TextStyle(fontWeight: FontWeight.w500),
+                                      style: AppTextStyles.label.copyWith(
+                                        fontSize: 13,
+                                        color: AppColors.textPrimary,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -266,8 +287,8 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
                                         _load();
                                       },
                                 style: OutlinedButton.styleFrom(
-                                  foregroundColor: const Color(0xFF2563EB),
-                                  side: BorderSide(color: Colors.grey.shade400),
+                                  minimumSize: const Size(0, 40),
+                                  padding: const EdgeInsets.symmetric(horizontal: 16),
                                 ),
                                 child: const Text('View Results'),
                               ),
@@ -292,11 +313,30 @@ class _InteractionPollsListScreenState extends State<InteractionPollsListScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade300),
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFE2E5EA)),
       ),
-      child: Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade800)),
+      child: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          color: AppColors.textSecondary,
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyIcon(IconData icon, {Color? fg, Color? bg}) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(
+        color: bg ?? AppColors.primary.withValues(alpha: 0.12),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(icon, size: 28, color: fg ?? AppColors.primaryText),
     );
   }
 }

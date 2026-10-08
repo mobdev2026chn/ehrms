@@ -6,6 +6,8 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/arrived_screen.dart';
@@ -457,7 +459,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           Polyline(
             polylineId: const PolylineId('toDestination'),
             points: road.points,
-            color: AppColors.primary.withOpacity(0.8),
+            color: AppColors.primary.withValues(alpha: 0.8),
             width: 4,
             startCap: Cap.roundCap,
             endCap: Cap.roundCap,
@@ -521,18 +523,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: Text(
-          'Task Details',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-        elevation: 0,
+        title: const Text('Task Details'),
         actions: [
           IconButton(
             icon: const Icon(Icons.history_rounded),
@@ -557,31 +555,31 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildMapCard(),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _buildTaskSummaryCard(),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _buildAssignedAndCompletionDates(),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _buildCustomerCard(),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _buildDestinationCard(),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   _buildTaskRequirements(),
                   _buildOtpVerificationStatus(),
                   if (_buildTrackEvents().isNotEmpty) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     _buildTrackDetailsCard(),
                   ],
                   if (task.tasksExit.isNotEmpty || task.tasksRestarted.isNotEmpty) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     _buildExitRestartHistoryCard(),
                   ],
                   if (_hasCompletionDetails) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     _buildCompletionDetailsCard(),
                   ],
                   if (!_showBackOnly) ...[
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     _buildReadyToStartCard(),
                   ],
                 ],
@@ -604,12 +602,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
-        color: Colors.grey.shade100,
+        color: AppColors.inputFill,
       ),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(
@@ -625,7 +623,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   child: Text(
                     _mapError!,
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.grey.shade700),
+                    style: TextStyle(color: AppColors.textSecondary),
                   ),
                 ),
               )
@@ -667,23 +665,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: kSoftCardShadow,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.location_on_rounded,
                       size: 16,
-                      color: Colors.pink.shade400,
+                      color: AppColors.error,
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -693,7 +685,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: Colors.black87,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ],
@@ -709,15 +701,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   vertical: 6,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.1),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(999),
+                  boxShadow: kSoftCardShadow,
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -725,7 +711,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     Icon(
                       Icons.timer_outlined,
                       size: 16,
-                      color: Colors.grey.shade700,
+                      color: AppColors.textSecondary,
                     ),
                     const SizedBox(width: 6),
                     Text(
@@ -733,7 +719,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: Colors.black87,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ],
@@ -798,21 +784,22 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Widget _buildTaskSummaryCard() {
+    final Color onHero = AppColors.onPrimary;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: AppColors.primary.withValues(alpha: 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -825,28 +812,27 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               Expanded(
                 child: Text(
                   task.taskTitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                  style: AppTextStyles.headingMedium.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: onHero,
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.18),
-                  borderRadius: BorderRadius.circular(20),
+                  color: onHero.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
                   border: Border.all(
-                    color: Colors.white.withOpacity(0.35),
+                    color: onHero.withValues(alpha: 0.25),
                   ),
                 ),
                 child: Text(
                   _statusLabel(task.status),
-                  style: TextStyle(
-                    fontSize: 11,
+                  style: AppTextStyles.caption.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                    color: onHero,
                   ),
                 ),
               ),
@@ -855,7 +841,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           const SizedBox(height: 6),
           Text(
             'Task #${task.taskId}',
-            style: TextStyle(fontSize: 12, color: Colors.white.withOpacity(0.9)),
+            style: AppTextStyles.bodySmall.copyWith(color: onHero.withValues(alpha: 0.8)),
           ),
           if (task.description.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -869,10 +855,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     : task.description;
                 return Text(
                   descText,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withOpacity(0.9),
-                    height: 1.4,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: onHero.withValues(alpha: 0.85),
                   ),
                 );
               },
@@ -897,11 +881,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         width: double.infinity,
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFECEEF1)),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -909,7 +894,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         ),
         child: Text(
           _customerError!,
-          style: TextStyle(color: Colors.grey.shade700),
+          style: TextStyle(color: AppColors.textSecondary),
         ),
       );
     }
@@ -925,11 +910,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -940,24 +926,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         children: [
           Text(
             'Customer Information',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 12),
           Row(
             children: [
               CircleAvatar(
-                radius: 24,
-                backgroundColor: AppColors.secondary,
+                radius: 22,
+                backgroundColor: AppColors.indigoBg,
                 child: Text(
                   initial,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+                  style: AppTextStyles.headingSmall.copyWith(
+                    color: AppColors.indigo,
                   ),
                 ),
               ),
@@ -968,12 +948,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   children: [
                     Text(
                       _customer!.customerName,
-                      style: TextStyle(
-                        fontSize: 12,
+                      style: AppTextStyles.bodyLarge.copyWith(
                         fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
                       ),
                     ),
+                    const SizedBox(height: 2),
                     Text(
                       _customer!.address.isNotEmpty
                           ? '${_customer!.address}, ${_customer!.city} ${_customer!.pincode}'
@@ -981,7 +960,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           : '${_customer!.city} ${_customer!.pincode}'.trim(),
                       style: TextStyle(
                         fontSize: 13,
-                        color: Colors.grey.shade600,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -996,10 +975,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               onTap: _onCallCustomer,
               child: Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.phone_rounded,
                     size: 20,
-                    color: Colors.red.shade400,
+                    color: AppColors.success,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -1026,13 +1005,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 Icon(
                   Icons.email_rounded,
                   size: 20,
-                  color: Colors.grey.shade600,
+                  color: AppColors.textSecondary,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     _customer!.effectiveEmail!,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -1089,11 +1068,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1108,14 +1088,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 Icon(
                   Icons.gps_fixed_rounded,
                   size: 20,
-                  color: Colors.green.shade600,
+                  color: AppColors.success,
                 ),
                 const SizedBox(width: 8),
                 Text(
                   'Source:',
                   style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
                     color: AppColors.textPrimary,
                   ),
                 ),
@@ -1126,7 +1106,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               parsed.source!,
               style: TextStyle(
                 fontSize: 13,
-                color: Colors.grey.shade800,
+                color: AppColors.textPrimary,
                 height: 1.4,
               ),
             ),
@@ -1137,14 +1117,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               Icon(
                 Icons.location_on_rounded,
                 size: 20,
-                color: Colors.pink.shade400,
+                color: AppColors.error,
               ),
               const SizedBox(width: 8),
               Text(
                 'Destination:',
                 style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
                 ),
               ),
@@ -1156,8 +1136,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 ? parsed.destination!
                 : address,
             style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade800,
+              fontSize: 13,
+              color: AppColors.textPrimary,
               height: 1.4,
             ),
           ),
@@ -1165,7 +1145,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             const SizedBox(height: 8),
             Text(
               '${_distanceKm!.toStringAsFixed(1)} km away',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
           ],
         ],
@@ -1186,21 +1166,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       children: [
         Text(
           'Task Requirements',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
+          style: AppTextStyles.headingSmall,
         ),
         const SizedBox(height: 10),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
-            if (task.isOtpRequired) _chip('✓ OTP Required', Colors.green),
+            if (task.isOtpRequired) _chip('✓ OTP Required', AppColors.success),
             if (task.isGeoFenceRequired)
               _chip('📍 Geo-Fence (500m)', Colors.purple),
-            if (task.isPhotoRequired) _chip('📷 Photo Required', AppColors.brand),
+            if (task.isPhotoRequired) _chip('📷 Photo Required', AppColors.warning),
             if (task.isFormRequired) _chip('📝 Fill Form', Colors.teal),
           ],
         ),
@@ -1212,15 +1188,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.5)),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Text(
         label,
         style: TextStyle(
           fontSize: 12,
-          fontWeight: FontWeight.w500,
+          fontWeight: FontWeight.w600,
           color: color,
         ),
       ),
@@ -1233,11 +1209,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1248,11 +1225,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         children: [
           Text(
             'Dates',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 10),
           if (task.assignedDate != null) ...[
@@ -1261,7 +1234,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 Icon(
                   Icons.assignment_rounded,
                   size: 20,
-                  color: Colors.grey.shade600,
+                  color: AppColors.textSecondary,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1272,14 +1245,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         'Assigned date',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade600,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                       Text(
                         DateDisplayUtil.formatFull(task.assignedDate!),
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade800,
+                          color: AppColors.textPrimary,
                         ),
                       ),
                     ],
@@ -1295,7 +1268,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 Icon(
                   Icons.event_rounded,
                   size: 20,
-                  color: Colors.grey.shade600,
+                  color: AppColors.textSecondary,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1306,14 +1279,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         'Expected completion',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade600,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                       Text(
                         DateDisplayUtil.formatFull(task.expectedCompletionDate),
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade800,
+                          color: AppColors.textPrimary,
                         ),
                       ),
                     ],
@@ -1328,7 +1301,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 Icon(
                   Icons.check_circle_rounded,
                   size: 20,
-                  color: AppColors.primary,
+                  color: AppColors.success,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1339,14 +1312,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         'Completed on',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade600,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                       Text(
                         DateDisplayUtil.formatFull(task.completedDate!),
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.grey.shade800,
+                          color: AppColors.textPrimary,
                         ),
                       ),
                     ],
@@ -1371,7 +1344,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           Icon(
             verified ? Icons.verified_rounded : Icons.pending_rounded,
             size: 20,
-            color: verified ? AppColors.primary : AppColors.brandDark,
+            color: verified ? AppColors.success : AppColors.warning,
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -1385,7 +1358,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
+                        color: AppColors.success,
                       ),
                     ),
                 ],
@@ -1485,7 +1458,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           title: 'Task Started',
           subtitle: 'Started journey',
           icon: Icons.play_circle_filled_rounded,
-          iconColor: AppColors.secondary,
+          iconColor: AppColors.info,
         ),
       );
     }
@@ -1501,7 +1474,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           title: 'Travel (${_formatDuration(duration)})',
           subtitle: distanceText,
           icon: Icons.route_rounded,
-          iconColor: AppColors.secondary,
+          iconColor: AppColors.info,
         ),
       );
     }
@@ -1515,7 +1488,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ? task.arrivalLocation!.displayAddress!
               : 'Destination reached',
           icon: Icons.location_on_rounded,
-          iconColor: Colors.pink.shade400,
+          iconColor: AppColors.error,
         ),
       );
     }
@@ -1527,7 +1500,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           title: 'Form Submitted',
           subtitle: 'Customer details captured',
           icon: Icons.description_rounded,
-          iconColor: Colors.brown.shade400,
+          iconColor: AppColors.warning,
         ),
       );
     }
@@ -1539,7 +1512,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           title: 'OTP Verified',
           subtitle: 'Customer confirmed',
           icon: Icons.verified_user_rounded,
-          iconColor: AppColors.secondary,
+          iconColor: AppColors.info,
         ),
       );
     }
@@ -1553,7 +1526,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ? 'Awaiting admin approval'
               : '',
           icon: Icons.check_circle_rounded,
-          iconColor: AppColors.primary,
+          iconColor: AppColors.success,
         ),
       );
     }
@@ -1567,7 +1540,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               ? exit.exitReason
               : (exit.address ?? 'Trip paused'),
           icon: Icons.pause_circle_filled_rounded,
-          iconColor: AppColors.brandDark,
+          iconColor: AppColors.warning,
         ),
       );
     }
@@ -1584,21 +1557,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       children: [
         Text(
           'Track Details',
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: Colors.grey.shade800,
-          ),
+          style: AppTextStyles.headingSmall,
         ),
         const SizedBox(height: 12),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: AppColors.surface,
             borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFECEEF1)),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.06),
+                color: Colors.black.withValues(alpha: 0.06),
                 blurRadius: 12,
                 offset: const Offset(0, 4),
               ),
@@ -1616,9 +1586,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       decoration: BoxDecoration(
                         color: events[i].iconColor,
                         shape: BoxShape.circle,
+                        border: Border.all(color: AppColors.surface, width: 2),
                         boxShadow: [
                           BoxShadow(
-                            color: events[i].iconColor.withOpacity(0.4),
+                            color: events[i].iconColor.withValues(alpha: 0.4),
                             blurRadius: 4,
                             offset: const Offset(0, 1),
                           ),
@@ -1629,7 +1600,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       Container(
                         width: 2,
                         height: 56,
-                        color: Colors.grey.shade300,
+                        color: AppColors.divider,
                       ),
                   ],
                 ],
@@ -1644,12 +1615,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.white,
+                          color: AppColors.background,
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.grey.shade200),
+                          border: Border.all(color: const Color(0xFFECEEF1)),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withOpacity(0.04),
+                              color: Colors.black.withValues(alpha: 0.04),
                               blurRadius: 6,
                               offset: const Offset(0, 2),
                             ),
@@ -1660,7 +1631,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           children: [
                             Icon(
                               events[i].icon,
-                              size: 22,
+                              size: 20,
                               color: events[i].iconColor,
                             ),
                             const SizedBox(width: 12),
@@ -1672,7 +1643,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                     DateDisplayUtil.formatTime(events[i].time),
                                     style: TextStyle(
                                       fontSize: 12,
-                                      color: Colors.grey.shade600,
+                                      color: AppColors.textSecondary,
                                     ),
                                   ),
                                   const SizedBox(height: 4),
@@ -1680,8 +1651,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                     events[i].title,
                                     style: TextStyle(
                                       fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey.shade800,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textPrimary,
                                     ),
                                   ),
                                   if (events[i].subtitle.isNotEmpty) ...[
@@ -1690,7 +1661,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                                       events[i].subtitle,
                                       style: TextStyle(
                                         fontSize: 13,
-                                        color: Colors.grey.shade600,
+                                        color: AppColors.textSecondary,
                                       ),
                                     ),
                                   ],
@@ -1723,11 +1694,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1738,11 +1710,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         children: [
           Text(
             'Task Summary',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
-            ),
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 16),
           if (task.startTime != null) ...[
@@ -1853,7 +1821,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           Flexible(
             child: Text(
               label,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+              style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
             ),
           ),
           const SizedBox(width: 8),
@@ -1864,7 +1832,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade800,
+                color: AppColors.textPrimary,
               ),
             ),
           ),
@@ -1881,20 +1849,20 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+            style: TextStyle(fontSize: 14, color: AppColors.textSecondary),
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               if (done)
-                Icon(Icons.check_rounded, size: 18, color: AppColors.primary),
+                const Icon(Icons.check_rounded, size: 18, color: AppColors.success),
               if (done) const SizedBox(width: 4),
               Text(
                 value ?? (done ? 'Yes' : 'No'),
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
-                  color: done ? AppColors.primary : Colors.grey.shade600,
+                  color: done ? AppColors.success : AppColors.textSecondary,
                 ),
               ),
             ],
@@ -1905,7 +1873,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   Widget _summaryDivider() {
-    return Divider(height: 1, color: Colors.grey.shade200);
+    return const Divider(height: 1);
   }
 
   Widget _buildExitRestartHistoryCard() {
@@ -1914,14 +1882,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (exits.isEmpty && restarts.isEmpty) return const SizedBox.shrink();
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        color: AppColors.surface,
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 16,
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
@@ -1932,16 +1901,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           Row(
             children: [
               Container(
-                width: 36,
-                height: 36,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: AppColors.brandLight,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   Icons.history_rounded,
                   size: 20,
-                  color: AppColors.brandDark,
+                  color: AppColors.warning,
                 ),
               ),
               const SizedBox(width: 12),
@@ -1952,16 +1921,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     Text(
                       'Exit & Restart History',
                       style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                     Text(
                       'Past exits and restarts for this task',
                       style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
+                        fontSize: 12,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -1991,7 +1960,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 e.value.address,
                 e.value.pincode,
                 Icons.exit_to_app_rounded,
-                AppColors.brand,
+                AppColors.warning,
               ),
             ),
           ],
@@ -2005,7 +1974,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 e.value.address,
                 e.value.pincode,
                 Icons.replay_rounded,
-                Colors.green,
+                AppColors.success,
               ),
             ),
           ],
@@ -2025,16 +1994,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             child: Text(
               '$label:',
               style: TextStyle(
-                fontSize: 10,
+                fontSize: 11,
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade700,
+                color: AppColors.textSecondary,
               ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: TextStyle(fontSize: 11, color: Colors.black),
+              style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
@@ -2056,21 +2025,21 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: color.withOpacity(0.06),
+          color: color.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: color.withOpacity(0.2)),
+          border: Border.all(color: color.withValues(alpha: 0.2)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              width: 32,
-              height: 32,
+              width: 36,
+              height: 36,
               decoration: BoxDecoration(
-                color: color.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
               ),
               child: Icon(icon, size: 18, color: color),
             ),
@@ -2082,9 +2051,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   Text(
                     type,
                     style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                   if (date != null)
@@ -2112,11 +2081,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -2127,11 +2097,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         children: [
           Text(
             'Task settings',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingSmall,
           ),
           const SizedBox(height: 10),
           _settingsRow('OTP verification required', task.isOtpRequired),
@@ -2153,14 +2119,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
         ),
         Text(
           value ? 'Yes' : 'No',
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w600,
-            color: value ? AppColors.primary : Colors.grey.shade600,
+            color: value ? AppColors.success : AppColors.textSecondary,
           ),
         ),
       ],
@@ -2172,17 +2138,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       width: double.infinity,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.secondary.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.secondary.withOpacity(0.2)),
+        color: AppColors.infoBg.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.info.withValues(alpha: 0.2)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
+          const Icon(
             Icons.info_outline_rounded,
-            color: AppColors.secondary,
-            size: 22,
+            color: AppColors.info,
+            size: 20,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2191,19 +2157,16 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               children: [
                 Text(
                   'Ready to Start?',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.secondary,
+                  style: AppTextStyles.label.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.info,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   'Your location will be tracked during this task. Ensure GPS is enabled.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: AppColors.secondary.withOpacity(0.9),
-                    height: 1.4,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textPrimary,
                   ),
                 ),
               ],
@@ -2490,43 +2453,26 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   Widget _buildBottomButtons() {
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
       ),
       child: SafeArea(
         child: widget.fromRideScreen
             ? SizedBox(
                 width: double.infinity,
+                height: 52,
                 child: ElevatedButton.icon(
                   onPressed: () => Navigator.of(context).pop(),
                   icon: const Icon(
                     Icons.arrow_back_rounded,
-                    color: Colors.white,
                     size: 20,
                   ),
-                  label: Text(
-                    'Back to Ride',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
+                  label: const Text('Back to Ride'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.success,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 2,
+                    foregroundColor: Colors.white,
                   ),
                 ),
               )
@@ -2536,23 +2482,23 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   if (_showStartRideButton || _showResumeAfterExitButton)
                     SizedBox(
                       width: double.infinity,
+                      height: 52,
                       child: ElevatedButton.icon(
                         onPressed: _actionLoading ? null : _onStartRide,
                         icon: _actionLoading
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: AppColors.onPrimary,
                                 ),
                               )
                             : Icon(
                                 _showResumeAfterExitButton
                                     ? Icons.play_arrow_rounded
                                     : Icons.directions_car_rounded,
-                                color: Colors.white,
-                                size: 24,
+                                size: 20,
                               ),
                         label: Text(
                           _actionLoading
@@ -2560,56 +2506,30 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                               : (_showResumeAfterExitButton
                                     ? 'Resume Ride'
                                     : 'Start Ride'),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 2,
                         ),
                       ),
                     ),
                   if (_showResumeRideButton)
                     SizedBox(
                       width: double.infinity,
+                      height: 52,
                       child: ElevatedButton.icon(
                         onPressed: _actionLoading ? null : _onResumeRide,
                         icon: _actionLoading
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: AppColors.onPrimary,
                                 ),
                               )
                             : const Icon(
                                 Icons.play_arrow_rounded,
-                                color: Colors.white,
-                                size: 24,
+                                size: 20,
                               ),
                         label: Text(
                           _actionLoading ? 'Resuming...' : 'Resume Ride',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          elevation: 2,
                         ),
                       ),
                     ),
@@ -2622,7 +2542,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 13,
-                          color: Colors.grey.shade700,
+                          color: AppColors.textSecondary,
                           height: 1.3,
                         ),
                       ),
@@ -2634,18 +2554,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       margin: const EdgeInsets.only(bottom: 12),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: AppColors.brandLight,
+                        color: AppColors.warningBg,
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(color: AppColors.brandBorder),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.hourglass_top_rounded, size: 18, color: AppColors.brandDark),
+                          const Icon(Icons.hourglass_top_rounded, size: 18, color: AppColors.warning),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
                               'Waiting for admin approval. You can start this task once it is approved.',
-                              style: TextStyle(fontSize: 12.5, color: AppColors.brandDark, fontWeight: FontWeight.w600),
+                              style: AppTextStyles.bodySmall.copyWith(color: AppColors.warning, fontWeight: FontWeight.w600),
                             ),
                           ),
                         ],
@@ -2657,18 +2577,14 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     Row(
                       children: [
                         Expanded(
-                          child: OutlinedButton(
-                            onPressed: _actionLoading
-                                ? null
-                                : () => Navigator.of(context).pop(),
-                            style: OutlinedButton.styleFrom(
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              side: BorderSide(color: Colors.grey.shade400),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                          child: SizedBox(
+                            height: 52,
+                            child: OutlinedButton(
+                              onPressed: _actionLoading
+                                  ? null
+                                  : () => Navigator.of(context).pop(),
+                              child: const Text('Back'),
                             ),
-                            child: Text('Back'),
                           ),
                         ),
                       ],

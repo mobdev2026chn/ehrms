@@ -15,31 +15,34 @@ class LoanEmiScheduleScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('EMI Schedule', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('EMI Schedule'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
         children: [
-          if (loans.isEmpty)
+          if (loans.isEmpty) ...[
+            const SizedBox(height: 16),
             const LoanCard(
-              child: Center(child: Text('No active loans.', style: TextStyle(color: AppColors.textSecondary))),
+              padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+              child: LoanEmptyState(Icons.event_note_outlined, 'No active loans.'),
             ),
+          ],
           for (final l in loans) ...[
             LoanSectionTitle('${l.isAdvance ? 'Salary Advance' : l.loanType} · ${l.loanNo}'),
             LoanCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: [
-                    Expanded(child: LoanStat('EMI', loanMoney(l.emiAmount))),
-                    Expanded(child: LoanStat('Paid', '${l.paidEmis} / ${l.tenure}')),
-                    Expanded(child: LoanStat('Outstanding', loanMoney(l.outstanding))),
-                  ]),
-                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
+                    child: Row(children: [
+                      Expanded(child: LoanStat('EMI', loanMoney(l.emiAmount))),
+                      Expanded(child: LoanStat('Paid', '${l.paidEmis} / ${l.tenure}')),
+                      Expanded(child: LoanStat('Outstanding', loanMoney(l.outstanding))),
+                    ]),
+                  ),
+                  const SizedBox(height: 4),
                   LoanScheduleList(l.schedule),
                 ],
               ),

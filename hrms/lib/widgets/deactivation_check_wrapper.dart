@@ -1,10 +1,14 @@
 // When app is open and user is logged in, check every 5s if staff is still active.
 // If deactivated, logout silently (no notification) and navigate to login.
+// The same poll also notices when the account signed in on another phone (the backend
+// then answers SESSION_REPLACED) and signs this phone out with a message.
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../bloc/auth/auth_bloc.dart';
+import '../core/network/dio_client.dart' show onSessionReplaced;
+import 'app_drawer.dart';
 import '../screens/auth/login_screen.dart';
 import '../services/auth_service.dart';
 import '../services/fcm_service.dart';
@@ -35,15 +39,56 @@ class _DeactivationCheckWrapperState extends State<DeactivationCheckWrapper> wit
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    onSessionReplaced = _signOutReplacedSession;
     _scheduleNextCheck();
     unawaited(_handleResumeForLoggedInUser());
   }
 
   @override
   void dispose() {
+    if (onSessionReplaced == _signOutReplacedSession) onSessionReplaced = null;
     WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// The account signed in on another phone (only one mobile session is allowed):
+  /// stop this phone's tracking, sign out, go to login and say why.
+  Future<void> _signOutReplacedSession(String message) async {
+    // Stops the token==null branch of [_checkActive] racing us to the login screen.
+    _hadLoggedInSession = false;
+    _timer?.cancel();
+    _timer = null;
+    AppDrawer.resetMenuMemory();
+    try {
+      await AuthService().logout();
+    } catch (e) {
+      debugPrint('[DeactivationCheckWrapper] logout after session replaced failed: $e');
+    }
+    if (!mounted) return;
+    context.read<AuthBloc>().add(const AuthLogoutRequested());
+    final nav = widget.navigatorKey.currentState;
+    if (nav == null) return;
+    nav.pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (_) => false,
+    );
+    final dialogContext = widget.navigatorKey.currentContext;
+    if (dialogContext == null || !dialogContext.mounted) return;
+    await showDialog<void>(
+      context: dialogContext,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.devices_other_rounded, size: 36),
+        title: const Text('Signed in on another device'),
+        content: Text(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

@@ -3,6 +3,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:hrms/widgets/oriented_image.dart';
@@ -160,70 +162,80 @@ class _FormFillScreenState extends State<FormFillScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(false),
         ),
-        title: Text(
-          _templateName,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-        elevation: 0,
+        title: Text(_templateName),
       ),
       body: Column(
         children: [
           Expanded(
             child: SingleChildScrollView(
               padding: EdgeInsets.fromLTRB(
-                24,
                 20,
-                24,
+                20,
+                20,
                 20 + MediaQuery.of(context).viewInsets.bottom + 48,
               ),
               keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-              child: Column(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 640),
+                  child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
                     'Fill in the required information for this form',
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
-                  const SizedBox(height: 24),
-                  ..._fields.map((field) => _buildField(field)),
+                  const SizedBox(height: 20),
+                  AppCard(
+                    padding: const EdgeInsets.fromLTRB(16, 20, 16, 4),
+                    border: Border.all(color: const Color(0xFFECEEF1)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ..._fields.map((field) => _buildField(field)),
+                      ],
+                    ),
+                  ),
                   if (_formErrors['_'] != null) ...[
                     const SizedBox(height: 16),
-                    Text(
-                      _formErrors['_']!,
-                      style: const TextStyle(
-                        color: AppColors.error,
-                        fontSize: 14,
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.errorBg,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        _formErrors['_']!,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.error,
+                        ),
                       ),
                     ),
                   ],
                   const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,
-                    height: 55,
+                    height: 52,
                     child: ElevatedButton(
                       onPressed: _submitting ? null : _submit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.secondary,
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
                       child: _submitting
-                          ? const SizedBox(
+                          ? SizedBox(
                               height: 24,
                               width: 24,
                               child: CircularProgressIndicator(
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
                                 strokeWidth: 2,
                               ),
                             )
@@ -232,6 +244,8 @@ class _FormFillScreenState extends State<FormFillScreen> {
                   ),
                   const SizedBox(height: 30),
                 ],
+              ),
+                ),
               ),
             ),
           ),
@@ -279,24 +293,7 @@ class _FormFillScreenState extends State<FormFillScreen> {
     return InputDecoration(
       labelText: label,
       errorText: errorText,
-      prefixIcon: Icon(icon, size: 22, color: AppColors.primary),
-      labelStyle: const TextStyle(color: Colors.black),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: BorderSide(color: AppColors.primary, width: 2),
-      ),
-      errorBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
-        borderSide: const BorderSide(color: AppColors.error),
-      ),
+      prefixIcon: Icon(icon, size: 20),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
     );
   }
@@ -414,10 +411,10 @@ class _FormFillScreenState extends State<FormFillScreen> {
                     ),
                     child: Text(
                       value?.toString() ?? 'Select date',
-                      style: TextStyle(
+                      style: AppTextStyles.bodyMedium.copyWith(
                         color: value != null
-                            ? Colors.grey.shade800
-                            : Colors.grey.shade500,
+                            ? AppColors.textPrimary
+                            : AppColors.textCaption,
                       ),
                     ),
                   ),
@@ -445,7 +442,7 @@ class _FormFillScreenState extends State<FormFillScreen> {
                   children: [
                     InkWell(
                       onTap: () => _pickImage(name, cameraOnly),
-                      borderRadius: BorderRadius.circular(16),
+                      borderRadius: BorderRadius.circular(12),
                       child: InputDecorator(
                         decoration: _buildProfileStyleDecoration(
                           label: label,
@@ -458,10 +455,10 @@ class _FormFillScreenState extends State<FormFillScreen> {
                               value != null
                                   ? 'Image selected'
                                   : 'Tap to add image',
-                              style: TextStyle(
+                              style: AppTextStyles.bodyMedium.copyWith(
                                 color: value != null
-                                    ? Colors.grey.shade800
-                                    : Colors.grey.shade500,
+                                    ? AppColors.textPrimary
+                                    : AppColors.textCaption,
                               ),
                             ),
                           ],
@@ -472,7 +469,7 @@ class _FormFillScreenState extends State<FormFillScreen> {
                         value.toString().startsWith('data:')) ...[
                       const SizedBox(height: 8),
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
+                        borderRadius: BorderRadius.circular(12),
                         child: OrientedImage.memory(
                           base64Decode(value.toString().split(',').last),
                           height: 120,

@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../config/app_text_styles.dart';
 import '../services/api_client.dart';
 
 class CustomFieldDef {
@@ -135,10 +136,10 @@ class CustomFieldsFormState extends State<CustomFieldsForm> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Padding(
-          padding: EdgeInsets.only(top: 4, bottom: 8),
+          padding: EdgeInsets.only(top: 4, bottom: 12),
           child: Text(
             'Additional Details',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+            style: AppTextStyles.headingSmall,
           ),
         ),
         for (final d in _defs)
@@ -163,15 +164,9 @@ class CustomFieldsFormState extends State<CustomFieldsForm> {
   InputDecoration _decoration(CustomFieldDef d) => InputDecoration(
         labelText: d.required ? '${d.label} *' : d.label,
         hintText: d.type == 'date' ? 'Select date' : null,
-        suffixIcon: d.type == 'date' ? const Icon(Icons.calendar_today_rounded, size: 18) : null,
+        // Fill, radius and borders come from the app InputDecorationTheme.
+        suffixIcon: d.type == 'date' ? const Icon(Icons.calendar_today_outlined, size: 20) : null,
         isDense: true,
-        filled: true,
-        fillColor: Colors.white,
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-        ),
       );
 
   /// A dropdown field: the user must pick one of the backend's options (it rejects

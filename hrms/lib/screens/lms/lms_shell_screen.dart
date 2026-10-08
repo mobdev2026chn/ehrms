@@ -28,13 +28,7 @@ class LmsShellScreen extends StatelessWidget {
         backgroundColor: AppColors.background,
         appBar: AppBar(
           leading: const MenuIconButton(),
-          title: const Text(
-            'My Learning',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
-          elevation: 0,
+          title: const Text('My Learning'),
         ),
         drawer: const AppDrawer(),
         body: LmsDashboardScreen(

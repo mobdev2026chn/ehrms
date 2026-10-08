@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../services/admin_approvals_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
+import 'approval_shared_widgets.dart';
 
 class AdminPayslipRequestRecord {
   final String id;
@@ -18,6 +20,8 @@ class AdminPayslipRequestRecord {
   final String requestDate;
   final String approvedBy;
   final String remarks;
+  final bool payrollGenerated;
+  final bool payrollPaid;
 
   AdminPayslipRequestRecord({
     required this.id,
@@ -30,6 +34,8 @@ class AdminPayslipRequestRecord {
     required this.requestDate,
     this.approvedBy = '—',
     this.remarks = '—',
+    this.payrollGenerated = false,
+    this.payrollPaid = false,
   });
 
   String get initials {
@@ -38,22 +44,21 @@ class AdminPayslipRequestRecord {
     return name.isNotEmpty ? name[0].toUpperCase() : 'U';
   }
 
+  /// One row of GET /admin/approvals/payslip (`data.requests[]`).
   factory AdminPayslipRequestRecord.fromJson(Map<String, dynamic> json) {
-    final staffObj = json['staffId'] is Map ? json['staffId'] : json;
-
     return AdminPayslipRequestRecord(
-      id: (json['_id'] ?? json['id'] ?? '').toString(),
-      name: (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString().isNotEmpty
-          ? (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString()
-          : (json['name'] ?? 'saranya V').toString(),
-      employeeId: (staffObj['employeeId'] ?? json['employeeId'] ?? 'EMP-008').toString(),
-      department: (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? json['department'] ?? 'Staff')).toString(),
-      targetMonth: (json['targetMonth'] ?? json['monthYear'] ?? 'August 2026').toString(),
-      purpose: (json['purpose'] ?? json['reason'] ?? 'Issued automatically when payroll was approved.').toString(),
-      status: (json['status'] ?? 'Approved').toString(),
-      requestDate: (json['requestDate'] ?? json['date'] ?? 'Aug 29, 2026').toString(),
+      id: (json['id'] ?? json['_id'] ?? '').toString(),
+      name: (json['name'] ?? 'Staff Member').toString(),
+      employeeId: (json['employeeId'] ?? '—').toString(),
+      department: (json['role'] ?? json['department'] ?? '—').toString(),
+      targetMonth: (json['targetMonth'] ?? '—').toString(),
+      purpose: (json['purpose'] ?? '—').toString(),
+      status: (json['status'] ?? 'Pending').toString(),
+      requestDate: (json['requestDate'] ?? '').toString(),
       approvedBy: (json['approvedBy'] ?? '—').toString(),
-      remarks: (json['remarks'] ?? '—').toString(),
+      remarks: (json['remarks'] ?? '').toString().isEmpty ? '—' : json['remarks'].toString(),
+      payrollGenerated: json['payrollGenerated'] == true,
+      payrollPaid: json['payrollPaid'] == true,
     );
   }
 }
@@ -67,7 +72,8 @@ class AdminPayslipApprovalsScreen extends StatefulWidget {
 
 class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final ApiClient _api = ApiClient();
+  final AdminApprovalsService _service = AdminApprovalsService();
+  String? _loadError;
 
   bool _isLoading = true;
   String _searchQuery = '';
@@ -85,207 +91,77 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
   }
 
   Future<void> _loadData({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
-    try {
-      final res = await _api.request(
-        '/admin/staff/approvals/payslip',
-        queryParameters: {
-          'search': _searchQuery.isNotEmpty ? _searchQuery : null,
-          'status': _statusFilter != 'All Statuses' ? _statusFilter : null,
-          'startDate': _startDateFilter.isNotEmpty ? _startDateFilter : null,
-          'endDate': _endDateFilter.isNotEmpty ? _endDateFilter : null,
-          'sort': _sortOrder.startsWith('Newest') ? 'Newest' : 'Oldest',
-        },
-      );
-
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data']?['requests'] as List?) ?? (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _records = list.map((e) => AdminPayslipRequestRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRecords();
-        }
-      } else {
-        _setMockRecords();
-      }
-    } catch (_) {
-      _setMockRecords();
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
     }
 
-    if (showLoader && mounted) setState(() => _isLoading = false);
-  }
-
-  void _setMockRecords() {
-    _records = [
-      AdminPayslipRequestRecord(
-        id: 'ps_1',
-        name: 'saranya V',
-        employeeId: 'EMP-008',
-        department: 'Operations',
-        targetMonth: 'August 2026',
-        purpose: 'Issued automatically when payroll was approved.',
-        status: 'Approved',
-        requestDate: 'Aug 29, 2026',
-        approvedBy: 'toshiba',
-        remarks: 'Payroll approved - payslip released without a staff request.',
-      ),
-      AdminPayslipRequestRecord(
-        id: 'ps_2',
-        name: 'personal notouch',
-        employeeId: 'EMP-007',
-        department: 'Engineering',
-        targetMonth: 'February 2026',
-        purpose: 'sd',
-        status: 'Pending',
-        requestDate: 'Aug 28, 2026',
-        approvedBy: '—',
-        remarks: '—',
-      ),
-      AdminPayslipRequestRecord(
-        id: 'ps_3',
-        name: 'personal notouch',
-        employeeId: 'EMP-007',
-        department: 'Engineering',
-        targetMonth: 'January 2026',
-        purpose: 'sd',
-        status: 'Pending',
-        requestDate: 'Aug 28, 2026',
-        approvedBy: '—',
-        remarks: '—',
-      ),
-      AdminPayslipRequestRecord(
-        id: 'ps_4',
-        name: 'personal notouch',
-        employeeId: 'EMP-007',
-        department: 'Engineering',
-        targetMonth: 'August 2026',
-        purpose: 'asd',
-        status: 'Cancelled',
-        requestDate: 'Aug 28, 2026',
-        approvedBy: 'Admin',
-        remarks: '—',
-      ),
-      AdminPayslipRequestRecord(
-        id: 'ps_5',
-        name: 'personal notouch',
-        employeeId: 'EMP-007',
-        department: 'Engineering',
-        targetMonth: 'August 2026',
-        purpose: 'Issued automatically when payroll was approved.',
-        status: 'Approved',
-        requestDate: 'Aug 28, 2026',
-        approvedBy: 'toshiba',
-        remarks: 'Payroll approved - payslip released without a staff request.',
-      ),
-      AdminPayslipRequestRecord(
-        id: 'ps_6',
-        name: 'hp hai th',
-        employeeId: 'EMP-006',
-        department: 'IT',
-        targetMonth: 'August 2026',
-        purpose: 'dd',
-        status: 'Pending',
-        requestDate: 'Aug 24, 2026',
-        approvedBy: '—',
-        remarks: '—',
-      ),
-    ];
+    try {
+      final page = await _service.getPayslipRequests(
+        status: _statusFilter != 'All Statuses' ? _statusFilter : null,
+        startDate: _startDateFilter.isNotEmpty ? _startDateFilter : null,
+        endDate: _endDateFilter.isNotEmpty ? _endDateFilter : null,
+        sort: _sortOrder.startsWith('Newest') ? 'Newest' : 'Oldest',
+      );
+      if (!mounted) return;
+      setState(() {
+        _records = page.requests.map(AdminPayslipRequestRecord.fromJson).toList();
+        _loadError = null;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final msg = AdminApprovalsService.messageOf(e, fallback: 'Failed to load payslip requests');
+      setState(() {
+        _loadError = msg;
+        _isLoading = false;
+      });
+      if (!showLoader) SnackBarUtils.showSnackBar(context, msg, isError: true);
+    }
   }
 
   List<AdminPayslipRequestRecord> get _filteredRecords {
+    final q = _searchQuery.toLowerCase();
+    if (q.isEmpty) return _records;
     return _records.where((r) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          r.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.employeeId.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.targetMonth.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.purpose.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesStatus = _statusFilter == 'All Statuses' || r.status.toLowerCase() == _statusFilter.toLowerCase();
-
-      return matchesSearch && matchesStatus;
+      return r.name.toLowerCase().contains(q) ||
+          r.employeeId.toLowerCase().contains(q) ||
+          r.targetMonth.toLowerCase().contains(q) ||
+          r.purpose.toLowerCase().contains(q);
     }).toList();
   }
 
-  // ── Action: Reject Payslip Modal ──
-  void _showRejectModal(AdminPayslipRequestRecord r) {
-    final reasonController = TextEditingController();
+  // ── Action: Approve (backend refuses until that month's payroll is generated and paid) ──
+  Future<void> _approve(AdminPayslipRequestRecord r) async {
+    try {
+      final msg = await _service.approvePayslip(r.id, remarks: 'Approved');
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to approve payslip request');
+    }
+  }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.all(20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Reject Payslip Request', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => Navigator.pop(ctx)),
-              ],
-            ),
-            const SizedBox(height: 10),
-
-            Text('Rejecting payslip request for ${r.name} (${r.targetMonth})', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-            const SizedBox(height: 12),
-
-            const Text('REASON FOR REJECTION', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-            const SizedBox(height: 4),
-            TextField(
-              controller: reasonController,
-              maxLines: 2,
-              decoration: InputDecoration(
-                hintText: 'Enter reason...',
-                filled: true,
-                fillColor: const Color(0xFFF8FAFC),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                contentPadding: const EdgeInsets.all(10),
-              ),
-              style: const TextStyle(fontSize: 11),
-            ),
-            const SizedBox(height: 16),
-
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        r.status = 'Rejected';
-                      });
-                      try {
-                        await _api.request(
-                          '/admin/staff/approvals/payslip/${r.id}/reject',
-                          method: 'POST',
-                          data: {'reason': reasonController.text},
-                        );
-                      } catch (_) {}
-                      if (mounted) SnackBarUtils.showSnackBar(context, 'Payslip request rejected');
-                    },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
-                    child: const Text('Reject Request', style: TextStyle(fontWeight: FontWeight.w800)),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
+  // ── Action: Reject ──
+  Future<void> _showRejectModal(AdminPayslipRequestRecord r) async {
+    final reason = await showApprovalReasonDialog(
+      context,
+      title: 'Reject Payslip Request',
+      subtitle: 'Rejecting the payslip request of ${r.name} for ${r.targetMonth}',
+      actionLabel: 'Reject Request',
     );
+    if (reason == null || !mounted) return;
+    try {
+      final msg = await _service.rejectPayslip(r.id, reason: reason, remarks: reason);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to reject payslip request');
+    }
   }
 
   // ── Action: Advanced Filters Slide-Over (Screenshots 3 & 4) ──
@@ -297,38 +173,57 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDrawerState) {
           return Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            child: Column(
+            child: SafeArea(
+              top: false,
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(999)),
+                  ),
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
-                      children: const [
-                        Icon(Icons.filter_alt_outlined, color: Color(0xFFEFAA1F), size: 20),
-                        SizedBox(width: 8),
-                        Text('ADVANCED FILTERS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                          child: Icon(Icons.filter_alt_outlined, color: AppColors.primaryText, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('ADVANCED FILTERS', style: AppTextStyles.headingSmall),
                       ],
                     ),
-                    IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(ctx)),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
 
                 // Request Status (Screenshot 3)
-                const Text('REQUEST STATUS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('REQUEST STATUS', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_statusFilter, ['All Statuses', 'Pending', 'Approved', 'Rejected', 'Cancelled'], (v) {
                   setDrawerState(() => _statusFilter = v);
                   setState(() => _statusFilter = v);
                 }),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Start & End Date (Screenshot 4)
                 Row(
@@ -337,82 +232,62 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('START DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
+                          const Text('START DATE', style: AppTextStyles.sectionLabel),
+                          const SizedBox(height: 8),
                           InkWell(
+                            borderRadius: BorderRadius.circular(12),
                             onTap: () async {
                               final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2024), lastDate: DateTime(2028));
                               if (picked != null) {
-                                final s = DateFormat('MM/dd/yyyy').format(picked);
+                                final s = DateFormat('yyyy-MM-dd').format(picked);
                                 setDrawerState(() => _startDateFilter = s);
                                 setState(() => _startDateFilter = s);
                               }
                             },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(_startDateFilter.isNotEmpty ? _startDateFilter : 'mm/dd/yyyy', style: TextStyle(fontSize: 11, color: _startDateFilter.isNotEmpty ? const Color(0xFF0F172A) : const Color(0xFF94A3B8))),
-                                  const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF64748B)),
-                                ],
-                              ),
-                            ),
+                            child: _dateBox(_startDateFilter),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('END DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
+                          const Text('END DATE', style: AppTextStyles.sectionLabel),
+                          const SizedBox(height: 8),
                           InkWell(
+                            borderRadius: BorderRadius.circular(12),
                             onTap: () async {
                               final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2024), lastDate: DateTime(2028));
                               if (picked != null) {
-                                final s = DateFormat('MM/dd/yyyy').format(picked);
+                                final s = DateFormat('yyyy-MM-dd').format(picked);
                                 setDrawerState(() => _endDateFilter = s);
                                 setState(() => _endDateFilter = s);
                               }
                             },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(_endDateFilter.isNotEmpty ? _endDateFilter : 'mm/dd/yyyy', style: TextStyle(fontSize: 11, color: _endDateFilter.isNotEmpty ? const Color(0xFF0F172A) : const Color(0xFF94A3B8))),
-                                  const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF64748B)),
-                                ],
-                              ),
-                            ),
+                            child: _dateBox(_endDateFilter),
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Sort Order (Screenshot 4)
-                const Text('SORT ORDER', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('SORT ORDER', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_sortOrder, ['Newest First (Descending)', 'Oldest First (Ascending)'], (v) {
                   setDrawerState(() => _sortOrder = v);
                   setState(() => _sortOrder = v);
                 }),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
 
                 Row(
                   children: [
                     Expanded(
-                      child: TextButton(
+                      child: OutlinedButton(
                         onPressed: () {
                           setDrawerState(() {
                             _statusFilter = 'All Statuses';
@@ -427,21 +302,25 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                             _sortOrder = 'Newest First (Descending)';
                           });
                           Navigator.pop(ctx);
+                          _loadData();
                         },
-                        child: const Text('Clear All', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
+                        child: const Text('Clear All'),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                        child: const Text('Apply Filters', style: TextStyle(fontWeight: FontWeight.w800)),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _loadData();
+                        },
+                        child: const Text('Apply Filters'),
                       ),
                     ),
                   ],
                 ),
               ],
+              ),
             ),
           );
         },
@@ -449,16 +328,34 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
     );
   }
 
+  /// Read-only date field look used by the filter sheet.
+  Widget _dateBox(String value) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(value.isNotEmpty ? value : 'yyyy-mm-dd', style: TextStyle(fontSize: 14, color: value.isNotEmpty ? AppColors.textPrimary : AppColors.textCaption)),
+          const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.textSecondary),
+        ],
+      ),
+    );
+  }
+
   Widget _drawerDropdown(String value, List<String> items, Function(String) onChanged) {
     return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: items.contains(value) ? value : items.first,
           isExpanded: true,
-          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)))).toList(),
+          borderRadius: BorderRadius.circular(12),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500)))).toList(),
           onChanged: (v) {
             if (v != null) onChanged(v);
           },
@@ -471,21 +368,16 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          icon: const Icon(Icons.menu_rounded),
+          tooltip: 'Open menu',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Payslip Requests',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Payslip Requests'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
       ),
       body: _isLoading
           ? const Center(child: AppTabLoader())
@@ -498,21 +390,25 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                   // Header Bar: Search & Filter
                   Container(
                     padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+                    decoration: approvalCardDecoration(),
                     child: Row(
                       children: [
                         Expanded(
                           child: Container(
-                            height: 38,
-                            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+                            height: 44,
+                            decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                             child: TextField(
                               onChanged: (v) => setState(() => _searchQuery = v),
+                              style: AppTextStyles.bodyMedium,
                               decoration: const InputDecoration(
                                 hintText: 'Search...',
-                                hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                                prefixIcon: Icon(Icons.search_rounded, size: 16, color: Color(0xFF94A3B8)),
+                                hintStyle: TextStyle(fontSize: 14, color: AppColors.textCaption),
+                                prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.textCaption),
+                                filled: false,
                                 border: InputBorder.none,
-                                contentPadding: EdgeInsets.symmetric(vertical: 9),
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding: EdgeInsets.symmetric(vertical: 12),
                               ),
                             ),
                           ),
@@ -521,37 +417,40 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
 
                         OutlinedButton.icon(
                           onPressed: _showAdvancedFiltersDrawer,
-                          icon: const Icon(Icons.filter_alt_outlined, size: 14),
-                          label: const Text('Filters', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                          icon: const Icon(Icons.filter_alt_outlined, size: 18),
+                          label: const Text('Filters'),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF475569),
-                            side: const BorderSide(color: Color(0xFFE2E8F0)),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            minimumSize: const Size(0, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
 
                   // Subtitle
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('List of Payslip Requests', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text('Showing ${_filteredRecords.length} requests', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                      const Expanded(child: Text('List of Payslip Requests', style: AppTextStyles.headingSmall)),
+                      const SizedBox(width: 8),
+                      Text('Showing ${_filteredRecords.length} requests', style: AppTextStyles.bodySmall),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
 
                   // Records Cards
-                  if (_filteredRecords.isEmpty)
+                  if (_loadError != null)
+                    ApprovalErrorView(message: _loadError!, onRetry: () => _loadData())
+                  else if (_filteredRecords.isEmpty)
                     Container(
-                      padding: const EdgeInsets.all(36),
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                      child: const Text('No payslip requests found', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+                      decoration: approvalCardDecoration(),
+                      child: const ApprovalEmptyView(
+                        icon: Icons.receipt_long_outlined,
+                        title: 'No payslip requests found',
+                      ),
                     )
                   else
                     ..._filteredRecords.map((r) => _buildPayslipCard(r)),
@@ -562,85 +461,54 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
   }
 
   Widget _buildPayslipCard(AdminPayslipRequestRecord r) {
-    final isApproved = r.status == 'Approved';
     final isPending = r.status == 'Pending';
-    final isCancelled = r.status == 'Cancelled';
-    final isRejected = r.status == 'Rejected';
-
-    Color statusBg = isApproved
-        ? const Color(0xFFEFAA1F)
-        : (isPending ? const Color(0xFFF1F5F9) : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFF8FAFC)));
-    Color statusFg = (isApproved || isRejected) ? Colors.white : (isCancelled ? const Color(0xFF64748B) : const Color(0xFF334155));
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-      ),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.fromLTRB(16, 16, isPending ? 8 : 16, 16),
+      decoration: approvalCardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Row 1: Avatar + Name + Month + Status
           Row(
             children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: const Color(0xFFEFF6FF),
-                child: Text(r.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF2563EB))),
-              ),
-              const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(r.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                    Text('${r.employeeId} • ${r.department}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                  ],
+                child: ApprovalCardHeader(
+                  leading: ApprovalAvatar(name: r.name, initials: r.initials),
+                  title: r.name,
+                  subtitle: '${r.employeeId} • ${r.department}',
+                  trailing: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(r.targetMonth, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                      const SizedBox(height: 4),
+                      ApprovalStatusPill(status: r.status, label: r.status),
+                    ],
+                  ),
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(r.targetMonth, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: statusBg,
-                      borderRadius: BorderRadius.circular(10),
-                      border: isCancelled ? Border.all(color: const Color(0xFFCBD5E1)) : null,
-                    ),
-                    child: Text(r.status, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: statusFg)),
-                  ),
-                ],
-              ),
               if (isPending) ...[
-                const SizedBox(width: 4),
                 PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, size: 18, color: Color(0xFF64748B)),
+                  icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.textSecondary),
+                  tooltip: 'More actions',
                   onSelected: (val) {
                     if (val == 'approve') {
-                      setState(() => r.status = 'Approved');
-                      try {
-                        _api.request('/admin/staff/approvals/payslip/${r.id}/approve', method: 'POST', data: {'remarks': 'Approved'});
-                      } catch (_) {}
-                      if (mounted) SnackBarUtils.showSnackBar(context, 'Payslip request approved!');
+                      _approve(r);
                     } else if (val == 'reject') {
                       _showRejectModal(r);
                     }
                   },
                   itemBuilder: (ctx) => [
+                    if (!r.payrollGenerated || !r.payrollPaid)
                     PopupMenuItem(
                       enabled: false,
                       value: 'notice',
                       child: Row(
-                        children: const [
-                          Icon(Icons.warning_amber_rounded, size: 14, color: AppColors.brandDark),
-                          SizedBox(width: 6),
-                          Text('Please generate payroll', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
+                        children: [
+                          const Icon(Icons.warning_amber_rounded, size: 18, color: AppColors.warning),
+                          const SizedBox(width: 8),
+                          Text(!r.payrollGenerated ? 'Please generate payroll' : 'Mark payroll as paid first', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.warning)),
                         ],
                       ),
                     ),
@@ -648,9 +516,9 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                       value: 'approve',
                       child: Row(
                         children: [
-                          Icon(Icons.check_circle_outline_rounded, size: 16, color: Color(0xFF16A34A)),
-                          SizedBox(width: 8),
-                          Text('Approve', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF16A34A))),
+                          Icon(Icons.check_circle_outline_rounded, size: 18, color: AppColors.success),
+                          SizedBox(width: 12),
+                          Text('Approve', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.success)),
                         ],
                       ),
                     ),
@@ -658,9 +526,9 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
                       value: 'reject',
                       child: Row(
                         children: [
-                          Icon(Icons.cancel_outlined, size: 16, color: Color(0xFFDC2626)),
-                          SizedBox(width: 8),
-                          Text('Reject', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
+                          Icon(Icons.cancel_outlined, size: 18, color: AppColors.error),
+                          SizedBox(width: 12),
+                          Text('Reject', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.error)),
                         ],
                       ),
                     ),
@@ -669,34 +537,37 @@ class _AdminPayslipApprovalsScreenState extends State<AdminPayslipApprovalsScree
               ],
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
           // Details Box
           Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+            width: double.infinity,
+            margin: EdgeInsets.only(right: isPending ? 8 : 0),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Purpose: ${r.purpose}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
-                    Text('📅 ${r.requestDate}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
+                    Expanded(child: Text('Purpose: ${r.purpose}', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textPrimary))),
+                    const SizedBox(width: 8),
+                    Text('📅 ${r.requestDate}', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
                   ],
                 ),
                 if (r.approvedBy != '—' || r.remarks != '—') ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       if (r.approvedBy != '—')
-                        Text('Approved By: ${r.approvedBy}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
+                        Text('Approved By: ${r.approvedBy}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primaryText)),
                       if (r.remarks != '—')
                         Expanded(
                           child: Text(
                             'Remarks: ${r.remarks}',
-                            style: const TextStyle(fontSize: 9.5, color: Color(0xFF64748B)),
+                            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
                             textAlign: TextAlign.right,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,

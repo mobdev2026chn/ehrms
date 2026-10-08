@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
 import 'grievance_detail_screen.dart';
@@ -81,14 +82,14 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
       case 'Investigation':
         return AppColors.warning;
       case 'Action Taken':
-        return AppColors.primary;
+        return AppColors.primaryText;
       case 'Escalated':
       case 'Rejected':
         return AppColors.error;
       case 'Closed':
         return AppColors.success;
       default:
-        return Colors.grey;
+        return AppColors.textSecondary;
     }
   }
 
@@ -105,7 +106,7 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
       case 'Low':
         return AppColors.success;
       default:
-        return Colors.grey;
+        return AppColors.textSecondary;
     }
   }
 
@@ -120,13 +121,11 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               TextField(
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Search by ticket, title...',
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
+                  prefixIcon: Icon(Icons.search_rounded, size: 20),
+                  fillColor: AppColors.surface,
+                  contentPadding: EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 12,
                   ),
@@ -189,8 +188,16 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
             _load();
           });
         },
-        selectedColor: AppColors.primary.withOpacity(0.3),
-        checkmarkColor: AppColors.primary,
+        checkmarkColor: AppColors.primaryText,
+        labelStyle: TextStyle(
+          fontSize: 13,
+          fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+          color: selected ? AppColors.primaryText : AppColors.textSecondary,
+        ),
+        backgroundColor: AppColors.surface,
+        side: BorderSide(
+          color: selected ? Colors.transparent : const Color(0xFFE2E5EA),
+        ),
       ),
     );
   }
@@ -202,7 +209,7 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
         children: [
           const AppTabLoader(),
           const SizedBox(height: 16),
-          Text('Loading grievances...', style: TextStyle(color: colorScheme.onSurfaceVariant)),
+          const Text('Loading grievances...', style: AppTextStyles.bodySmall),
         ],
       ),
     );
@@ -215,13 +222,13 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline, size: 48, color: colorScheme.error),
+            _stateIcon(Icons.error_outline_rounded, AppColors.error, AppColors.errorBg),
             const SizedBox(height: 16),
-            Text(_error!, textAlign: TextAlign.center, style: TextStyle(color: colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 16),
+            Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodySmall),
+            const SizedBox(height: 20),
             FilledButton.icon(
               onPressed: _load,
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: const Text('Retry'),
             ),
           ],
@@ -235,20 +242,60 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         SizedBox(
-          height: 200,
+          height: 240,
           child: Center(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.report_problem_outlined, size: 48, color: colorScheme.onSurfaceVariant),
-                const SizedBox(height: 12),
-                Text('No grievances yet', style: TextStyle(fontSize: 16, color: colorScheme.onSurfaceVariant)),
+                _stateIcon(Icons.report_problem_outlined, AppColors.primaryText, AppColors.primary.withValues(alpha: 0.12)),
+                const SizedBox(height: 16),
+                const Text('No grievances yet', style: AppTextStyles.headingSmall),
               ],
             ),
           ),
         ),
       ],
     );
+  }
+
+  Widget _stateIcon(IconData icon, Color fg, Color bg) {
+    return Container(
+      width: 64,
+      height: 64,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
+      child: Icon(icon, size: 30, color: fg),
+    );
+  }
+
+  /// Pill badge (radius 999, h10 v4, 12/w600).
+  Widget _pill(String text, Color fg, Color bg, {Widget? leading}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (leading != null) ...[leading, const SizedBox(width: 6)],
+          Text(
+            text,
+            maxLines: 1,
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Status pill colours: shared [AppColors.statusStyle] where it knows the
+  /// status, otherwise the screen's own grievance status colour.
+  ({Color fg, Color bg}) _statusPillColors(String status) {
+    final s = AppColors.statusStyle(status);
+    if (s.fg != AppColors.textSecondary) return (fg: s.fg, bg: s.bg);
+    final c = _statusColor(status);
+    return (fg: c, bg: c.withValues(alpha: 0.12));
   }
 
   Widget _buildList(ColorScheme colorScheme) {
@@ -299,9 +346,12 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
     }
     final dateStr = date != null ? DateFormat('MMM dd, yyyy').format(date) : '';
 
+    final statusColors = _statusPillColors(status);
+    final priorityColor = _priorityColor(priority);
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () {
           Navigator.of(context).push(
@@ -312,7 +362,7 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
             ),
           ).then((_) => _load());
         },
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -323,46 +373,37 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
                   Expanded(
                     child: Text(
                       ticketId,
-                      style: TextStyle(
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
                         fontFamily: 'monospace',
                         fontWeight: FontWeight.w600,
-                        fontSize: 14,
-                        color: colorScheme.onSurface,
+                        fontSize: 13,
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: _statusColor(status).withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      status,
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _statusColor(status)),
-                    ),
-                  ),
+                  const SizedBox(width: 8),
+                  _pill(status, statusColors.fg, statusColors.bg),
                   if (slaBreached) ...[
                     const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: AppColors.error.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text('SLA', style: TextStyle(fontSize: 10, color: AppColors.error, fontWeight: FontWeight.bold)),
+                    _pill(
+                      'SLA',
+                      AppColors.error,
+                      AppColors.errorBg,
+                      leading: const Icon(Icons.timer_off_outlined, size: 12, color: AppColors.error),
                     ),
                   ],
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               Text(
                 title,
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: colorScheme.onSurface),
+                style: AppTextStyles.headingSmall,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   Expanded(
@@ -371,38 +412,43 @@ class MyGrievancesScreenState extends State<MyGrievancesScreen> {
                         if (category.isNotEmpty)
                           Flexible(
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                               decoration: BoxDecoration(
-                                border: Border.all(color: colorScheme.outline),
-                                borderRadius: BorderRadius.circular(8),
+                                color: AppColors.background,
+                                border: Border.all(color: const Color(0xFFECEEF1)),
+                                borderRadius: BorderRadius.circular(999),
                               ),
-                              child: Text(category, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                              child: Text(category, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary)),
                             ),
                           ),
                         const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _priorityColor(priority).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
+                        _pill(
+                          priority,
+                          AppColors.textPrimary,
+                          priorityColor.withValues(alpha: 0.12),
+                          leading: Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(color: priorityColor, shape: BoxShape.circle),
                           ),
-                          child: Text(priority, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _priorityColor(priority))),
                         ),
                       ],
                     ),
                   ),
                   const SizedBox(width: 8),
                   if (dateStr.isNotEmpty)
-                    Text(dateStr, style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                    Text(dateStr, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
+              const Divider(height: 1),
+              const SizedBox(height: 10),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text('View', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primary)),
-                  const SizedBox(width: 4),
-                  Icon(Icons.chevron_right, size: 20, color: AppColors.primary),
+                  Text('View', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primaryText)),
+                  const SizedBox(width: 2),
+                  Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.primaryText),
                 ],
               ),
             ],

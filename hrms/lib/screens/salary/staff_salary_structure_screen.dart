@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../services/salary_service.dart';
 import '../../utils/mongo_date_parse.dart';
 import '../../utils/salary_ctc_helpers.dart';
@@ -85,7 +87,7 @@ Future<void> _load() async {
         child: AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.lock_outline, color: Colors.red),
+              Icon(Icons.lock_outline_rounded, color: AppColors.error),
               SizedBox(width: 8),
               Text('Access Restricted'),
             ],
@@ -170,12 +172,7 @@ Future<void> _load() async {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text(
-          'Salary Structure',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-        ),
-        centerTitle: true,
-        elevation: 0,
+        title: const Text('Salary Structure'),
       ),
       body: _loading
           ? const Center(child: AppTabLoader())
@@ -186,21 +183,34 @@ Future<void> _load() async {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: const BoxDecoration(
+                        color: AppColors.errorBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.error_outline_rounded,
+                          size: 32, color: AppColors.error),
+                    ),
+                    const SizedBox(height: 16),
                     Text(
                       _error,
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: AppColors.textSecondary),
+                      style: AppTextStyles.bodySmall,
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 24),
                     FilledButton(onPressed: _load, child: const Text('okk')),
                   ],
                 ),
               ),
             )
           : _bundle == null
-          ? const Center(child: Text('No data'))
+          ? const Center(
+              child: Text('No data', style: AppTextStyles.bodySmall))
           : RefreshIndicator(
               onRefresh: _load,
+              color: AppColors.primary,
               child: _buildBody(context, currency, _bundle!),
             ),
     );
@@ -220,7 +230,7 @@ Future<void> _load() async {
     final previewOnHome = historyDesc.take(1).toList();
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       physics: const AlwaysScrollableScrollPhysics(),
       children: [
         if (futureEff != null) ...[
@@ -238,12 +248,13 @@ Future<void> _load() async {
           const SizedBox(height: 12),
         ],
         Material(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          elevation: 1,
-          shadowColor: Colors.black12,
+          color: AppColors.surface,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: Color(0xFFECEEF1)),
+          ),
+          clipBehavior: Clip.antiAlias,
           child: InkWell(
-            borderRadius: BorderRadius.circular(12),
             onTap: () {
               Navigator.of(context).push(
                 MaterialPageRoute<void>(
@@ -256,56 +267,70 @@ Future<void> _load() async {
               );
             },
             child: Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(Icons.account_balance_wallet_outlined,
+                            size: 20, color: AppColors.primaryText),
+                      ),
+                      const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
                           'CTC Details',
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
+                          style: AppTextStyles.headingSmall,
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        color: AppColors.textCaption,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _ctcMini(
+                            'Monthly Gross',
+                            monthlyGross != null
+                                ? currency.format(monthlyGross)
+                                : '—',
                           ),
                         ),
-                      ),
-                      Icon(
-                        Icons.chevron_right,
-                        color: Colors.grey.shade500,
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _ctcMini(
-                          'Monthly Gross',
-                          monthlyGross != null
-                              ? currency.format(monthlyGross)
-                              : '—',
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _ctcMini(
+                            'Yearly Gross',
+                            yearlyGross != null
+                                ? currency.format(yearlyGross)
+                                : '—',
+                          ),
                         ),
-                      ),
-                      Expanded(
-                        child: _ctcMini(
-                          'Yearly Gross',
-                          yearlyGross != null
-                              ? currency.format(yearlyGross)
-                              : '—',
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                   if (monthlyCtc != null && yearlyCtc != null) ...[
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     Text(
                       'Full CTC (incl. benefits): ${currency.format(monthlyCtc)} / mo · ${currency.format(yearlyCtc)} / yr',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.grey.shade600,
-                        height: 1.25,
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -314,20 +339,39 @@ Future<void> _load() async {
             ),
           ),
         ),
-        const SizedBox(height: 20),
-        Text(
-          'Salary Revision Details',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: AppColors.textPrimary,
+        const SizedBox(height: 24),
+        const Padding(
+          padding: EdgeInsets.only(left: 4),
+          child: Text(
+            'Salary Revision Details',
+            style: AppTextStyles.headingSmall,
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         if (historyDesc.isEmpty)
-          Text(
-            'No salary revisions on record.',
-            style: TextStyle(color: Colors.grey.shade600, fontSize: 13),
+          AppCard(
+            padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+            border: Border.all(color: const Color(0xFFECEEF1)),
+            child: Column(
+              children: [
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.history_rounded,
+                      size: 30, color: AppColors.primaryText),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'No salary revisions on record.',
+                  textAlign: TextAlign.center,
+                  style: AppTextStyles.headingSmall,
+                ),
+              ],
+            ),
           )
         else ...[
           for (final e in previewOnHome) ...[
@@ -336,19 +380,16 @@ Future<void> _load() async {
               currency: currency,
               onTap: () => _openRevisionDetail(e),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
           ],
-          Center(
-            child: TextButton(
-              style: TextButton.styleFrom(
-                backgroundColor: AppColors.primary.withOpacity(0.12),
-                foregroundColor: AppColors.primary,
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
               onPressed: _openRevisionOverview,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 48),
+                backgroundColor: AppColors.surface,
+              ),
               child: const Text('View All'),
             ),
           ),
@@ -363,15 +404,20 @@ Future<void> _load() async {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
         ),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 15,
-            color: AppColors.textPrimary,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 18,
+              color: AppColors.textPrimary,
+            ),
           ),
         ),
       ],
@@ -396,17 +442,18 @@ class _RevisionNoticeCard extends StatelessWidget {
         effective != null ? DateFormat('d MMM, y').format(effective!) : '';
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFF9E6),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFFE082)),
+        color: AppColors.brandLight,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.brandBorder),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.info_outline, color: AppColors.brandDark, size: 22),
-          const SizedBox(width: 10),
+          const Icon(Icons.info_outline_rounded,
+              color: AppColors.brandDark, size: 20),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -415,22 +462,26 @@ class _RevisionNoticeCard extends StatelessWidget {
                   isInformationalOnly
                       ? 'Your salary revision history is available below.'
                       : 'Salary is revised and will be effective from $dateStr.',
-                  style: TextStyle(
-                    fontSize: 13,
-                    height: 1.35,
-                    color: AppColors.textPrimary,
-                  ),
+                  style: AppTextStyles.bodyMedium.copyWith(fontSize: 13),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 GestureDetector(
                   onTap: onViewHistory,
-                  child: Text(
-                    'View Revision History',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
-                    ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'View Revision History',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.primaryText,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(Icons.chevron_right_rounded,
+                          size: 18, color: AppColors.primaryText),
+                    ],
                   ),
                 ),
               ],
@@ -467,12 +518,13 @@ class _RevisionSummaryTile extends StatelessWidget {
     final rCtc = yearlyCtcFromSalaryMap(revMap);
 
     return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      elevation: 1,
-      shadowColor: Colors.black12,
+      color: AppColors.surface,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFECEEF1)),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -481,34 +533,53 @@ class _RevisionSummaryTile extends StatelessWidget {
             children: [
               Row(
                 children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(Icons.trending_up_rounded,
+                        size: 20, color: AppColors.primaryText),
+                  ),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
                       title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                      ),
+                      style: AppTextStyles.headingSmall,
                     ),
                   ),
-                  Icon(Icons.chevron_right, color: Colors.grey.shade500),
+                  const Icon(Icons.chevron_right_rounded,
+                      color: AppColors.textCaption),
                 ],
               ),
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: _ctcMini2(
-                      'Previous CTC',
-                      pCtc != null ? currency.format(pCtc) : '—',
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _ctcMini2(
+                        'Previous CTC',
+                        pCtc != null ? currency.format(pCtc) : '—',
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: _ctcMini2(
-                      'Revised CTC',
-                      rCtc != null ? currency.format(rCtc) : '—',
+                    const Icon(Icons.arrow_forward_rounded,
+                        size: 16, color: AppColors.textCaption),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _ctcMini2(
+                        'Revised CTC',
+                        rCtc != null ? currency.format(rCtc) : '—',
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -523,15 +594,20 @@ class _RevisionSummaryTile extends StatelessWidget {
       children: [
         Text(
           label,
-          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
         ),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: TextStyle(
-            fontWeight: FontWeight.w700,
-            fontSize: 14,
-            color: AppColors.textPrimary,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            maxLines: 1,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 14,
+              color: AppColors.textPrimary,
+            ),
           ),
         ),
       ],

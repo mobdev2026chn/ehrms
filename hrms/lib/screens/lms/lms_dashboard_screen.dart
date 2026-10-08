@@ -5,6 +5,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../dashboard/dashboard_screen.dart';
 import '../../config/constants.dart';
@@ -184,16 +185,16 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
     ];
     final tabBar = TabBar(
       controller: _tabController,
-      labelColor: AppColors.primary,
-      unselectedLabelColor: Colors.black87,
+      labelColor: AppColors.primaryText,
+      unselectedLabelColor: AppColors.textSecondary,
       indicatorColor: AppColors.primary,
       indicatorSize: TabBarIndicatorSize.tab,
       labelPadding: const EdgeInsets.symmetric(horizontal: 6),
-      labelStyle: const TextStyle(fontSize: tabFontSize, fontWeight: FontWeight.w500),
-      unselectedLabelStyle: const TextStyle(fontSize: tabFontSize),
+      labelStyle: const TextStyle(fontSize: tabFontSize, fontWeight: FontWeight.w600),
+      unselectedLabelStyle: const TextStyle(fontSize: tabFontSize, fontWeight: FontWeight.w500),
       indicator: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(6),
+        color: AppColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
       ),
       tabs: tabs,
     );
@@ -215,27 +216,31 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
           Container(
             width: double.infinity,
             color: AppColors.surface,
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: const [
                 Text(
                   'My Learning Dashboard',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
+                  style: AppTextStyles.headingLarge,
                 ),
                 SizedBox(height: 4),
                 Text(
                   'Track your progress, resume courses, and achieve your learning goals.',
-                  style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  style: AppTextStyles.bodySmall,
                 ),
               ],
             ),
           ),
-          SizedBox(height: 44, child: Container(color: AppColors.surface, child: tabBar)),
+          Container(
+            height: 52,
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(bottom: BorderSide(color: Color(0xFFECEEF1))),
+            ),
+            child: tabBar,
+          ),
           Expanded(child: body),
         ],
       );
@@ -244,9 +249,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
     return Scaffold(
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text('My Learning Dashboard', style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('My Learning Dashboard'),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(44),
           child: Container(color: AppColors.surface, child: tabBar),
@@ -284,24 +287,20 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                     controller: _courseSearchController,
                     decoration: InputDecoration(
                       hintText: 'Search your courses...',
-                      prefixIcon: const Icon(Icons.search, size: 20),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
                       suffixIcon: ValueListenableBuilder<TextEditingValue>(
                         valueListenable: _courseSearchController,
                         builder: (_, value, __) {
                           if (value.text.isEmpty) return const SizedBox.shrink();
                           return IconButton(
-                            icon: const Icon(Icons.close, size: 20),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                            tooltip: 'Clear',
                             onPressed: () {
                               _courseSearchController.clear();
                               setState(() => _searchTerm = '');
                             },
                           );
                         },
-                      ),
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
                       ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -314,33 +313,30 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                   DropdownButtonFormField<String?>(
                     initialValue: _categoryFilter,
                     decoration: InputDecoration(
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                      prefixIcon: const Icon(Icons.category_outlined, size: 20),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12,
-                        vertical: 10,
+                        vertical: 12,
                       ),
                     ),
                     hint: Text(
                       'All Categories',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     ),
                     isExpanded: true,
+                    borderRadius: BorderRadius.circular(12),
                     items: [
                       const DropdownMenuItem(
                         value: null,
                         child: Text(
                           'All Categories',
-                          style: TextStyle(fontSize: 12),
+                          style: TextStyle(fontSize: 13),
                         ),
                       ),
                       ..._categories.map(
                         (c) => DropdownMenuItem(
                           value: c,
-                          child: Text(c, style: const TextStyle(fontSize: 12)),
+                          child: Text(c, style: const TextStyle(fontSize: 13)),
                         ),
                       ),
                     ],
@@ -356,29 +352,34 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                 padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 20),
+                  padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
                   decoration: BoxDecoration(
                     color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.divider),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFECEEF1)),
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.inbox_outlined,
-                        size: 56,
-                        color: AppColors.textHint,
+                      Container(
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(
+                          Icons.school_outlined,
+                          size: 28,
+                          color: AppColors.primaryText,
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         _searchTerm.isNotEmpty || _categoryFilter != null
                             ? 'No matches found in your library.'
                             : 'No courses assigned yet. Contact your administrator to get assigned to courses.',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: AppColors.textSecondary,
-                        ),
+                        style: AppTextStyles.bodySmall,
                         textAlign: TextAlign.center,
                       ),
                     ],
@@ -456,24 +457,20 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                     controller: _librarySearchController,
                     decoration: InputDecoration(
                       hintText: 'Search library...',
-                      prefixIcon: const Icon(Icons.search, size: 20),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
                       suffixIcon: ValueListenableBuilder<TextEditingValue>(
                         valueListenable: _librarySearchController,
                         builder: (_, value, __) {
                           if (value.text.isEmpty) return const SizedBox.shrink();
                           return IconButton(
-                            icon: const Icon(Icons.close, size: 20),
+                            icon: const Icon(Icons.close_rounded, size: 20),
+                            tooltip: 'Clear',
                             onPressed: () {
                               _librarySearchController.clear();
                               setState(() => _librarySearch = '');
                             },
                           );
                         },
-                      ),
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
                       ),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 16,
@@ -486,33 +483,30 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
                   DropdownButtonFormField<String?>(
                     initialValue: _libraryCategoryFilter,
                     decoration: InputDecoration(
-                      filled: true,
-                      fillColor: AppColors.surface,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                      prefixIcon: const Icon(Icons.category_outlined, size: 20),
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 12,
-                        vertical: 10,
+                        vertical: 12,
                       ),
                     ),
                     hint: Text(
                       'All Categories',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                      style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                     ),
                     isExpanded: true,
+                    borderRadius: BorderRadius.circular(12),
                     items: [
                       const DropdownMenuItem(
                         value: null,
                         child: Text(
                           'All Categories',
-                          style: TextStyle(fontSize: 12),
+                          style: TextStyle(fontSize: 13),
                         ),
                       ),
                       ..._categories.map(
                         (c) => DropdownMenuItem(
                           value: c,
-                          child: Text(c, style: const TextStyle(fontSize: 12)),
+                          child: Text(c, style: const TextStyle(fontSize: 13)),
                         ),
                       ),
                     ],
@@ -527,7 +521,7 @@ class _LmsDashboardScreenState extends State<LmsDashboardScreen>
               child: Center(
                 child: Text(
                   'No courses in library or no matches.',
-                  style: TextStyle(color: Colors.grey),
+                  style: AppTextStyles.bodySmall,
                 ),
               ),
             )
@@ -625,8 +619,7 @@ class _CourseCard extends StatelessWidget {
 
     return Card(
       clipBehavior: Clip.antiAlias,
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: InkWell(
         onTap: onTap,
         child: Column(
@@ -645,26 +638,26 @@ class _CourseCard extends StatelessWidget {
             ),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 2,
+                      horizontal: 8,
+                      vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(4),
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       category,
                       style: TextStyle(
-                        fontSize: 9,
+                        fontSize: 10,
                         fontWeight: FontWeight.w600,
-                        color: AppColors.primary,
+                        color: AppColors.primaryText,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -676,6 +669,8 @@ class _CourseCard extends StatelessWidget {
                     style: const TextStyle(
                       fontWeight: FontWeight.w600,
                       fontSize: 13,
+                      height: 1.3,
+                      color: AppColors.textPrimary,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -683,16 +678,21 @@ class _CourseCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     status == 'Completed' ? 'Completed' : '$progress% Complete',
-                    style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                   ),
-                  LinearProgressIndicator(
-                    value: progress / 100,
-                    backgroundColor: Colors.grey[200],
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      status == 'Completed' ? Colors.green : AppColors.primary,
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: progress / 100,
+                      minHeight: 6,
+                      backgroundColor: const Color(0xFFECEEF1),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        status == 'Completed' ? AppColors.success : AppColors.primary,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -700,27 +700,28 @@ class _CourseCard extends StatelessWidget {
                         child: Text(
                           '$durationText • $materialsCount ${materialsCount == 1 ? 'Lesson' : 'Lessons'}',
                           style: TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey[600],
+                            fontSize: 11,
+                            color: AppColors.textSecondary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       SizedBox(
-                        height: 28,
+                        height: 30,
                         child: ElevatedButton(
                           onPressed: status == 'Completed' ? null : onTap,
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: status == 'Completed'
-                                ? Colors.grey
-                                : AppColors.primary,
-                            foregroundColor: Colors.white,
+                            disabledBackgroundColor: AppColors.successBg,
+                            disabledForegroundColor: AppColors.success,
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
+                              horizontal: 12,
                               vertical: 4,
                             ),
                             minimumSize: Size.zero,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(999),
+                            ),
                           ),
                           child: Text(
                             status == 'Completed'
@@ -740,12 +741,12 @@ class _CourseCard extends StatelessWidget {
                   const SizedBox(height: 6),
                   Row(
                     children: [
-                      Icon(Icons.person_outline, size: 12, color: Colors.grey[600]),
+                      const Icon(Icons.person_outline_rounded, size: 14, color: AppColors.textSecondary),
                       const SizedBox(width: 4),
                       Flexible(
                         child: Text(
                           (course['instructor'] ?? 'Admin').toString(),
-                          style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                          style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
@@ -764,8 +765,8 @@ class _CourseCard extends StatelessWidget {
 
   Widget _placeholderImage() {
     return Container(
-      color: Colors.grey[200],
-      child: Icon(Icons.image_not_supported, size: 40, color: Colors.grey[400]),
+      color: AppColors.inputFill,
+      child: const Icon(Icons.image_outlined, size: 32, color: AppColors.textCaption),
     );
   }
 }
@@ -791,8 +792,7 @@ class _LibraryCourseCard extends StatelessWidget {
 
     return Card(
       clipBehavior: Clip.antiAlias,
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -813,17 +813,17 @@ class _LibraryCourseCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(4),
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     category,
                     style: TextStyle(
-                      fontSize: 9,
+                      fontSize: 10,
                       fontWeight: FontWeight.w600,
-                      color: AppColors.primary,
+                      color: AppColors.primaryText,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -835,6 +835,8 @@ class _LibraryCourseCard extends StatelessWidget {
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
+                    height: 1.3,
+                    color: AppColors.textPrimary,
                   ),
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
@@ -845,8 +847,7 @@ class _LibraryCourseCard extends StatelessWidget {
                   child: ElevatedButton(
                     onPressed: enrolled ? onOpen : onEnroll,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
+                      minimumSize: const Size(0, 40),
                       padding: const EdgeInsets.symmetric(vertical: 8),
                     ),
                     child: Text(
@@ -868,8 +869,8 @@ class _LibraryCourseCard extends StatelessWidget {
 
   Widget _placeholder() {
     return Container(
-      color: Colors.grey[200],
-      child: Icon(Icons.image_not_supported, size: 40, color: Colors.grey[400]),
+      color: AppColors.inputFill,
+      child: const Icon(Icons.image_outlined, size: 32, color: AppColors.textCaption),
     );
   }
 }

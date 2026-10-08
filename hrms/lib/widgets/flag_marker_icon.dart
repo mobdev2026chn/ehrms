@@ -74,7 +74,7 @@ Future<({BitmapDescriptor icon, Offset anchor})> dotLabelMarkerIcon(
   final tp = TextPainter(
     text: TextSpan(
       text: label,
-      style: TextStyle(fontSize: 10.5 * dpr, fontWeight: FontWeight.w800, color: Colors.white),
+      style: TextStyle(fontSize: 10.5 * dpr, fontWeight: FontWeight.w700, color: Colors.white),
     ),
     textDirection: TextDirection.ltr,
   )..layout();
@@ -158,7 +158,7 @@ Future<BitmapDescriptor> flagMarkerIcon(
     final np = TextPainter(
       text: TextSpan(
         text: badge,
-        style: TextStyle(fontSize: 8.5 * dpr, fontWeight: FontWeight.w900, color: Colors.white),
+        style: TextStyle(fontSize: 8.5 * dpr, fontWeight: FontWeight.w700, color: Colors.white),
       ),
       textDirection: TextDirection.ltr,
     )..layout();

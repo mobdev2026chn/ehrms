@@ -4,6 +4,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -129,10 +131,10 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
 
   Widget _buildBadge(String text, Color bgColor, Color textColor) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(5),
+        borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
         text,
@@ -260,24 +262,17 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: Text(
-          'My Goals',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('My Goals'),
         actions: [
           TextButton.icon(
             onPressed: () => _showCreateGoalSheet(context),
             icon: const Icon(Icons.add_rounded, size: 20),
             label: Text('Add Goal'),
             style: TextButton.styleFrom(
-              foregroundColor: AppColors.primary,
               padding: const EdgeInsets.symmetric(horizontal: 12),
             ),
           ),
+          const SizedBox(width: 4),
         ],
       ),
       body: body,
@@ -292,22 +287,27 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, size: 64, color: AppColors.error),
+            Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(
+                color: AppColors.errorBg,
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.error_outline_rounded,
+                  size: 32, color: AppColors.error),
+            ),
             const SizedBox(height: 16),
             Text(
               _error ?? 'Failed to load goals',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.textSecondary),
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 24),
             ElevatedButton.icon(
               onPressed: _fetchGoals,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
               label: Text('Retry'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-              ),
             ),
           ],
         ),
@@ -321,49 +321,36 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 24),
+        padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
         child: Column(
           children: [
             Container(
-              width: 72,
-              height: 72,
+              width: 64,
+              height: 64,
               decoration: BoxDecoration(
-                color: AppColors.inputFill,
+                color: AppColors.primary.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
               child: Icon(
                 Icons.flag_outlined,
-                size: 32,
-                color: AppColors.textHint,
+                size: 30,
+                color: AppColors.primaryText,
               ),
             ),
             const SizedBox(height: 16),
             Text(
               'No goals yet',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.headingSmall,
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               'Get started by creating your first\nperformance goal.',
               textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: 13,
-                height: 1.4,
-                color: AppColors.textSecondary,
-              ),
+              style: AppTextStyles.bodySmall,
             ),
 //const SizedBox(height: 22),
             // ElevatedButton.icon(
@@ -400,58 +387,51 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'Manage your goals and track progress',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              height: 1.3,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.headingMedium,
           ),
           const SizedBox(height: 4),
           Text(
             'Performance Summary',
-            style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+            style: AppTextStyles.bodySmall,
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 20),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               _buildStatItem(
                 _total.toString(),
                 'TOTAL',
-                Icons.flag_rounded,
-                AppColors.primary,
+                Icons.flag_outlined,
+                AppColors.primaryText,
               ),
+              const SizedBox(width: 8),
               _buildStatItem(
                 _approved.toString(),
                 'APPROVED',
-                Icons.check_circle_rounded,
+                Icons.check_circle_outline_rounded,
                 AppColors.success,
               ),
+              const SizedBox(width: 8),
               _buildStatItem(
                 _pending.toString(),
                 'PENDING',
                 Icons.schedule_rounded,
                 AppColors.warning,
               ),
+              const SizedBox(width: 8),
               _buildStatItem(
                 _completed.toString(),
                 'DONE',
                 Icons.done_all_rounded,
-                AppColors.primary,
+                AppColors.info,
               ),
             ],
           ),
@@ -468,41 +448,37 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
   ) {
     // Expanded: used only as a direct child of the stats Row.
     return Expanded(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            value,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: AppColors.textPrimary,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+        decoration: BoxDecoration(
+          color: iconColor.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: iconColor),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: AppTextStyles.headingLarge,
             ),
-          ),
-          const SizedBox(height: 6),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 13, color: iconColor),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.3,
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.5,
+                color: AppColors.textSecondary,
               ),
-            ],
-          ),
-        ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -514,13 +490,8 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -531,18 +502,23 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
               Expanded(
                 child: Row(
                   children: [
-                    Icon(Icons.flag_rounded, size: 20, color: AppColors.primary),
-                    const SizedBox(width: 8),
+                    Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.flag_outlined,
+                          size: 18, color: AppColors.primaryText),
+                    ),
+                    const SizedBox(width: 12),
                     Flexible(
                       child: Text(
                         'My Goals (${_goals.length})',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+                        style: AppTextStyles.headingSmall,
                       ),
                     ),
                   ],
@@ -558,10 +534,7 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                   const SizedBox(width: 6),
                   Text(
                     'FILTERS',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
+                    style: AppTextStyles.sectionLabel.copyWith(
                       color: AppColors.textSecondary,
                     ),
                   ),
@@ -657,28 +630,32 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
     required void Function(String?) onChanged,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppColors.divider),
+        color: const Color(0xFFF7F8FA),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E5EA)),
       ),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
           value: (value == null || value.isEmpty) ? null : value,
           hint: Text(
             hint,
-            style: TextStyle(fontSize: 11, color: AppColors.textSecondary),
+            style: AppTextStyles.bodySmall,
           ),
           isExpanded: true,
           items: items,
           onChanged: onChanged,
+          style: AppTextStyles.bodySmall.copyWith(
+            color: AppColors.textPrimary,
+          ),
+          borderRadius: BorderRadius.circular(12),
           icon: Icon(
             Icons.keyboard_arrow_down_rounded,
-            size: 16,
+            size: 20,
             color: AppColors.textSecondary,
           ),
-          iconSize: 16,
+          iconSize: 20,
         ),
       ),
     );
@@ -709,97 +686,96 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
       } catch (_) {}
     }
 
-    return Card(
-      margin: const EdgeInsets.only(bottom: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      elevation: 0,
-      color: AppColors.surface,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
+      ),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               title,
-              style: TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.headingSmall,
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Wrap(
               spacing: 6,
-              runSpacing: 4,
+              runSpacing: 6,
               children: [
                 if (type.isNotEmpty)
-                  _buildBadge(type, AppColors.divider, AppColors.textPrimary),
+                  _buildBadge(type, AppColors.inputFill, AppColors.textPrimary),
                 _buildBadge(
                   _formatStatus(status),
-                  _getStatusColor(status).withOpacity(0.15),
+                  _getStatusColor(status).withValues(alpha: 0.12),
                   _getStatusColor(status),
                 ),
                 if (isSelfCreated)
                   _buildBadge(
                     'Self-Created',
-                    AppColors.textSecondary.withOpacity(0.2),
-                    AppColors.textSecondary,
+                    AppColors.indigoBg,
+                    AppColors.indigo,
                   ),
               ],
             ),
             if (dateRangeStr.isNotEmpty) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 12),
               Row(
                 children: [
                   Icon(
-                    Icons.calendar_today_rounded,
-                    size: 12,
+                    Icons.calendar_today_outlined,
+                    size: 14,
                     color: AppColors.textSecondary,
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    dateRangeStr,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSecondary,
+                  Expanded(
+                    child: Text(
+                      dateRangeStr,
+                      style: AppTextStyles.bodySmall,
                     ),
                   ),
                 ],
               ),
             ],
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        'Progress',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: AppColors.textSecondary,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'Progress',
+                              style: AppTextStyles.bodySmall,
+                            ),
+                          ),
+                          Text(
+                            '${progress.toStringAsFixed(0)}%',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.textPrimary,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 6),
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(999),
                         child: LinearProgressIndicator(
                           value: progress / 100,
-                          backgroundColor: AppColors.divider,
+                          backgroundColor: AppColors.inputFill,
                           valueColor: AlwaysStoppedAnimation<Color>(
                             AppColors.primary,
                           ),
-                          minHeight: 6,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${progress.toStringAsFixed(0)}%',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.textPrimary,
+                          minHeight: 8,
                         ),
                       ),
                     ],
@@ -807,21 +783,20 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
                     onPressed: () => _showGoalDetailsSheet(context, goal),
-                    icon: const Icon(Icons.visibility_rounded, size: 16),
+                    icon: const Icon(Icons.visibility_outlined, size: 18),
                     label: Text(
                       'View Details',
                       overflow: TextOverflow.ellipsis,
                     ),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.primary,
-                      side: BorderSide(color: AppColors.primary),
                       padding: const EdgeInsets.symmetric(horizontal: 8),
+                      minimumSize: const Size(0, 44),
                     ),
                   ),
                 ),
@@ -832,15 +807,16 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                     child: OutlinedButton.icon(
                       onPressed: () =>
                           _showUpdateProgressSheet(context, goal),
-                      icon: const Icon(Icons.edit_rounded, size: 16),
+                      icon: const Icon(Icons.edit_outlined, size: 18),
                       label: Text(
                         'Update Progress',
                         overflow: TextOverflow.ellipsis,
                       ),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: BorderSide(color: AppColors.primary),
+                        foregroundColor: AppColors.primaryText,
+                        side: BorderSide(color: AppColors.primary, width: 1.2),
                         padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 44),
                       ),
                     ),
                   ),
@@ -871,15 +847,16 @@ class MyGoalsScreenState extends State<MyGoalsScreen> {
                           }
                         }
                       },
-                      icon: const Icon(Icons.check_circle_rounded, size: 16),
+                      icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
                       label: Text(
                         'Complete Goal',
                         overflow: TextOverflow.ellipsis,
                       ),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
+                        backgroundColor: AppColors.success,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 44),
                       ),
                     ),
                   ),
@@ -998,7 +975,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
       builder: (_, scrollController) => Container(
         decoration: const BoxDecoration(
           color: AppColors.background,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           children: [
@@ -1007,36 +984,46 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: AppColors.textHint,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
+              padding: const EdgeInsets.fromLTRB(20, 4, 8, 4),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.arrow_back_rounded,
-                        size: 22,
-                        color: AppColors.textPrimary,
-                      ),
-                      const SizedBox(width: 12),
-                      Text(
-                        'Add New goal',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            Icons.flag_outlined,
+                            size: 20,
+                            color: AppColors.primaryText,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 12),
+                        Flexible(
+                          child: Text(
+                            'Add New goal',
+                            style: AppTextStyles.headingMedium,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                   IconButton(
                     onPressed: widget.onCancel,
+                    tooltip: 'Close',
                     icon: const Icon(Icons.close_rounded),
+                    color: AppColors.textSecondary,
                   ),
                 ],
               ),
@@ -1056,20 +1043,12 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                   children: [
                     Text(
                       'Set Your Next Milestone',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingSmall,
                     ),
                     const SizedBox(height: 4),
                     Text(
                       'Define clear, actionable goals to track your professional evolution.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        height: 1.4,
-                        color: AppColors.textSecondary,
-                      ),
+                      style: AppTextStyles.bodySmall,
                     ),
                     const SizedBox(height: 16),
                     _buildFormDropdown(
@@ -1225,27 +1204,17 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                             ? const SizedBox.shrink()
                             : const Icon(Icons.task_alt_rounded, size: 20),
                         label: _isSubmitting
-                            ? const SizedBox(
+                            ? SizedBox(
                                 width: 20,
                                 height: 20,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
-                                  color: Colors.white,
+                                  color: AppColors.onPrimary,
                                 ),
                               )
                             : const Text('Create Goal'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          textStyle: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
+                          minimumSize: const Size(0, 52),
                         ),
                       ),
                     ),
@@ -1259,59 +1228,36 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
     );
   }
 
-  /// White card wrapper with an orange uppercase section label (Figma style).
+  /// White card wrapper with a gold uppercase section label (Figma style).
   Widget _fieldCard(String label, Widget child) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label.toUpperCase(),
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-              color: AppColors.primary,
+            style: AppTextStyles.sectionLabel.copyWith(
+              color: AppColors.primaryText,
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           child,
         ],
       ),
     );
   }
 
-  /// Borderless filled input (light grey) used inside [_fieldCard].
+  /// Filled input used inside [_fieldCard]; borders come from the app theme.
   InputDecoration _filledInput(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(color: AppColors.textCaption, fontSize: 14),
-      filled: true,
-      fillColor: AppColors.inputFill,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
   }
@@ -1325,10 +1271,11 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
         decoration: BoxDecoration(
-          color: AppColors.inputFill,
+          color: const Color(0xFFF7F8FA),
           borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE2E5EA)),
         ),
         child: Row(
           children: [
@@ -1337,6 +1284,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
                 value != null
                     ? DateFormat('MM/dd/yyyy').format(value)
                     : hint,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: value != null
                       ? AppColors.textPrimary
@@ -1347,8 +1295,8 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
               ),
             ),
             Icon(
-              Icons.calendar_today_rounded,
-              size: 16,
+              Icons.calendar_today_outlined,
+              size: 18,
               color: AppColors.textSecondary,
             ),
           ],
@@ -1399,6 +1347,7 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
         initialValue: (value == null || value.isEmpty) ? null : value,
         isExpanded: true,
         decoration: _filledInput(hint),
+        borderRadius: BorderRadius.circular(12),
         hint: Text(
           hint,
           style: TextStyle(color: AppColors.textCaption, fontSize: 14),
@@ -1408,6 +1357,19 @@ class _CreateGoalSheetState extends State<_CreateGoalSheet> {
       ),
     );
   }
+}
+
+/// Shared drag handle for the goal bottom sheets.
+Widget _sheetHandle() {
+  return Container(
+    margin: const EdgeInsets.only(top: 12, bottom: 8),
+    width: 40,
+    height: 4,
+    decoration: BoxDecoration(
+      color: AppColors.textHint,
+      borderRadius: BorderRadius.circular(2),
+    ),
+  );
 }
 
 class _UpdateProgressSheet extends StatefulWidget {
@@ -1490,70 +1452,78 @@ class _UpdateProgressSheetState extends State<_UpdateProgressSheet> {
       maxChildSize: 0.9,
       builder: (_, scrollController) => Container(
         decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+            _sheetHandle(),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.fromLTRB(20, 4, 8, 4),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Expanded(
                     child: Text(
                       'Update Progress: ${widget.goal['title'] ?? 'Goal'}',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: AppTextStyles.headingMedium,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   IconButton(
                     onPressed: widget.onCancel,
+                    tooltip: 'Close',
                     icon: const Icon(Icons.close_rounded),
+                    color: AppColors.textSecondary,
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             Expanded(
               child: ListView(
                 controller: scrollController,
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 24),
                 children: [
-                  Text(
-                    'Progress (%) *',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade700,
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(16),
                     ),
-                  ),
-                  const SizedBox(height: 8),
-                  Slider(
-                    value: _progress.toDouble(),
-                    min: 0,
-                    max: 100,
-                    divisions: 20,
-                    label: '$_progress%',
-                    onChanged: (v) => setState(() => _progress = v.round()),
-                  ),
-                  Text(
-                    '$_progress%',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Progress (%) *',
+                                style: AppTextStyles.label.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '$_progress%',
+                              style: AppTextStyles.displayLarge.copyWith(
+                                fontSize: 24,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Slider(
+                          value: _progress.toDouble(),
+                          min: 0,
+                          max: 100,
+                          divisions: 20,
+                          label: '$_progress%',
+                          onChanged: (v) => setState(() => _progress = v.round()),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -1562,7 +1532,6 @@ class _UpdateProgressSheetState extends State<_UpdateProgressSheet> {
                     decoration: const InputDecoration(
                       labelText: 'Achievements',
                       hintText: 'Describe your achievements...',
-                      border: OutlineInputBorder(),
                       alignLabelWithHint: true,
                     ),
                     maxLines: 3,
@@ -1573,7 +1542,6 @@ class _UpdateProgressSheetState extends State<_UpdateProgressSheet> {
                     decoration: const InputDecoration(
                       labelText: 'Challenges',
                       hintText: 'Describe any challenges faced...',
-                      border: OutlineInputBorder(),
                       alignLabelWithHint: true,
                     ),
                     maxLines: 3,
@@ -1586,12 +1554,6 @@ class _UpdateProgressSheetState extends State<_UpdateProgressSheet> {
                           height: 48,
                           child: OutlinedButton(
                             onPressed: _isSubmitting ? null : widget.onCancel,
-                            style: OutlinedButton.styleFrom(
-                              side: BorderSide(color: AppColors.primary),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
                             child: Text('Cancel'),
                           ),
                         ),
@@ -1602,21 +1564,13 @@ class _UpdateProgressSheetState extends State<_UpdateProgressSheet> {
                           height: 48,
                           child: ElevatedButton(
                             onPressed: _isSubmitting ? null : _submit,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: AppColors.primary,
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                            ),
                             child: _isSubmitting
-                                ? const SizedBox(
+                                ? SizedBox(
                                     width: 20,
                                     height: 20,
                                     child: CircularProgressIndicator(
                                       strokeWidth: 2,
-                                      color: Colors.white,
+                                      color: AppColors.onPrimary,
                                     ),
                                   )
                                 : Text(
@@ -1685,36 +1639,26 @@ class _GoalDetailsSheet extends StatelessWidget {
       builder: (_, scrollController) => Container(
         decoration: const BoxDecoration(
           color: AppColors.background,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           children: [
-            Container(
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
+            _sheetHandle(),
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 4, 12, 4),
+              padding: const EdgeInsets.fromLTRB(20, 4, 8, 4),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
                       'Goal Details',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ),
                   IconButton(
                     onPressed: onClose,
+                    tooltip: 'Close',
                     icon: const Icon(Icons.close_rounded),
+                    color: AppColors.textSecondary,
                   ),
                 ],
               ),
@@ -1722,71 +1666,86 @@ class _GoalDetailsSheet extends StatelessWidget {
             Expanded(
               child: ListView(
                 controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
+                  AppCard(
+                    padding: const EdgeInsets.all(20),
+                    border: Border.all(color: const Color(0xFFECEEF1)),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: AppTextStyles.headingMedium,
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Text(
+                            formatStatus(status),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: statusColor,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                'Progress',
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            Text(
+                              '${progress.toStringAsFixed(0)}% complete',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(999),
+                          child: LinearProgressIndicator(
+                            value: progress / 100,
+                            backgroundColor: AppColors.inputFill,
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              AppColors.primary,
+                            ),
+                            minHeight: 8,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.15),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      formatStatus(status),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        color: statusColor,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  _detailRow('Type', type),
-                  _detailRow('KPI', kpi),
-                  _detailRow('Target', target),
-                  if (weightage > 0)
-                    _detailRow('Weightage', '${weightage.toStringAsFixed(0)}%'),
-                  _detailRow('Cycle', cycle),
-                  if (dateRange.isNotEmpty) _detailRow('Duration', dateRange),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Progress',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: progress / 100,
-                      backgroundColor: AppColors.divider,
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        AppColors.primary,
-                      ),
-                      minHeight: 8,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '${progress.toStringAsFixed(0)}% complete',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.textPrimary,
+                  const SizedBox(height: 12),
+                  AppCard(
+                    border: Border.all(color: const Color(0xFFECEEF1)),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                    child: Column(
+                      children: [
+                        _detailRow('Type', type),
+                        _detailRow('KPI', kpi),
+                        _detailRow('Target', target),
+                        if (weightage > 0)
+                          _detailRow('Weightage', '${weightage.toStringAsFixed(0)}%'),
+                        _detailRow('Cycle', cycle),
+                        if (dateRange.isNotEmpty) _detailRow('Duration', dateRange),
+                      ],
                     ),
                   ),
                   if (achievements.isNotEmpty) ...[
@@ -1817,20 +1776,13 @@ class _GoalDetailsSheet extends StatelessWidget {
             width: 100,
             child: Text(
               label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textSecondary,
-              ),
+              style: AppTextStyles.bodySmall,
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: TextStyle(
-                fontSize: 13,
-                color: AppColors.textPrimary,
-              ),
+              style: AppTextStyles.label,
             ),
           ),
         ],
@@ -1842,29 +1794,28 @@ class _GoalDetailsSheet extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: AppColors.textSecondary,
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Text(
+            label,
+            style: AppTextStyles.label.copyWith(
+              fontWeight: FontWeight.w600,
+              color: AppColors.textSecondary,
+            ),
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         Container(
           width: double.infinity,
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFFECEEF1)),
           ),
           child: Text(
             value,
-            style: TextStyle(
-              fontSize: 13,
-              height: 1.4,
-              color: AppColors.textPrimary,
-            ),
+            style: AppTextStyles.bodyMedium,
           ),
         ),
       ],

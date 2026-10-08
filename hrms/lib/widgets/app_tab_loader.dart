@@ -36,7 +36,7 @@ class _AppTabLoaderState extends State<AppTabLoader>
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: List.generate(3, (i) {
-        final color = i.isEven ? Colors.black : AppColors.primary;
+        final color = i.isEven ? AppColors.ink : AppColors.primary;
         return AnimatedBuilder(
           animation: _controller,
           builder: (context, child) {
@@ -44,7 +44,7 @@ class _AppTabLoaderState extends State<AppTabLoader>
             final t = math.sin(phase * 2 * math.pi);
             final scale = 0.45 + 0.55 * ((t + 1) / 2);
             return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 5),
+              padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Transform.scale(
                 scale: scale,
                 child: child,
@@ -52,8 +52,8 @@ class _AppTabLoaderState extends State<AppTabLoader>
             );
           },
           child: Container(
-            width: 12,
-            height: 12,
+            width: 10,
+            height: 10,
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,

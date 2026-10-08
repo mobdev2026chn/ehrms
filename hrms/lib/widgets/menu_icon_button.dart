@@ -8,7 +8,7 @@ class MenuIconButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return Builder(
       builder: (innerContext) => IconButton(
-        icon: Icon(Icons.menu, color: AppColors.primary),
+        icon: Icon(Icons.menu_rounded, color: AppColors.primaryText, size: 24),
         tooltip: MaterialLocalizations.of(innerContext).openAppDrawerTooltip,
         onPressed: () {
           final scaffold = Scaffold.maybeOf(innerContext);

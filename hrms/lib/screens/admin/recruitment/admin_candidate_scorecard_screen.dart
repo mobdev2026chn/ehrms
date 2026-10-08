@@ -1,351 +1,570 @@
 // lib/screens/admin/recruitment/admin_candidate_scorecard_screen.dart
+// One interview round: schedule details, round questions (add/edit while scheduled) and the
+// evaluation scorecard (PUT /interview-rounds/:id/evaluation). Choosing a decision saves it.
+
 import 'package:flutter/material.dart';
+
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
-import '../../../utils/snackbar_utils.dart';
-import 'admin_interview_rounds_screen.dart';
+import '../../../models/admin_recruitment_models.dart';
+import '../../../services/admin_recruitment_service.dart';
+import 'admin_schedule_interview_sheet.dart';
+import 'rec_question_editor.dart';
+import 'rec_widgets.dart';
 
 class AdminCandidateScorecardScreen extends StatefulWidget {
-  final AdminEvaluationRoundItem item;
-
-  const AdminCandidateScorecardScreen({super.key, required this.item});
+  final String roundId;
+  const AdminCandidateScorecardScreen({super.key, required this.roundId});
 
   @override
   State<AdminCandidateScorecardScreen> createState() => _AdminCandidateScorecardScreenState();
 }
 
 class _AdminCandidateScorecardScreenState extends State<AdminCandidateScorecardScreen> {
-  final ApiClient _api = ApiClient();
-  int _selectedRoundIndex = 0;
+  final AdminRecruitmentService _service = AdminRecruitmentService();
 
-  final Map<int, String> _textAnswers = {
-    1: 'Candidate demonstrated clear structured approach starting from problem statement, user empathy mapping, and wireframing.',
-    2: 'Uses Hotjar heatmaps, Figma user testing recordings, and direct user interviews.',
-    3: 'Relies on data points, usability testing metrics, and design system consistency guidelines.',
-    7: 'Demonstrated iterative improvements after A/B testing checkout CTA button contrast.',
-  };
+  RecInterviewRound? _round;
+  List<RecInterviewRound> _candidateRounds = [];
+  RecInterviewFlow? _flow;
+  bool _loading = true;
+  String? _error;
 
-  final Map<int, int> _ratings = {
-    4: 5,
-    5: 4,
-    6: 4,
-  };
-
-  late TextEditingController _generalFeedbackCtrl;
-  late String _recommendation;
-  late int _overallScore;
+  // Scorecard state, keyed by question index
+  Map<int, num> _scores = {};
+  Map<int, TextEditingController> _notes = {};
+  Map<int, TextEditingController> _marks = {};
+  final TextEditingController _feedback = TextEditingController();
+  double _overall = 50;
+  bool _forceEdit = false;
+  String? _saving;
 
   @override
   void initState() {
     super.initState();
-    _generalFeedbackCtrl = TextEditingController(text: widget.item.generalFeedback);
-    _recommendation = widget.item.recommendation;
-    _overallScore = widget.item.overallScore;
+    _load();
   }
 
   @override
   void dispose() {
-    _generalFeedbackCtrl.dispose();
+    _feedback.dispose();
+    for (final c in [..._notes.values, ..._marks.values]) {
+      c.dispose();
+    }
     super.dispose();
   }
 
-  Future<void> _saveScorecard() async {
+  Future<void> _load({bool showLoader = true}) async {
+    if (showLoader) setState(() => _loading = true);
     try {
-      await _api.request(
-        '/admin/recruitment/interview-process/rounds/${widget.item.id}/evaluation',
-        method: 'POST',
-        data: {
-          'textAnswers': _textAnswers,
-          'ratings': _ratings,
-          'overallScore': _overallScore,
-          'generalFeedback': _generalFeedbackCtrl.text.trim(),
-          'recommendation': _recommendation,
-        },
-      );
-    } catch (_) {}
-    setState(() {
-      widget.item.generalFeedback = _generalFeedbackCtrl.text.trim();
-      widget.item.recommendation = _recommendation;
-      widget.item.overallScore = _overallScore;
-      if (_recommendation == 'Pass' || _recommendation == 'Selected') {
-        widget.item.status = 'Evaluated - Pass';
-      } else if (_recommendation == 'Reject') {
-        widget.item.status = 'Evaluated - Rejected';
-      } else if (_recommendation == 'Hold') {
-        widget.item.status = 'Evaluated - Hold';
+      final round = await _service.getInterviewRound(widget.roundId);
+      final others = await _service.getInterviewRounds(candidateId: round.candidateId);
+      RecInterviewFlow? flow;
+      if (round.flowId.isNotEmpty) {
+        try {
+          flow = await _service.getInterviewFlow(round.flowId);
+        } on RecruitmentApiException {
+          flow = null; // flow deleted - the round still stands on its own
+        }
       }
-    });
-    if (mounted) SnackBarUtils.showSnackBar(context, 'Scorecard saved successfully!');
+      if (!mounted) return;
+      setState(() {
+        _round = round;
+        _candidateRounds = others;
+        _flow = flow;
+        _error = null;
+        _loading = false;
+        _forceEdit = false;
+      });
+      _fillForm(round);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  void _fillForm(RecInterviewRound r) {
+    for (final c in [..._notes.values, ..._marks.values]) {
+      c.dispose();
+    }
+    final ev = r.evaluation;
+    num? n(dynamic v) => v is num ? v : num.tryParse('${v ?? ''}');
+    _scores = {};
+    _notes = {};
+    _marks = {};
+    for (var i = 0; i < r.questions.length; i++) {
+      final s = n(ev?.scores['$i']);
+      if (s != null) _scores[i] = s;
+      _notes[i] = TextEditingController(text: (ev?.questionNotes['$i'] ?? '').toString());
+      final m = n(ev?.questionScores['$i']);
+      _marks[i] = TextEditingController(text: m == null ? '' : '$m');
+    }
+    _feedback.text = ev?.generalFeedback ?? '';
+    _overall = (ev?.overallScore ?? 50).toDouble().clamp(0, 100);
+    setState(() {});
+  }
+
+  bool get _isPortfolio => (_round?.roundName.toLowerCase() ?? '').contains('portfolio');
+
+  bool get _isFinalRound {
+    final r = _round;
+    final rounds = _flow?.rounds ?? [];
+    if (r == null || rounds.isEmpty) return false;
+    return rounds.last.id == r.flowRoundId || rounds.every((fr) => _candidateRounds.any((x) => x.flowRoundId == fr.id));
+  }
+
+  RecInterviewRound? get _pendingNext =>
+      _candidateRounds.where((x) => x.status == 'Scheduled' && x.id != _round?.id).firstOrNull;
+
+  bool _validate() {
+    final r = _round!;
+    for (var i = 0; i < r.questions.length; i++) {
+      final q = r.questions[i];
+      if ((q.answerType == 'text' || q.answerType == 'scenario') && _notes[i]!.text.trim().isEmpty) {
+        recShowError(context, 'Write a response / notes for question ${i + 1}');
+        return false;
+      }
+      final m = _marks[i]!.text.trim();
+      if (m.isNotEmpty) {
+        final v = num.tryParse(m);
+        if (v == null || v < 0 || v > q.maxScore) {
+          recShowError(context, 'Question ${i + 1} score must be between 0 and ${q.maxScore}');
+          return false;
+        }
+      }
+    }
+    if (_feedback.text.trim().isEmpty) {
+      recShowError(context, _isPortfolio ? 'Write the overall score note & remarks' : 'Write the overall assessment summary');
+      return false;
+    }
+    return true;
+  }
+
+  Future<bool> _save(String recommendation, {String? reassignJobId, String? reassignReason}) async {
+    final r = _round!;
+    setState(() => _saving = recommendation);
+    try {
+      final notes = <String, String>{};
+      final marks = <String, num>{};
+      _notes.forEach((i, c) {
+        if (c.text.trim().isNotEmpty) notes['$i'] = c.text.trim();
+      });
+      _marks.forEach((i, c) {
+        final v = num.tryParse(c.text.trim());
+        if (v != null) marks['$i'] = v;
+      });
+      final feedback = reassignReason != null && reassignReason.isNotEmpty
+          ? '${_feedback.text.trim()}\n\nReassignment Reason: $reassignReason'
+          : _feedback.text.trim();
+      final msg = await _service.evaluateInterviewRound(
+        r.id,
+        scores: _scores.map((k, v) => MapEntry('$k', v)),
+        questionNotes: notes,
+        questionScores: marks,
+        generalFeedback: feedback,
+        recommendation: recommendation,
+        overallScore: _isPortfolio ? _overall.round() : null,
+        reassignedJobOpeningId: recommendation == 'Reassign' ? reassignJobId : null,
+      );
+      if (!mounted) return true;
+      recShowSuccess(context, msg);
+      await _load(showLoader: false);
+      return true;
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+      return false;
+    } finally {
+      if (mounted) setState(() => _saving = null);
+    }
+  }
+
+  Future<void> _decide(String rec) async {
+    final r = _round!;
+    if (rec == 'Reschedule') {
+      if (await showRescheduleInterviewSheet(context, round: r)) _load(showLoader: false);
+      return;
+    }
+    if (!_validate()) return;
+    if (rec == 'Reassign') {
+      await _reassign();
+      return;
+    }
+    if (rec == 'Schedule') {
+      if (_pendingNext != null) {
+        recShowError(context,
+            'Round ${_pendingNext!.roundNumber}: ${_pendingNext!.roundName} is already scheduled for ${recFormatDate(_pendingNext!.interviewDate)}.');
+        return;
+      }
+      try {
+        final candidate = await _service.getCandidate(r.candidateId);
+        if (!mounted) return;
+        // The scorecard is saved once the next round is scheduled
+        if (await showScheduleInterviewSheet(context, candidate: candidate)) await _save('Schedule');
+      } catch (e) {
+        if (mounted) recShowError(context, e);
+      }
+      return;
+    }
+    final text = {
+      'Pass': _isFinalRound
+          ? 'Pass ${r.candidateName} in the final round? No rounds are left - mark them Selected to move them forward.'
+          : 'Pass ${r.candidateName} in this round?',
+      'Hold': 'Put ${r.candidateName} on hold?',
+      'Fail': 'Reject ${r.candidateName}? Their status becomes Rejected.',
+      'FinalRound': 'Select ${r.candidateName}? This decision is final and moves them to the offer stage.',
+    }[rec]!;
+    final ok = await recConfirm(context,
+        title: recommendationLabel(rec), message: text, confirmLabel: 'Confirm', destructive: rec == 'Fail');
+    if (ok) await _save(rec);
+  }
+
+  Future<void> _reassign() async {
+    final r = _round!;
+    List<RecJobOpening> jobs;
+    try {
+      jobs = (await _service.getJobOpenings(status: 'ACTIVE')).where((j) => j.id != r.jobOpeningId).toList();
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+      return;
+    }
+    if (!mounted) return;
+    if (jobs.isEmpty) {
+      recShowError(context, 'There is no other ACTIVE job opening to reassign to.');
+      return;
+    }
+    String? jobId;
+    final reason = TextEditingController();
+    final result = await recShowSheet<bool>(
+      context,
+      title: 'Reassign ${r.candidateName}',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Current role: ${r.position}', style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+            const SizedBox(height: 12),
+            RecDropdown<String>(
+              label: 'Target role',
+              value: jobId,
+              items: jobs.map((j) => j.id).toList(),
+              labelOf: (id) {
+                final j = jobs.firstWhere((x) => x.id == id);
+                return '${j.title} (${j.code})';
+              },
+              onChanged: (v) => setS(() => jobId = v),
+            ),
+            RecTextField(controller: reason, label: 'Reason', maxLines: 3),
+            RecPrimaryButton(
+              label: 'Reassign',
+              icon: Icons.swap_horiz_rounded,
+              onPressed: () {
+                if (jobId == null) {
+                  recShowError(ctx, 'Please select a target role');
+                  return;
+                }
+                Navigator.pop(ctx, true);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+    if (result == true && jobId != null) await _save('Reassign', reassignJobId: jobId, reassignReason: reason.text.trim());
+
+  }
+
+  Future<void> _editQuestion(int? index) async {
+    final r = _round!;
+    final initial = index == null ? null : r.questions[index];
+    final q = await showQuestionEditor(context, initial: initial);
+    if (q == null || !mounted) return;
+    try {
+      if (index == null) {
+        await _service.addRoundQuestion(r.id, q);
+      } else {
+        await _service.updateRoundQuestion(r.id, initial!.id, q);
+      }
+      if (!mounted) return;
+      recShowSuccess(context, index == null ? 'Question added to this round' : 'Question updated');
+      // Keep what was typed: reload the round, then put the answers back
+      final oldScores = Map<int, num>.from(_scores);
+      final oldNotes = _notes.map((k, v) => MapEntry(k, v.text));
+      final oldMarks = _marks.map((k, v) => MapEntry(k, v.text));
+      final feedback = _feedback.text;
+      await _load(showLoader: false);
+      setState(() {
+        _scores = oldScores;
+        oldNotes.forEach((k, v) => _notes[k]?.text = v);
+        oldMarks.forEach((k, v) => _marks[k]?.text = v);
+        _feedback.text = feedback;
+      });
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    final item = widget.item;
-
+    final r = _round;
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF0F172A)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text(
-          'Candidate Interview Flow',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
-        centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Subtitle
-          const Text(
-            'Review scorecards, evaluator remarks, and round recommendations across the interview loop.',
-            style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-          ),
-          const SizedBox(height: 14),
-
-          // Round Tabs
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildRoundTab(0, 'Round 1', 'PASSED', isPassed: true),
-                const SizedBox(width: 8),
-                _buildRoundTab(1, 'Round 2', 'PENDING'),
-                const SizedBox(width: 8),
-                _buildRoundTab(2, 'Round 3', 'PENDING'),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // ── ROUND METADATA CARD ──
-          Container(
+      backgroundColor: kRecBg,
+      appBar: recAppBar(context, 'Interview Scorecard', onRefresh: () => _load()),
+      body: RecAsyncBody(
+        loading: _loading,
+        error: _error,
+        isEmpty: r == null,
+        emptyText: 'Interview round not found',
+        onRetry: _load,
+        builder: () {
+          final round = r!;
+          final withdrawn = round.candidateWithdrawn;
+          final readOnly = (round.status != 'Scheduled' && !_forceEdit) || withdrawn;
+          final canEditQuestions = round.status == 'Scheduled' && !withdrawn;
+          final saved = round.evaluation?.recommendation;
+          final selectedFinal = saved == 'FinalRound';
+          return ListView(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: const [
-                    Icon(Icons.assignment_ind_outlined, size: 16, color: Color(0xFFEFAA1F)),
-                    SizedBox(width: 6),
-                    Text('ROUND METADATA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Color(0xFF0F172A), letterSpacing: 0.5)),
-                  ],
+            children: [
+              _headerCard(round),
+              if (_candidateRounds.length > 1) _otherRounds(round),
+              if (withdrawn)
+                _notice('The candidate withdrew their application - this round can no longer be evaluated or re-scheduled.',
+                    AppColors.error, AppColors.errorBg),
+              RecSectionTitle('Questions (${round.questions.length})',
+                  trailing: canEditQuestions
+                      ? TextButton.icon(
+                          onPressed: () => _editQuestion(null),
+                          icon: const Icon(Icons.add_rounded, size: 18),
+                          label: const Text('Add question'),
+                        )
+                      : null),
+              if (round.questions.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Text('No questions on this round.', style: TextStyle(fontSize: 12.5, color: kRecMuted)),
                 ),
-                const SizedBox(height: 12),
-                _metadataRow('CANDIDATE', item.candidateName),
-                _metadataRow('ROLE POSITION', item.position),
-                _metadataRow('STAGE ROUND', item.round.toUpperCase(), isAmber: true),
-                _metadataRow('ASSIGNED EVALUATOR', item.interviewerName),
-                _metadataRow('SCHEDULED DATE', item.interviewDate),
-                _metadataRow('SCHEDULED TIME', item.interviewTime),
-                _metadataRow('INTERVIEW MODE', item.mode),
-                _metadataRow('STATUS', item.status, isPass: item.status.contains('Pass')),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // ── SCORECARD SECTION ──
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              ...List.generate(round.questions.length, (i) => _questionCard(round, i, readOnly, canEditQuestions)),
+              RecCard(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: const [
-                        Icon(Icons.rate_review_outlined, size: 16, color: Color(0xFFEFAA1F)),
-                        SizedBox(width: 6),
-                        Text('SCORECARD', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Color(0xFF0F172A), letterSpacing: 0.5)),
-                      ],
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _saveScorecard,
-                      icon: const Icon(Icons.check_rounded, size: 14),
-                      label: const Text('Save Scorecard', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEFAA1F),
-                        foregroundColor: const Color(0xFF0F172A),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        elevation: 0,
+                    RecSectionTitle(_isPortfolio ? 'Overall score & remarks' : 'Overall assessment',
+                        trailing: round.status != 'Scheduled' && !selectedFinal && !withdrawn
+                            ? TextButton(
+                                onPressed: () => setState(() {
+                                  if (_forceEdit) _fillForm(round);
+                                  _forceEdit = !_forceEdit;
+                                }),
+                                child: Text(_forceEdit ? 'Cancel edit' : 'Edit scorecard'),
+                              )
+                            : null),
+                    if (_isPortfolio) ...[
+                      Text('Overall score: ${_overall.round()} / 100',
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kRecInk)),
+                      Slider(
+                        value: _overall,
+                        min: 0,
+                        max: 100,
+                        divisions: 100,
+                        activeColor: AppColors.primary,
+                        onChanged: readOnly ? null : (v) => setState(() => _overall = v),
                       ),
+                    ],
+                    TextFormField(
+                      controller: _feedback,
+                      readOnly: readOnly,
+                      maxLines: 5,
+                      minLines: 3,
+                      style: const TextStyle(fontSize: 14, color: kRecInk),
+                      decoration: recInputDecoration('Summary *'),
                     ),
                   ],
                 ),
-                const SizedBox(height: 16),
-
-                // Q1
-                _buildTextQuestion(1, 'Walk us through your design process for your favorite portfolio project.'),
-                const SizedBox(height: 16),
-
-                // Q2
-                _buildTextQuestion(2, 'How do you gather user research insights and implement them into mockups?'),
-                const SizedBox(height: 16),
-
-                // Q3
-                _buildTextQuestion(3, 'How do you handle disagreement from product managers on design patterns?'),
-                const SizedBox(height: 16),
-
-                // Q4 Rating
-                _buildRatingQuestion(4, "Rate the candidate's visual layout, modern typography, and spacing."),
-                const SizedBox(height: 16),
-
-                // Q5 Rating
-                _buildRatingQuestion(5, "Rate the candidate's responsive designs across desktop and mobile formats."),
-                const SizedBox(height: 16),
-
-                // Q6 Rating
-                _buildRatingQuestion(6, "Evaluate candidate's Figma/design tool competency on custom components and design systems."),
-                const SizedBox(height: 16),
-
-                // Q7 Scenario
-                _buildScenarioQuestion(
-                  7,
-                  'Explain a scenario where design choices had to be modified based on testing feedback.',
-                  'Expected to show how feedback was captured, analyzed, and implemented into iterative designs.',
-                ),
-                const SizedBox(height: 18),
-
-                // Overall Score
-                const Text('OVERALL SCORE *', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                      child: Text('$_overallScore / 100', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(6),
-                        child: LinearProgressIndicator(
-                          value: _overallScore / 100,
-                          backgroundColor: const Color(0xFFF1F5F9),
-                          valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFEFAA1F)),
-                          minHeight: 8,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // Overall Remarks
-                const Text('OVERALL SCORE NOTE & REMARKS *', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 6),
-                TextField(
-                  controller: _generalFeedbackCtrl,
-                  maxLines: 3,
-                  style: const TextStyle(fontSize: 12),
-                  decoration: InputDecoration(
-                    hintText: 'Enter general evaluator feedback...',
-                    hintStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFEFAA1F))),
-                    contentPadding: const EdgeInsets.all(10),
-                  ),
-                ),
-                const SizedBox(height: 18),
-
-                // Recommendation Decision Buttons
-                const Text('RECOMMENDATION DECISION', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _decisionBtn('Pass Round', 'Pass', Icons.check_circle_outline_rounded, const Color(0xFF16A34A)),
-                    _decisionBtn('Hold Candidate', 'Hold', Icons.pause_circle_outline_rounded, AppColors.brandDark),
-                    _decisionBtn('Reject Candidate', 'Reject', Icons.cancel_outlined, const Color(0xFFDC2626)),
-                    _decisionBtn('Schedule Next', 'Schedule', Icons.calendar_today_outlined, const Color(0xFF2563EB)),
-                    _decisionBtn('Selected', 'Selected', Icons.verified_rounded, const Color(0xFF059669)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+              ),
+              _decisions(round, readOnly, saved, selectedFinal, withdrawn),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildRoundTab(int index, String title, String badge, {bool isPassed = false}) {
-    final isSelected = _selectedRoundIndex == index;
-    return GestureDetector(
-      onTap: () => setState(() => _selectedRoundIndex = index),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.white : const Color(0xFFF1F5F9),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: isSelected ? const Color(0xFFEFAA1F) : Colors.transparent),
-        ),
-        child: Row(
-          children: [
-            Text(
-              title,
-              style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600, color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B)),
-            ),
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: isPassed ? const Color(0xFFDCFCE7) : const Color(0xFFE2E8F0),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                badge,
-                style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: isPassed ? const Color(0xFF16A34A) : const Color(0xFF64748B)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget _notice(String text, Color fg, Color bg) =>
+      RecNotice(text, color: fg, background: bg, icon: Icons.info_outline_rounded);
 
-  Widget _metadataRow(String label, String value, {bool isAmber = false, bool isPass = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
+  Widget _headerCard(RecInterviewRound r) {
+    return RecCard(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(
-            width: 130,
-            child: Text(label, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-          ),
-          Expanded(
-            child: Text(
-              value,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                color: isPass
-                    ? const Color(0xFF16A34A)
-                    : isAmber
-                        ? AppColors.brandDark
-                        : const Color(0xFF0F172A),
+          Row(children: [
+            RecAvatar(r.candidateName),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(r.candidateName, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kRecInk)),
+                  const SizedBox(height: 2),
+                  Text(r.position, style: const TextStyle(fontSize: 13, color: kRecMuted, fontWeight: FontWeight.w500)),
+                ],
               ),
+            ),
+            const SizedBox(width: 8),
+            RecBadge(r.displayStatus),
+          ]),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
+          RecInfoRow('Round', 'Round ${r.roundNumber}: ${r.roundName}${_isFinalRound ? ' (final)' : ''}'),
+          RecInfoRow('When', '${recFormatDate(r.interviewDate)}, ${recFormatTime(r.interviewTime)} (${r.duration})'),
+          RecInfoRow('Mode', r.mode),
+          RecInfoRow('Evaluator', r.interviewerName),
+          if (r.calendarSyncStatus.isNotEmpty)
+            RecInfoRow('Calendar', r.calendarSyncStatus == 'Failed' ? 'Failed: ${r.calendarSyncError}' : r.calendarSyncStatus),
+          if (r.evaluation != null) RecInfoRow('Evaluated', recFormatDateTime(r.evaluation!.evaluatedAt)),
+          if ((r.evaluation?.reassignedPosition ?? '').isNotEmpty) RecInfoRow('Reassigned to', r.evaluation!.reassignedPosition),
+          const SizedBox(height: 12),
+          Wrap(spacing: 8, runSpacing: 8, children: [
+            if (r.meetLink.isNotEmpty)
+              RecPrimaryButton(label: 'Join Meet', icon: Icons.video_call_outlined, onPressed: () => recOpenUrl(context, r.meetLink)),
+            if (r.calendarEventLink.isNotEmpty)
+              RecPrimaryButton(
+                  label: 'Calendar event',
+                  icon: Icons.calendar_month_outlined,
+                  outlined: true,
+                  onPressed: () => recOpenUrl(context, r.calendarEventLink)),
+            if (r.status == 'Scheduled' && !r.candidateWithdrawn)
+              RecPrimaryButton(
+                label: 'Send invite again',
+                icon: Icons.send_outlined,
+                outlined: true,
+                onPressed: () async {
+                  try {
+                    final msg = await _service.syncRoundCalendar(r.id);
+                    if (!mounted) return;
+                    recShowSuccess(context, msg);
+                    _load(showLoader: false);
+                  } catch (e) {
+                    if (mounted) recShowError(context, e);
+                  }
+                },
+              ),
+          ]),
+        ],
+      ),
+    );
+  }
+
+  Widget _otherRounds(RecInterviewRound current) {
+    final rounds = [..._candidateRounds]..sort((a, b) => a.roundNumber.compareTo(b.roundNumber));
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.only(bottom: 12),
+        children: rounds.map((x) {
+          final sel = x.id == current.id;
+          return Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: ChoiceChip(
+              label: Text('R${x.roundNumber} ${x.roundName} • ${x.displayStatus}'),
+              selected: sel,
+              showCheckmark: false,
+              selectedColor: AppColors.primary,
+              backgroundColor: AppColors.surface,
+              side: BorderSide(color: sel ? AppColors.primary : kRecBorder),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+              labelStyle: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: sel ? AppColors.onPrimary : kRecMuted),
+              onSelected: sel
+                  ? null
+                  : (_) => Navigator.pushReplacement(
+                      context, MaterialPageRoute(builder: (_) => AdminCandidateScorecardScreen(roundId: x.id))),
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _questionCard(RecInterviewRound r, int i, bool readOnly, bool canEdit) {
+    final q = r.questions[i];
+    return RecCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text('${i + 1}. ${q.text}', style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: kRecInk)),
+              ),
+              if (canEdit)
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Edit question',
+                  icon: const Icon(Icons.edit_outlined, size: 20, color: kRecMuted),
+                  onPressed: () => _editQuestion(i),
+                ),
+            ],
+          ),
+          Text('${answerTypeLabel(q.answerType)} • ${q.maxScore} marks', style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+          const SizedBox(height: 8),
+          if (q.answerType == 'rating')
+            Row(
+              children: List.generate(5, (s) {
+                final filled = (_scores[i] ?? 0) >= s + 1;
+                return IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: readOnly ? null : () => setState(() => _scores[i] = s + 1),
+                  icon: Icon(filled ? Icons.star_rounded : Icons.star_border_rounded, color: AppColors.brand, size: 26),
+                );
+              }),
+            ),
+          if (q.answerType == 'multichoice')
+            ...List.generate(q.options.length, (o) {
+              final sel = _scores[i] == o;
+              return InkWell(
+                onTap: readOnly ? null : () => setState(() => _scores[i] = o),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Row(children: [
+                    Icon(sel ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
+                        size: 20, color: sel ? AppColors.brandDark : kRecHint),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(q.options[o], style: const TextStyle(fontSize: 13.5, color: kRecInk))),
+                  ]),
+                ),
+              );
+            }),
+          if (q.answerType == 'scenario' && q.options.isNotEmpty)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: AppColors.infoBg, borderRadius: BorderRadius.circular(12)),
+              child: Text('Expected: ${q.options.first}', style: const TextStyle(fontSize: 13, color: AppColors.info)),
+            ),
+          const SizedBox(height: 6),
+          TextFormField(
+            controller: _notes[i],
+            readOnly: readOnly,
+            maxLines: 3,
+            minLines: 1,
+            style: const TextStyle(fontSize: 14, color: kRecInk),
+            decoration: recInputDecoration(
+                q.answerType == 'text' || q.answerType == 'scenario' ? 'Response / notes *' : 'Notes (optional)'),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: 160,
+            child: TextFormField(
+              controller: _marks[i],
+              readOnly: readOnly,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(fontSize: 14, color: kRecInk),
+              decoration: recInputDecoration('Score / ${q.maxScore}'),
             ),
           ),
         ],
@@ -353,117 +572,59 @@ class _AdminCandidateScorecardScreenState extends State<AdminCandidateScorecardS
     );
   }
 
-  Widget _buildTextQuestion(int qNum, String question) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Q$qNum: $question', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-        const SizedBox(height: 6),
-        const Text("CANDIDATE'S ANSWER / RESPONSE *", style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-        const SizedBox(height: 4),
-        TextFormField(
-          initialValue: _textAnswers[qNum] ?? '',
-          maxLines: 2,
-          style: const TextStyle(fontSize: 11.5),
-          onChanged: (v) => _textAnswers[qNum] = v,
-          decoration: InputDecoration(
-            hintText: 'No answer recorded.',
-            hintStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-            contentPadding: const EdgeInsets.all(8),
+  Widget _decisions(RecInterviewRound r, bool readOnly, String? saved, bool selectedFinal, bool withdrawn) {
+    final awaiting = r.status == 'Scheduled';
+    final options = <(String, String, IconData, Color)>[
+      ('Pass', 'Pass round', Icons.check_circle_outline_rounded, AppColors.success),
+      ('Hold', 'Hold', Icons.pause_circle_outline_rounded, AppColors.brandDark),
+      ('Fail', 'Reject', Icons.cancel_outlined, AppColors.error),
+      if ((saved == null || saved == 'Pass' || saved == 'Schedule') && (awaiting || !_isFinalRound || _pendingNext != null))
+        (awaiting ? 'Reschedule' : 'Schedule', awaiting ? 'Re-schedule' : (_pendingNext != null ? 'Next round scheduled' : 'Schedule next round'),
+            Icons.event_repeat_rounded, AppColors.info),
+      ('Reassign', (r.evaluation?.reassignedPosition ?? '').isNotEmpty ? 'Reassign: ${r.evaluation!.reassignedPosition}' : 'Reassign role',
+          Icons.swap_horiz_rounded, AppColors.brandDark),
+      ('FinalRound', 'Selected', Icons.emoji_events_outlined, AppColors.brandDark),
+    ];
+    return RecCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const RecSectionTitle('Decision'),
+          Text(
+            selectedFinal
+                ? 'This candidate has been selected. The decision is final.'
+                : saved != null
+                    ? 'Choose a different decision to change it - the scorecard is saved again.'
+                    : 'Choosing a decision saves the scorecard.',
+            style: const TextStyle(fontSize: 12.5, color: kRecMuted),
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRatingQuestion(int qNum, String question) {
-    final rating = _ratings[qNum] ?? 0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Q$qNum: $question', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-        const SizedBox(height: 6),
-        Row(
-          children: List.generate(5, (idx) {
-            final star = idx + 1;
-            return GestureDetector(
-              onTap: () => setState(() => _ratings[qNum] = star),
-              child: Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Icon(
-                  star <= rating ? Icons.star_rounded : Icons.star_outline_rounded,
-                  color: star <= rating ? const Color(0xFFEFAA1F) : const Color(0xFFCBD5E1),
-                  size: 22,
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: options.map((o) {
+              final isSaved = saved == o.$1;
+              final disabled = _saving != null ||
+                  withdrawn ||
+                  selectedFinal ||
+                  (readOnly && isSaved && o.$1 != 'Schedule') ||
+                  (o.$1 == 'Schedule' && _pendingNext != null);
+              return OutlinedButton.icon(
+                onPressed: disabled ? null : () => _decide(o.$1),
+                icon: _saving == o.$1
+                    ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : Icon(o.$3, size: 18, color: disabled ? kRecHint : o.$4),
+                label: Text(o.$2, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kRecInk,
+                  backgroundColor: isSaved ? o.$4.withValues(alpha: 0.12) : AppColors.surface,
+                  side: BorderSide(color: isSaved ? o.$4 : kRecBorder, width: isSaved ? 1.4 : 1.2),
+                  minimumSize: const Size(0, 44),
                 ),
-              ),
-            );
-          }),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildScenarioQuestion(int qNum, String question, String expected) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('Q$qNum: $question', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
-        const SizedBox(height: 6),
-        Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFFDE68A))),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('EXPECTED SCENARIO ANSWER:', style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w900, color: AppColors.brandDark)),
-              const SizedBox(height: 2),
-              Text(expected, style: const TextStyle(fontSize: 10.5, color: Color(0xFF78350F))),
-            ],
+              );
+            }).toList(),
           ),
-        ),
-        const SizedBox(height: 6),
-        const Text("CANDIDATE'S RESPONSE NOTES *", style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
-        const SizedBox(height: 4),
-        TextFormField(
-          initialValue: _textAnswers[qNum] ?? '',
-          maxLines: 2,
-          style: const TextStyle(fontSize: 11.5),
-          onChanged: (v) => _textAnswers[qNum] = v,
-          decoration: InputDecoration(
-            hintText: 'No response notes recorded.',
-            hintStyle: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-            contentPadding: const EdgeInsets.all(8),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _decisionBtn(String label, String value, IconData icon, Color color) {
-    final isSelected = _recommendation == value;
-    return GestureDetector(
-      onTap: () => setState(() => _recommendation = value),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-        decoration: BoxDecoration(
-          color: isSelected ? color.withAlpha(20) : const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isSelected ? color : const Color(0xFFE2E8F0)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: isSelected ? color : const Color(0xFF64748B)),
-            const SizedBox(width: 4),
-            Text(
-              label,
-              style: TextStyle(fontSize: 10.5, fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600, color: isSelected ? color : const Color(0xFF475569)),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }

@@ -13,10 +13,12 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../config/app_colors.dart';
 import '../../config/app_route_observer.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/api_client.dart';
 import '../../services/fcm_service.dart';
 import '../../services/task_service.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../admin/approvals/admin_approvals_screen.dart';
@@ -332,7 +334,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
           TextButton(onPressed: () => Navigator.pop(ctx, 'read'), child: const Text('Clear read only')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, 'all'),
-            style: TextButton.styleFrom(foregroundColor: const Color(0xFFDC2626)),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
             child: const Text('Clear everything'),
           ),
         ],
@@ -439,20 +441,37 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(item.isRead ? Icons.mark_email_unread_outlined : Icons.mark_email_read_outlined),
-              title: Text(item.isRead ? 'Mark as unread' : 'Mark as read'),
-              onTap: () => Navigator.pop(ctx, 'toggle'),
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626)),
-              title: const Text('Delete', style: TextStyle(color: Color(0xFFDC2626))),
-              onTap: () => Navigator.pop(ctx, 'delete'),
-            ),
-          ],
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 12, 8, 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: AppColors.divider,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              ListTile(
+                leading: Icon(
+                  item.isRead ? Icons.mark_email_unread_outlined : Icons.mark_email_read_outlined,
+                  color: AppColors.textPrimary,
+                ),
+                title: Text(item.isRead ? 'Mark as unread' : 'Mark as read', style: AppTextStyles.label),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                onTap: () => Navigator.pop(ctx, 'toggle'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
+                title: Text('Delete', style: AppTextStyles.label.copyWith(color: AppColors.error)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                onTap: () => Navigator.pop(ctx, 'delete'),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -464,32 +483,25 @@ class _NotificationsScreenState extends State<NotificationsScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          tooltip: 'Menu',
+          icon: const Icon(Icons.menu_rounded),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Notifications',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
-        centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('Notifications'),
         actions: [
           if (_unreadTotal > 0)
             TextButton.icon(
               onPressed: _handleMarkAllAsRead,
               icon: const Icon(Icons.done_all_rounded, size: 18),
-              label: const Text('Mark all read', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
-              style: TextButton.styleFrom(foregroundColor: AppColors.primary),
+              label: const Text('Mark all read', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
             ),
           IconButton(
             tooltip: 'Clear',
-            icon: const Icon(Icons.delete_sweep_outlined, color: Color(0xFF475569)),
+            icon: const Icon(Icons.delete_sweep_outlined),
             onPressed: _handleClear,
           ),
         ],
@@ -503,24 +515,22 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 padding: const EdgeInsets.all(16),
                 children: [
                   SizedBox(
-                    height: 42,
+                    height: 44,
                     child: TextField(
                       controller: _searchController,
                       onChanged: _onSearchChanged,
                       textAlignVertical: TextAlignVertical.center,
-                      style: const TextStyle(fontSize: 13, color: Color(0xFF0F172A)),
+                      style: AppTextStyles.bodyMedium,
                       decoration: InputDecoration(
                         isDense: true,
-                        filled: true,
-                        fillColor: const Color(0xFFF8FAFC),
                         hintText: _isAdmin ? 'Search employee, title or message...' : 'Search title or message...',
-                        hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
-                        prefixIcon: const Icon(Icons.search_rounded, size: 20, color: Color(0xFF94A3B8)),
+                        prefixIcon: const Icon(Icons.search_rounded, size: 20),
                         prefixIconConstraints: const BoxConstraints(minWidth: 40, minHeight: 40),
                         suffixIcon: _searchQuery.isEmpty
                             ? null
                             : IconButton(
-                                icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF94A3B8)),
+                                tooltip: 'Clear search',
+                                icon: const Icon(Icons.close_rounded, size: 18, color: AppColors.textCaption),
                                 splashRadius: 18,
                                 onPressed: () {
                                   _searchController.clear();
@@ -528,21 +538,13 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                                 },
                               ),
                         contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                        ),
-                        focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.4),
-                        ),
                       ),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   Container(
-                    height: 38,
-                    decoration: BoxDecoration(color: const Color(0xFFF1F5F9), borderRadius: BorderRadius.circular(10)),
+                    height: 40,
+                    decoration: BoxDecoration(color: const Color(0xFFECEEF1), borderRadius: BorderRadius.circular(12)),
                     padding: const EdgeInsets.all(3),
                     child: Row(
                       children: [
@@ -552,7 +554,7 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                       ],
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   // Category chips with UNREAD counts, as on web.
                   SingleChildScrollView(
                     scrollDirection: Axis.horizontal,
@@ -560,25 +562,38 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                       children: [
                         _typeChip('all', 'All', _unreadTotal, Icons.layers_outlined),
                         for (final f in _categoryFilters) ...[
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 8),
                           _typeChip(f.key, f.label, _unreadByCategory[f.key] ?? 0, f.icon),
                         ],
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                   if (_notifications.isEmpty)
                     Container(
-                      padding: const EdgeInsets.all(40),
+                      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFECEEF1)),
+                      ),
                       child: Column(
                         children: [
-                          const Icon(Icons.notifications_none_rounded, size: 40, color: Color(0xFF94A3B8)),
-                          const SizedBox(height: 8),
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(Icons.notifications_none_rounded, size: 28, color: AppColors.primaryText),
+                          ),
+                          const SizedBox(height: 16),
                           Text(
                             _isAdmin ? 'No notifications' : 'You have no notifications yet.',
-                            style: const TextStyle(fontSize: 13, color: Color(0xFF94A3B8)),
+                            textAlign: TextAlign.center,
+                            style: AppTextStyles.headingSmall,
                           ),
                         ],
                       ),
@@ -587,14 +602,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     Container(
                       clipBehavior: Clip.antiAlias,
                       decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFECEEF1)),
+                        boxShadow: kSoftCardShadow,
                       ),
                       child: Column(
                         children: [
                           for (final (i, item) in _notifications.indexed) ...[
-                            if (i > 0) const Divider(height: 1, thickness: 1, color: Color(0xFFF1F5F9)),
+                            if (i > 0) const Divider(height: 1, thickness: 1, color: Color(0xFFECEEF1)),
                             _buildNotificationCard(item),
                           ],
                         ],
@@ -602,20 +618,16 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                     ),
                     if (_page < _pages)
                       Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 16),
+                        padding: const EdgeInsets.only(top: 12, bottom: 16),
                         child: Center(
                           child: OutlinedButton.icon(
                             onPressed: _loadingMore ? null : _loadMore,
                             icon: _loadingMore
                                 ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                                 : const Icon(Icons.expand_more_rounded, size: 18),
-                            label: const Text('Load more', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                            label: const Text('Load more'),
                             style: OutlinedButton.styleFrom(
-                              foregroundColor: const Color(0xFFEFAA1F),
-                              side: const BorderSide(color: Color(0xFFFDE68A)),
-                              backgroundColor: const Color(0xFFFFFBEB),
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                             ),
                           ),
                         ),
@@ -631,14 +643,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     final isSelected = _statusFilter == label;
     return InkWell(
       onTap: () => _setFilter(status: label),
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
+      borderRadius: BorderRadius.circular(10),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
         alignment: Alignment.center,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? Colors.white : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: isSelected ? [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)] : null,
+          color: isSelected ? AppColors.surface : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: isSelected ? kSoftCardShadow : null,
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -649,18 +662,18 @@ class _NotificationsScreenState extends State<NotificationsScreen>
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-                  color: isSelected ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                  fontSize: 13,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
+                  color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
                 ),
               ),
             ),
             if (badgeCount != null && badgeCount > 0) ...[
-              const SizedBox(width: 4),
+              const SizedBox(width: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(8)),
-                child: Text('$badgeCount', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(color: AppColors.brandLight, borderRadius: BorderRadius.circular(999)),
+                child: Text('$badgeCount', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.brandDark)),
               ),
             ],
           ],
@@ -671,38 +684,47 @@ class _NotificationsScreenState extends State<NotificationsScreen>
 
   /// Category chip; the badge is the category's unread count (hidden at 0), as on web.
   Widget _typeChip(String key, String label, int unread, IconData icon) {
-    const color = Color(0xFFEFAA1F);
-    const bg = Color(0xFFFFFBEB);
+    final color = AppColors.primary;
+    final bg = AppColors.primary.withValues(alpha: 0.12);
     final isSelected = _typeFilter == key;
     return InkWell(
       onTap: () => _setFilter(type: key),
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      borderRadius: BorderRadius.circular(999),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: isSelected ? bg : Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: isSelected ? color : const Color(0xFFE2E8F0)),
+          color: isSelected ? bg : AppColors.surface,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: isSelected ? color : const Color(0xFFE2E5EA)),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 13, color: isSelected ? color : const Color(0xFF64748B)),
-            const SizedBox(width: 5),
+            Icon(icon, size: 16, color: isSelected ? AppColors.primaryText : AppColors.textSecondary),
+            const SizedBox(width: 6),
             Text(
               label,
-              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: isSelected ? color : const Color(0xFF475569)),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: isSelected ? AppColors.primaryText : AppColors.textPrimary,
+              ),
             ),
             if (unread > 0) ...[
-              const SizedBox(width: 4),
+              const SizedBox(width: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                 decoration: BoxDecoration(
-                  color: isSelected ? color : const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
+                  color: isSelected ? color : AppColors.brandLight,
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   '$unread',
-                  style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: isSelected ? Colors.white : AppColors.brandDark),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isSelected ? AppColors.onPrimary : AppColors.brandDark,
+                  ),
                 ),
               ),
             ],
@@ -712,6 +734,15 @@ class _NotificationsScreenState extends State<NotificationsScreen>
     );
   }
 
+  /// Leading icon for a row: the icon of its category chip (presentation only).
+  IconData _categoryIcon(NotificationItemModel n) {
+    final key = _categoryOf(n);
+    for (final f in _categoryFilters) {
+      if (f.key == key) return f.icon;
+    }
+    return Icons.notifications_none_rounded;
+  }
+
   /// One row: unread rows are tinted with an amber dot; tap = mark read + open; long-press =
   /// mark read/unread or delete; swipe left deletes.
   Widget _buildNotificationCard(NotificationItemModel item) {
@@ -719,57 +750,77 @@ class _NotificationsScreenState extends State<NotificationsScreen>
       key: ValueKey('notif_${item.id}'),
       direction: DismissDirection.endToStart,
       background: Container(
-        color: const Color(0xFFFEE2E2),
+        color: AppColors.errorBg,
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        child: const Icon(Icons.delete_outline_rounded, color: Color(0xFFDC2626)),
+        child: const Icon(Icons.delete_outline_rounded, color: AppColors.error),
       ),
       onDismissed: (_) => _handleDeleteSingle(item),
       child: Material(
-        color: item.isRead ? Colors.white : const Color(0xFFFFFBEB),
+        color: item.isRead ? AppColors.surface : AppColors.primary.withValues(alpha: 0.06),
         child: InkWell(
           onTap: () => _handleNotificationTap(item),
           onLongPress: () => _showRowActions(item),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 16, 14),
+            padding: const EdgeInsets.all(16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                SizedBox(
-                  width: 18,
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 5),
-                    child: item.isRead
-                        ? null
-                        : Container(
-                            width: 8,
-                            height: 8,
-                            decoration: const BoxDecoration(color: Color(0xFFEFAA1F), shape: BoxShape.circle),
-                          ),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: item.isRead ? AppColors.background : AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Icon(
+                    _categoryIcon(item),
+                    size: 20,
+                    color: item.isRead ? AppColors.textSecondary : AppColors.primaryText,
                   ),
                 ),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         item.title,
-                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
+                        style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
                       ),
                       if (item.message.isNotEmpty) ...[
-                        const SizedBox(height: 3),
+                        const SizedBox(height: 4),
                         Text(
                           item.message,
-                          style: const TextStyle(fontSize: 13, height: 1.4, color: Color(0xFF334155)),
+                          style: AppTextStyles.bodySmall.copyWith(color: const Color(0xFF374151)),
                         ),
                       ],
                       if (_isAdmin && item.staffSubtitle.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(item.staffSubtitle, style: const TextStyle(fontSize: 11.5, color: Color(0xFF64748B))),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.staffSubtitle,
+                          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                        ),
                       ],
                       const SizedBox(height: 6),
-                      Text(item.timeAgo, style: const TextStyle(fontSize: 12, color: Color(0xFF64748B))),
+                      Text(
+                        item.timeAgo,
+                        style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
+                      ),
                     ],
+                  ),
+                ),
+                SizedBox(
+                  width: 18,
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 6, left: 10),
+                    child: item.isRead
+                        ? null
+                        : Container(
+                            width: 8,
+                            height: 8,
+                            decoration: BoxDecoration(color: AppColors.primary, shape: BoxShape.circle),
+                          ),
                   ),
                 ),
               ],

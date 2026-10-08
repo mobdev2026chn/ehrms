@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../widgets/animations.dart';
+import '../../widgets/app_card.dart';
 
 /// Figma "Request Submitted!" confirmation screen, shown after a software
 /// licence request is submitted from [LicenseRequestScreen].
@@ -24,19 +26,15 @@ class LicenseRequestSuccessScreen extends StatelessWidget {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'Submit Request',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        centerTitle: true,
+        title: const Text('Submit Request'),
       ),
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
           child: Column(
             children: [
               const SizedBox(height: 24),
@@ -49,7 +47,7 @@ class LicenseRequestSuccessScreen extends StatelessWidget {
                       height: 110,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: AppColors.primary.withValues(alpha: 0.15),
+                        color: AppColors.primary.withValues(alpha: 0.12),
                       ),
                       child: Center(
                         child: Container(
@@ -59,27 +57,22 @@ class LicenseRequestSuccessScreen extends StatelessWidget {
                             shape: BoxShape.circle,
                             color: AppColors.primary,
                           ),
-                          child: const Icon(Icons.check,
-                              color: Colors.white, size: 36),
+                          child: Icon(Icons.check_rounded,
+                              color: AppColors.onPrimary, size: 36),
                         ),
                       ),
                     ),
                     const SizedBox(height: 24),
                     const Text(
                       'Request Submitted!',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingLarge,
                     ),
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 8),
                     Text(
                       'Your request for $softwareName has been sent for '
                       "approval. You'll receive an update within 48 hours.",
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 14,
+                      style: AppTextStyles.bodyMedium.copyWith(
                         height: 1.5,
                         color: AppColors.textSecondary,
                       ),
@@ -87,59 +80,48 @@ class LicenseRequestSuccessScreen extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: 28),
+              const SizedBox(height: 32),
               FadeSlideIn(
                 delay: const Duration(milliseconds: 120),
-                child: Container(
+                child: SizedBox(
                   width: double.infinity,
+                  child: AppCard(
                   padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.05),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
+                  border: Border.all(color: const Color(0xFFECEEF1)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
                           Container(
-                            padding: const EdgeInsets.all(8),
+                            width: 40,
+                            height: 40,
                             decoration: BoxDecoration(
                               color: AppColors.primary.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(10),
+                              borderRadius: BorderRadius.circular(12),
                             ),
                             child: Icon(Icons.auto_awesome,
-                                color: AppColors.primary, size: 20),
+                                color: AppColors.primaryText, size: 20),
                           ),
                           const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Request Summary',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: AppColors.textPrimary,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'Request Summary',
+                                  style: AppTextStyles.headingSmall,
                                 ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'REF: $referenceNo',
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: AppColors.textCaption,
-                                  letterSpacing: 0.5,
+                                const SizedBox(height: 2),
+                                Text(
+                                  'REF: $referenceNo',
+                                  style: AppTextStyles.caption.copyWith(
+                                    color: AppColors.textSecondary,
+                                    letterSpacing: 0.5,
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ],
                       ),
@@ -152,27 +134,16 @@ class LicenseRequestSuccessScreen extends StatelessWidget {
                     ],
                   ),
                 ),
+                ),
               ),
               const Spacer(),
               SizedBox(
                 width: double.infinity,
+                height: 52,
                 child: ElevatedButton(
                   onPressed: () =>
                       Navigator.of(context).popUntil((r) => r.isFirst),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                  ),
-                  child: const Text(
-                    'Back to My Assets',
-                    style: TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
+                  child: const Text('Back to My Assets'),
                 ),
               ),
             ],
@@ -189,16 +160,15 @@ class LicenseRequestSuccessScreen extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(
-              fontSize: 14, color: AppColors.textSecondary),
+          style: AppTextStyles.bodyMedium
+              .copyWith(color: AppColors.textSecondary),
         ),
         const SizedBox(width: 16),
         Flexible(
           child: Text(
             value,
             textAlign: TextAlign.right,
-            style: const TextStyle(
-              fontSize: 14,
+            style: AppTextStyles.bodyMedium.copyWith(
               fontWeight: FontWeight.w600,
               color: AppColors.textPrimary,
             ),

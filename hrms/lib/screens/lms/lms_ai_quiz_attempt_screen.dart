@@ -3,6 +3,8 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../services/lms_service.dart';
 import '../../utils/snackbar_utils.dart' show SnackBarUtils;
 import '../../utils/error_message_utils.dart';
@@ -92,12 +94,11 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
       return Scaffold(
         appBar: AppBar(
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
+            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
             onPressed: () => Navigator.pop(context),
           ),
           title: const Text('Practice Quiz'),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
         ),
         body: const Center(child: AppTabLoader()),
       );
@@ -107,18 +108,17 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
       return Scaffold(
         appBar: AppBar(
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
+            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
             onPressed: () => Navigator.pop(context),
           ),
           title: const Text('Quiz'),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
         ),
         body: Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Quiz not found'),
+              const Text('Quiz not found', style: AppTextStyles.headingSmall),
               const SizedBox(height: 16),
               ElevatedButton(
                 onPressed: () => Navigator.pop(context),
@@ -139,14 +139,15 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
       return Scaffold(
         appBar: AppBar(
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
+            icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
             onPressed: () => Navigator.pop(context),
           ),
           title: const Text('Quiz'),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
         ),
-        body: const Center(child: Text('No questions available')),
+        body: const Center(
+          child: Text('No questions available', style: AppTextStyles.bodySmall),
+        ),
       );
     }
 
@@ -158,32 +159,35 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text('Practice Quiz'),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
       ),
       body: Padding(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            LinearProgressIndicator(
-              value: progress / 100,
-              backgroundColor: Colors.grey[200],
-              valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                value: progress / 100,
+                minHeight: 8,
+                backgroundColor: const Color(0xFFECEEF1),
+                valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+              ),
             ),
             const SizedBox(height: 8),
             Text(
               'Question ${_currentIndex + 1} of ${questions.length}',
-              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              style: AppTextStyles.sectionLabel.copyWith(color: AppColors.textSecondary),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             Text(
               current['question'] ?? 'Question',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600),
+              style: AppTextStyles.headingMedium.copyWith(height: 1.35),
             ),
             const SizedBox(height: 24),
             ..._buildOptions(current),
@@ -193,12 +197,15 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
               children: [
                 if (_currentIndex > 0)
                   Material(
-                    color: AppColors.primary,
-                    shape: const CircleBorder(),
+                    color: AppColors.surface,
+                    shape: const CircleBorder(
+                      side: BorderSide(color: Color(0xFFE2E5EA), width: 1.2),
+                    ),
                     child: IconButton(
                       onPressed: () => setState(() => _currentIndex--),
-                      icon: const Icon(Icons.arrow_back),
-                      color: Colors.white,
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      tooltip: 'Previous',
+                      color: AppColors.textPrimary,
                       iconSize: 22,
                     ),
                   )
@@ -217,11 +224,12 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
                     },
                     icon: Icon(
                       _currentIndex < questions.length - 1
-                          ? Icons.arrow_forward
-                          : Icons.check,
+                          ? Icons.arrow_forward_rounded
+                          : Icons.check_rounded,
                       size: 22,
                     ),
-                    color: Colors.white,
+                    tooltip: _currentIndex < questions.length - 1 ? 'Next' : 'Submit',
+                    color: AppColors.onPrimary,
                   ),
                 ),
               ],
@@ -241,7 +249,6 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
         TextField(
           decoration: const InputDecoration(
             labelText: 'Your answer',
-            border: OutlineInputBorder(),
           ),
           onChanged: (v) => _answers[_currentIndex] = v,
         ),
@@ -252,32 +259,43 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
       final val = opt.toString();
       final isSelected = selected == val;
       return Padding(
-        padding: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.only(bottom: 12),
         child: InkWell(
           onTap: () => setState(() => _answers[_currentIndex] = val),
-          child: Container(
+          borderRadius: BorderRadius.circular(14),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               color: isSelected
-                  ? AppColors.primary.withOpacity(0.1)
-                  : Colors.grey[50],
+                  ? AppColors.primary.withValues(alpha: 0.10)
+                  : AppColors.surface,
               border: Border.all(
-                color: isSelected ? AppColors.primary : Colors.grey[300]!,
-                width: isSelected ? 2 : 1,
+                color: isSelected ? AppColors.primary : const Color(0xFFE2E5EA),
+                width: isSelected ? 1.6 : 1.2,
               ),
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(14),
             ),
             child: Row(
               children: [
                 Icon(
                   isSelected
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  color: isSelected ? AppColors.primary : Colors.grey,
-                  size: 24,
+                      ? Icons.radio_button_checked_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: isSelected ? AppColors.primaryText : AppColors.textCaption,
+                  size: 22,
                 ),
                 const SizedBox(width: 12),
-                Expanded(child: Text(val)),
+                Expanded(
+                  child: Text(
+                    val,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -328,28 +346,39 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
         title: const Text('Quiz Complete'),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const SizedBox(height: 24),
-            Icon(
-              Icons.emoji_events,
-              size: 64,
-              color: passed ? AppColors.brand : Colors.grey,
+            const SizedBox(height: 8),
+            Center(
+              child: Container(
+                width: 96,
+                height: 96,
+                decoration: BoxDecoration(
+                  color: passed
+                      ? AppColors.brand.withValues(alpha: 0.14)
+                      : AppColors.inputFill,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.emoji_events_rounded,
+                  size: 52,
+                  color: passed ? AppColors.brand : AppColors.textCaption,
+                ),
+              ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             const Text(
               'Knowledge Review Complete',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              style: AppTextStyles.headingLarge,
               textAlign: TextAlign.center,
             ),
             if ((_quiz?['lessonTitles'] as List?)?.isNotEmpty == true)
@@ -357,7 +386,7 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   'Focused practice for ${(_quiz!['lessonTitles'] as List).length}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                  style: AppTextStyles.bodySmall.copyWith(fontSize: 14),
                   textAlign: TextAlign.center,
                 ),
               ),
@@ -365,13 +394,17 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _resultCard(
-                  'Proficiency',
-                  '$percentage%',
-                  passed ? Colors.green : AppColors.brand,
+                Expanded(
+                  child: _resultCard(
+                    'Proficiency',
+                    '$percentage%',
+                    passed ? AppColors.success : AppColors.brandDark,
+                  ),
                 ),
-                const SizedBox(width: 16),
-                _resultCard('Score', '$score/$totalPoints', AppColors.primary),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _resultCard('Score', '$score/$totalPoints', AppColors.primaryText),
+                ),
               ],
             ),
             const SizedBox(height: 32),
@@ -389,10 +422,6 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
                               LmsCourseDetailScreen(courseId: courseId),
                         ),
                         (r) => r.isFirst,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
                       ),
                       child: const Text('Back to Course'),
                     ),
@@ -428,8 +457,7 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
     final rationale = (r['rationale'] ?? '').toString();
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -439,72 +467,83 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
+                    horizontal: 10,
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: correct ? Colors.green.shade50 : Colors.red.shade50,
-                    borderRadius: BorderRadius.circular(6),
+                    color: correct ? AppColors.successBg : AppColors.errorBg,
+                    borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
                     correct ? 'Correct' : 'Incorrect',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w600,
-                      color: correct
-                          ? Colors.green.shade800
-                          : Colors.red.shade800,
+                      color: correct ? AppColors.success : AppColors.error,
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Text(
                   'QUESTION $questionNum',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey[600],
-                  ),
+                  style: AppTextStyles.sectionLabel.copyWith(color: AppColors.textSecondary),
                 ),
               ],
             ),
             const SizedBox(height: 12),
             Text(
               question,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                fontSize: 15,
+                height: 1.4,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
             ),
             const SizedBox(height: 12),
             Text(
               'YOUR RESPONSE',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey[600],
-              ),
+              style: AppTextStyles.sectionLabel.copyWith(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 4),
             Text(
               userAnswer.isEmpty ? '(No answer)' : userAnswer,
               style: TextStyle(
                 fontSize: 14,
-                color: correct ? Colors.green.shade700 : Colors.red.shade700,
+                color: correct ? AppColors.success : AppColors.error,
                 fontWeight: FontWeight.w500,
               ),
             ),
             if (rationale.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Text(
-                'AI Tutor Rationale',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey[600],
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.indigoBg.withValues(alpha: 0.6),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                rationale,
-                style: TextStyle(fontSize: 14, color: Colors.grey[800]),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'AI Tutor Rationale',
+                      style: AppTextStyles.sectionLabel.copyWith(
+                        color: AppColors.indigo,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      rationale,
+                      style: const TextStyle(
+                        fontSize: 14,
+                        height: 1.45,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ],
@@ -517,27 +556,21 @@ class _LmsAiQuizAttemptScreenState extends State<LmsAiQuizAttemptScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         children: [
           Text(
             label.toUpperCase(),
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey[600],
-            ),
+            style: AppTextStyles.sectionLabel.copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 8),
           Text(
             value,
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-              color: color,
-            ),
+            style: AppTextStyles.displayLarge.copyWith(color: color),
           ),
         ],
       ),

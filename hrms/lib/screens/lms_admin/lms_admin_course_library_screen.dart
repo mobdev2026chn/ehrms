@@ -6,10 +6,12 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../widgets/app_card.dart';
 import 'lms_admin_utils.dart';
 import 'widgets/lms_admin_stat_card.dart';
 
@@ -122,32 +124,23 @@ class _LmsAdminCourseLibraryScreenState
                     children: const [
                       Text(
                         'Course Library',
-                        style: TextStyle(
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+                        style: AppTextStyles.headingLarge,
                       ),
-                      SizedBox(height: 2),
+                      SizedBox(height: 4),
                       Text(
                         'Manage and review all LMS courses in one place.',
-                        style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+                        style: AppTextStyles.bodySmall,
                       ),
                     ],
                   ),
                 ),
                 ElevatedButton.icon(
                   onPressed: _comingFromWeb,
-                  icon: const Icon(Icons.add, size: 18),
+                  icon: const Icon(Icons.add_rounded, size: 18),
                   label: const Text('Create'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
+                    minimumSize: const Size(0, 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   ),
                 ),
               ],
@@ -271,8 +264,9 @@ class _CourseCard extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: InkWell(
         onTap: onTap,
@@ -297,7 +291,7 @@ class _CourseCard extends StatelessWidget {
                     top: 8,
                     right: 8,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: AppColors.indigo,
                         borderRadius: BorderRadius.circular(999),
@@ -305,7 +299,7 @@ class _CourseCard extends StatelessWidget {
                       child: const Text(
                         'Mandatory',
                         style: TextStyle(
-                          fontSize: 9,
+                          fontSize: 10,
                           fontWeight: FontWeight.w700,
                           color: Colors.white,
                         ),
@@ -316,15 +310,16 @@ class _CourseCard extends StatelessWidget {
             ),
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.all(10),
+                padding: const EdgeInsets.all(12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       title,
                       style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 14,
+                        height: 1.3,
                         color: AppColors.textPrimary,
                       ),
                       maxLines: 2,
@@ -334,7 +329,7 @@ class _CourseCard extends StatelessWidget {
                     Text(
                       '$lessons ${lessons == 1 ? 'Lesson' : 'Lessons'}',
                       style: const TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         color: AppColors.textSecondary,
                       ),
                     ),
@@ -342,15 +337,15 @@ class _CourseCard extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: AppColors.primaryLight,
-                        borderRadius: BorderRadius.circular(6),
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         category,
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: AppColors.primary,
+                          color: AppColors.primaryText,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -359,15 +354,15 @@ class _CourseCard extends StatelessWidget {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Icon(Icons.person_outline,
-                            size: 13, color: AppColors.textCaption),
+                        const Icon(Icons.person_outline_rounded,
+                            size: 14, color: AppColors.textSecondary),
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
                             instructor,
                             style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textCaption,
+                              fontSize: 12,
+                              color: AppColors.textSecondary,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -387,6 +382,6 @@ class _CourseCard extends StatelessWidget {
 
   Widget _ph() => Container(
         color: AppColors.inputFill,
-        child: const Icon(Icons.image_outlined, size: 36, color: AppColors.textHint),
+        child: const Icon(Icons.image_outlined, size: 32, color: AppColors.textCaption),
       );
 }

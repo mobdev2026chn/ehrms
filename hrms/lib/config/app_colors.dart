@@ -4,9 +4,9 @@ import 'package:flutter/material.dart';
 /// Primary amber/gold palette with clean white surface.
 class AppColors {
   // ── Brand ──────────────────────────────────────────────────────────────
-  static Color primary      = const Color(0xFFEFAA1F); // Amber gold
-  static Color primaryDark  = const Color(0xFFC98E1A); // Darker gold
-  static Color primaryLight = const Color(0xFFFFF3D6); // Tinted amber bg
+  static Color primary      = const Color(0xFFF9B824); // Amber gold
+  static Color primaryDark  = const Color(0xFFF9B824); // Darker gold
+  static Color primaryLight = const Color(0xFFF9B824); // Tinted amber bg
   static const Color accent = brand;
 
   // Constant brand shades, usable inside `const` widgets. Every orange/amber in the
@@ -15,10 +15,24 @@ class AppColors {
   //   brandDark   - text / icons on light backgrounds (readable gold)
   //   brandLight  - tinted backgrounds
   //   brandBorder - borders on tinted backgrounds
-  static const Color brand       = Color(0xFFEFAA1F);
-  static const Color brandDark   = Color(0xFFC98E1A);
+  static const Color brand       = Color(0xFFF9B824);
+  static const Color brandDark   = Color(0xFFF9B824);
   static const Color brandLight  = Color(0xFFFFF3D6);
   static const Color brandBorder = Color(0xFFF7D58A);
+
+  /// Near-black from the EktaHR logo (wordmark, dark surfaces).
+  static const Color ink = Color(0xFF111113);
+
+  /// Readable text/icon colour on a [primary] fill: ink on light picks
+  /// (the default gold), white on dark picks (blue, purple, black, ...).
+  static Color get onPrimary =>
+      ThemeData.estimateBrightnessForColor(primary) == Brightness.dark
+          ? Colors.white
+          : ink;
+
+  /// Readable icon / text primary shade on light backgrounds.
+  static Color primaryText = const Color(0xFFF9B824); // Amber gold
+
 
   // ── Secondary accent (Figma indigo) ─────────────────────────────────────
   // Highlight values like Performance score and "This Month Net" (₹ amount).

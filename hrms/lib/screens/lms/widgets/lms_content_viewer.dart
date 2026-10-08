@@ -9,7 +9,10 @@
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../../config/app_colors.dart';
+import '../../../config/app_text_styles.dart';
 import '../../../config/constants.dart';
+import '../../../widgets/app_card.dart';
 
 class LmsContentViewer extends StatefulWidget {
   final dynamic material;
@@ -135,9 +138,9 @@ iframe{width:100%;height:100%;border:0;display:block}
         const SizedBox(height: 8),
         TextButton.icon(
           onPressed: () => _openUrl(pdfUrl),
-          icon: const Icon(Icons.open_in_browser, size: 18),
+          icon: const Icon(Icons.open_in_browser_rounded, size: 18),
           label: const Text('Open in browser'),
-          style: TextButton.styleFrom(foregroundColor: Colors.grey[700]),
+          style: TextButton.styleFrom(foregroundColor: AppColors.textSecondary),
         ),
       ],
     );
@@ -163,13 +166,7 @@ iframe{width:100%;height:100%;border:0;display:block}
         decoration: BoxDecoration(
           color: Colors.black,
           borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black26,
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          boxShadow: kSoftCardShadow,
         ),
         clipBehavior: Clip.antiAlias,
         child: WebViewWidget(controller: controller),
@@ -191,13 +188,7 @@ iframe{width:100%;height:100%;border:0;display:block}
         decoration: BoxDecoration(
           color: Colors.black,
           borderRadius: BorderRadius.circular(12),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black26,
-              blurRadius: 8,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          boxShadow: kSoftCardShadow,
         ),
         clipBehavior: Clip.antiAlias,
         child: WebViewWidget(controller: controller),
@@ -238,12 +229,12 @@ iframe{width:100%;height:100%;border:0;display:block}
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: widget.onMarkDone,
-              icon: const Icon(Icons.check_circle_outline),
+              icon: const Icon(Icons.check_circle_outline_rounded),
               label: const Text('Mark Done'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: AppColors.success,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                minimumSize: const Size(0, 52),
               ),
             ),
           ),
@@ -254,16 +245,32 @@ iframe{width:100%;height:100%;border:0;display:block}
 
   Widget _buildPlaceholder(String message) {
     return Container(
-      padding: const EdgeInsets.all(48),
+      padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
       decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Center(
-        child: Text(
-          message,
-          style: TextStyle(color: Colors.grey[600]),
-          textAlign: TextAlign.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.play_lesson_outlined,
+                  size: 28, color: AppColors.primaryText),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              style: AppTextStyles.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+          ],
         ),
       ),
     );

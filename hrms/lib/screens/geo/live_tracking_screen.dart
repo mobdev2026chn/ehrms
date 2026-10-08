@@ -6,6 +6,8 @@ import 'package:geolocator/geolocator.dart' as gl;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/constants.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/location_data.dart';
 import 'package:hrms/models/tracking_event.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
@@ -94,9 +96,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   Polyline? _routePolyline;
   bool _syncingTrail = false;
   DateTime? _lastResolvedTrackingAt;
-
-  /// Road route from current/last position to destination (fetched from Directions API).
-  Polyline? _shortestRoutePolyline;
   double _plannedTripDistanceKm = 0.0;
   double _remainingDistanceKm = 0.0;
   DateTime? _lastRouteFetchTime;
@@ -245,15 +244,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
     _updateRemainingEta();
 
-    // Initial straight line; fetch road route from pickup to dropoff (replaces when ready)
-    _shortestRoutePolyline = Polyline(
-      polylineId: const PolylineId('roadRoute'),
-      points: [widget.pickupLocation, _dropoffLatLng],
-      color: Colors.green.withOpacity(0.8),
-      width: 4,
-      patterns: [PatternItem.dash(20), PatternItem.gap(12)],
-      geodesic: true,
-    );
+    // Road route to the dropoff: used only for remaining distance and ETA. It is not
+    // drawn - the map shows the employee's actual movement only.
     _fetchRoadRoute(
       widget.pickupLocation.latitude,
       widget.pickupLocation.longitude,
@@ -865,13 +857,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       );
       if (mounted && result.points.isNotEmpty) {
         setState(() {
-          _shortestRoutePolyline = Polyline(
-            polylineId: const PolylineId('roadRoute'),
-            points: result.points,
-            color: Colors.green.withOpacity(0.8),
-            width: 4,
-            patterns: [PatternItem.dash(20), PatternItem.gap(12)],
-          );
           _remainingDistanceKm = result.distanceKm;
           if (result.durationText != null) {
             final match = RegExp(
@@ -885,18 +870,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         });
       }
     } catch (_) {
-      if (mounted) {
-        setState(() {
-          _shortestRoutePolyline = Polyline(
-            polylineId: const PolylineId('roadRoute'),
-            points: [LatLng(fromLat, fromLng), _dropoffLatLng],
-            color: Colors.green.withOpacity(0.8),
-            width: 4,
-            patterns: [PatternItem.dash(20), PatternItem.gap(12)],
-            geodesic: true,
-          );
-        });
-      }
+      // Keep the last remaining distance / ETA; the next move retries.
     }
   }
 
@@ -1360,33 +1334,29 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_showTripProgress) ...[
-        Text(
+        const Text(
           'Trip Progress',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: Colors.grey.shade800,
-          ),
+          style: AppTextStyles.headingSmall,
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(999),
           child: LinearProgressIndicator(
             value: _totalTripDistanceKm > 0
                 ? (totalDistanceKm / _totalTripDistanceKm).clamp(0.0, 1.0)
                 : 0.0,
-            backgroundColor: Colors.grey.shade200,
+            backgroundColor: AppColors.divider,
             valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
-            minHeight: 4,
+            minHeight: 6,
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.grey.shade50,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.grey.shade200),
+            color: AppColors.background,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFECEEF1)),
           ),
           child: Column(
             children: [
@@ -1395,25 +1365,25 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                 'Total distance',
                 '${totalDistanceKm.toStringAsFixed(2)} km',
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               _buildTravelRow(
                 Icons.near_me_rounded,
                 'Shortest remaining',
                 '${_remainingDistanceKm.toStringAsFixed(2)} km',
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               _buildTravelRow(
                 Icons.straighten_rounded,
                 'Trip distance',
                 '${_totalTripDistanceKm.toStringAsFixed(2)} km',
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               _buildTravelRow(
                 Icons.timer_outlined,
                 'Elapsed',
                 _formatDuration(_elapsedDuration),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 8),
               _buildTravelRow(
                 Icons.schedule_rounded,
                 'ETA',
@@ -1430,12 +1400,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: _geofenceStatusMessage!.startsWith('📡')
-                  ? Colors.blue.shade50
-                  : AppColors.brandLight,
-              borderRadius: BorderRadius.circular(10),
+                  ? AppColors.infoBg
+                  : AppColors.warningBg,
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: _geofenceStatusMessage!.startsWith('📡')
-                    ? Colors.blue.shade200
+                    ? AppColors.info.withValues(alpha: 0.25)
                     : AppColors.brandBorder,
               ),
             ),
@@ -1447,19 +1417,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                       : Icons.warning_amber_rounded,
                   size: 20,
                   color: _geofenceStatusMessage!.startsWith('📡')
-                      ? Colors.blue.shade700
-                      : AppColors.brandDark,
+                      ? AppColors.info
+                      : AppColors.warning,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     _geofenceStatusMessage!,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: AppTextStyles.bodySmall.copyWith(
                       fontWeight: FontWeight.w500,
                       color: _geofenceStatusMessage!.startsWith('📡')
-                          ? Colors.blue.shade800
-                          : AppColors.brandDark,
+                          ? AppColors.info
+                          : AppColors.warning,
                     ),
                   ),
                 ),
@@ -1473,24 +1442,23 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: AppColors.primary.withOpacity(0.06),
+            color: AppColors.primary.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.primary.withOpacity(0.2)),
+            border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
           ),
           child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(20),
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   _getMovementDisplay(),
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppTextStyles.caption.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: AppColors.primary,
+                    color: AppColors.primaryText,
                   ),
                 ),
               ),
@@ -1498,7 +1466,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               Icon(
                 Icons.schedule_rounded,
                 size: 14,
-                color: Colors.grey.shade700,
+                color: AppColors.textSecondary,
               ),
               const SizedBox(width: 4),
               Flexible(
@@ -1509,7 +1477,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+                    color: AppColors.textPrimary,
                   ),
                 ),
               ),
@@ -1517,7 +1485,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               Icon(
                 Icons.straighten_rounded,
                 size: 14,
-                color: Colors.grey.shade700,
+                color: AppColors.textSecondary,
               ),
               const SizedBox(width: 4),
               Flexible(
@@ -1528,7 +1496,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade800,
+                    color: AppColors.textPrimary,
                   ),
                 ),
               ),
@@ -1550,7 +1518,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     icon: Icon(
                       Icons.call_rounded,
                       size: 20,
-                      color: AppColors.primary,
+                      color: AppColors.primaryText,
                     ),
                     tooltip: 'Call customer',
                     padding: const EdgeInsets.all(4),
@@ -1559,7 +1527,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                       minHeight: 36,
                     ),
                     style: IconButton.styleFrom(
-                      backgroundColor: AppColors.primary.withOpacity(0.12),
+                      backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                     ),
                   ),
               ],
@@ -1570,16 +1538,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         TextButton.icon(
           onPressed: _updatingDestination ? null : _onChangeDestinationTap,
           icon: Icon(
-            Icons.pin_drop_rounded,
+            Icons.pin_drop_outlined,
             size: 18,
-            color: _updatingDestination ? Colors.grey : AppColors.primary,
+            color: _updatingDestination ? AppColors.textCaption : AppColors.primaryText,
           ),
           label: Text(
             _updatingDestination ? 'Updating...' : 'Change / Pin destination',
-            style: TextStyle(
-              fontSize: 13,
+            style: AppTextStyles.bodySmall.copyWith(
               fontWeight: FontWeight.w600,
-              color: _updatingDestination ? Colors.grey : AppColors.primary,
+              color: _updatingDestination ? AppColors.textCaption : AppColors.primaryText,
             ),
           ),
         ),
@@ -1588,19 +1555,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         Row(
           children: [
             Expanded(
-              child: OutlinedButton.icon(
-                onPressed: _onExitRide,
-                icon: const Icon(Icons.exit_to_app_rounded, size: 18),
-                label: const Text(
-                  'Exit Task',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-                ),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.grey.shade700,
-                  side: BorderSide(color: Colors.grey.shade400),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: _onExitRide,
+                  icon: const Icon(Icons.exit_to_app_rounded, size: 18),
+                  label: const Text('Exit Task'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.textSecondary,
                   ),
                 ),
               ),
@@ -1608,44 +1570,36 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             const SizedBox(width: 12),
             Expanded(
               flex: 2,
-              child: ElevatedButton.icon(
-                onPressed: (_submittingArrived || _arrivedSent)
-                    ? null
-                    : _onArrived,
-                icon: _submittingArrived
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
+              child: SizedBox(
+                height: 48,
+                child: ElevatedButton.icon(
+                  onPressed: (_submittingArrived || _arrivedSent)
+                      ? null
+                      : _onArrived,
+                  icon: _submittingArrived
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.onPrimary,
+                          ),
+                        )
+                      : Icon(
+                          _arrivedSent
+                              ? Icons.check_circle_rounded
+                              : Icons.location_on_rounded,
+                          size: 18,
                         ),
-                      )
-                    : Icon(
-                        _arrivedSent
-                            ? Icons.check_circle_rounded
-                            : Icons.location_on_rounded,
-                        color: Colors.white,
-                        size: 18,
-                      ),
-                label: Text(
-                  _arrivedSent
-                      ? 'Arrived'
-                      : (_submittingArrived ? 'Submitting...' : 'Arrived'),
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.white,
+                  label: Text(
+                    _arrivedSent
+                        ? 'Arrived'
+                        : (_submittingArrived ? 'Submitting...' : 'Arrived'),
                   ),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  disabledBackgroundColor: AppColors.primary.withOpacity(0.7),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+                  style: ElevatedButton.styleFrom(
+                    disabledBackgroundColor: AppColors.primary.withValues(alpha: 0.7),
+                    disabledForegroundColor: AppColors.onPrimary,
                   ),
-                  elevation: 2,
                 ),
               ),
             ),
@@ -1703,11 +1657,11 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                         vertical: 6,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.95),
+                        color: Colors.white.withValues(alpha: 0.95),
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.08),
+                            color: Colors.black.withValues(alpha: 0.08),
                             blurRadius: 8,
                             offset: const Offset(0, 2),
                           ),
@@ -1719,7 +1673,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                           Icon(
                             Icons.navigation_rounded,
                             size: 14,
-                            color: AppColors.primary,
+                            color: AppColors.primaryText,
                           ),
                           const SizedBox(width: 6),
                           Expanded(
@@ -1742,7 +1696,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                                     style: TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.bold,
-                                      color: AppColors.primary,
+                                      color: AppColors.primaryText,
                                     ),
                                   ),
                                 ),
@@ -1764,11 +1718,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   @override
   Widget build(BuildContext context) {
-    // The suggested road route to the destination (green dashed) so the employee has a
-    // path to follow from the moment the ride starts, plus the route actually travelled
-    // (solid) as they move.
+    // Only the route actually travelled, from the employee's own GPS movement.
     final allPolylines = <Polyline>{
-      if (_shortestRoutePolyline != null) _shortestRoutePolyline!,
       if (_routePolyline != null) _routePolyline!,
     };
 
@@ -1799,22 +1750,18 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         await _onExitRide();
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.surface,
         appBar: AppBar(
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Exit ride',
             onPressed: _onExitRide,
           ),
-          title: const Text(
-            'Live Tracking',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
-          elevation: 0,
+          title: const Text('Live Tracking'),
           actions: [
             if (widget.task != null)
               IconButton(
-                icon: Icon(Icons.assignment_rounded, color: AppColors.primary),
+                icon: Icon(Icons.assignment_outlined, color: AppColors.primaryText),
                 tooltip: 'Task details',
                 onPressed: () {
                   Navigator.push(
@@ -1831,7 +1778,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
             if (_task?.customer?.customerNumber != null &&
                 _task!.customer!.customerNumber!.trim().isNotEmpty)
               IconButton(
-                icon: Icon(Icons.call_rounded, color: AppColors.primary),
+                icon: Icon(Icons.call_outlined, color: AppColors.primaryText),
                 tooltip: 'Call customer',
                 onPressed: () async {
                   final number = _task!.customer!.customerNumber!.trim();
@@ -1883,20 +1830,19 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                       padding: const EdgeInsets.only(left: 4, top: 4),
                       child: IconButton(
                         icon: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.9),
+                          padding: const EdgeInsets.all(8),
+                          decoration: const BoxDecoration(
+                            color: AppColors.surface,
                             shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.1),
-                                blurRadius: 4,
-                                offset: const Offset(0, 1),
-                              ),
-                            ],
+                            boxShadow: kSoftCardShadow,
                           ),
-                          child: const Icon(Icons.arrow_back_rounded, size: 22),
+                          child: const Icon(
+                            Icons.arrow_back_rounded,
+                            size: 22,
+                            color: AppColors.textPrimary,
+                          ),
                         ),
+                        tooltip: 'Exit ride',
                         onPressed: _onExitRide,
                         padding: EdgeInsets.zero,
                         constraints: const BoxConstraints(
@@ -1912,17 +1858,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     alignment: Alignment.topCenter,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 8,
+                        horizontal: 16,
+                        vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.95),
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: [
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(999),
+                        boxShadow: const [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 8,
-                            offset: const Offset(0, 2),
+                            color: Color(0x1A000000),
+                            blurRadius: 16,
+                            offset: Offset(0, 4),
                           ),
                         ],
                       ),
@@ -1932,7 +1878,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                           Icon(
                             Icons.near_me_rounded,
                             size: 18,
-                            color: AppColors.primary,
+                            color: AppColors.primaryText,
                           ),
                           const SizedBox(width: 8),
                           Flexible(
@@ -1940,18 +1886,15 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                               'Shortest to destination: ',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Colors.grey.shade700,
+                              style: AppTextStyles.caption.copyWith(
+                                color: AppColors.textSecondary,
                               ),
                             ),
                           ),
                           Text(
                             '${_remainingDistanceKm.toStringAsFixed(2)} km',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary,
+                            style: AppTextStyles.label.copyWith(
+                              fontWeight: FontWeight.w700,
                             ),
                           ),
                         ],
@@ -1971,14 +1914,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               builder: (context, scrollController) {
                 return Container(
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: AppColors.surface,
                     borderRadius: const BorderRadius.vertical(
-                      top: Radius.circular(20),
+                      top: Radius.circular(24),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.08),
-                        blurRadius: 12,
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 16,
                         offset: const Offset(0, -4),
                       ),
                     ],
@@ -1987,12 +1930,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     children: [
                       // Drag handle
                       Padding(
-                        padding: const EdgeInsets.only(top: 12),
+                        padding: const EdgeInsets.only(top: 8),
                         child: Container(
                           width: 40,
                           height: 4,
                           decoration: BoxDecoration(
-                            color: Colors.grey.shade300,
+                            color: AppColors.divider,
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
@@ -2018,18 +1961,17 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   Widget _buildTravelRow(IconData icon, String label, String value) {
     return Row(
       children: [
-        Icon(icon, size: 14, color: AppColors.primary),
-        const SizedBox(width: 6),
+        Icon(icon, size: 16, color: AppColors.primaryText),
+        const SizedBox(width: 8),
         Expanded(
           child: Text(
             label,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
           ),
         ),
         Text(
           value,
-          style: TextStyle(
-            fontSize: 12,
+          style: AppTextStyles.bodySmall.copyWith(
             fontWeight: FontWeight.w600,
             color: AppColors.textPrimary,
           ),
@@ -2049,8 +1991,8 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
         color: done
-            ? AppColors.primary.withOpacity(0.12)
-            : Colors.grey.shade100,
+            ? AppColors.primary.withValues(alpha: 0.12)
+            : AppColors.inputFill,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           onTap: loading ? null : onTap,
@@ -2075,14 +2017,14 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
                     size: 22,
                   )
                 else
-                  Icon(icon, color: Colors.grey.shade600, size: 22),
+                  Icon(icon, color: AppColors.textSecondary, size: 22),
                 const SizedBox(width: 12),
                 Text(
                   label,
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: done ? AppColors.textPrimary : Colors.grey.shade700,
+                    color: done ? AppColors.textPrimary : AppColors.textSecondary,
                   ),
                 ),
               ],

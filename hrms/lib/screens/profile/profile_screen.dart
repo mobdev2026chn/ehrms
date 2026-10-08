@@ -9,11 +9,13 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/auth_service.dart';
 import '../../services/web_hrms_api_dio.dart';
 import '../../services/api_client.dart';
 import '../../services/onboarding_service.dart';
 import '../../services/staff_custom_fields_service.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/menu_icon_button.dart';
@@ -25,6 +27,16 @@ import '../../utils/rotational_shift_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
 import 'face_enroll_screen.dart';
+
+/// Hairline border for profile cards and read-only field boxes.
+const Color _kHairline = Color(0xFFECEEF1);
+
+/// Label above each profile field.
+const TextStyle _kFieldLabelStyle = TextStyle(
+  fontSize: 12,
+  fontWeight: FontWeight.w600,
+  color: AppColors.textSecondary,
+);
 
 class ProfileScreen extends StatefulWidget {
   final int? dashboardTabIndex;
@@ -493,17 +505,10 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
       appBar: AppBar(
         leading: const MenuIconButton(),
-        title: const Text('My Profile',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-        elevation: 0,
-        centerTitle: true,
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('My Profile'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications_none_rounded, size: 26),
-            color: AppColors.textPrimary,
+            icon: const Icon(Icons.notifications_none_rounded, size: 24),
             tooltip: 'Notifications',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const NotificationsScreen()),
@@ -513,13 +518,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         ],
         bottom: TabBar(
           controller: _tabController,
-          indicatorColor: AppColors.primary,
-          labelColor: AppColors.primary,
-          unselectedLabelColor: AppColors.textSecondary,
-          indicatorSize: TabBarIndicatorSize.label,
           dividerColor: Colors.transparent,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
-          unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
           tabs: const [
             Tab(text: 'Personal'),
             Tab(text: 'Exp & Edu'),
@@ -530,7 +529,10 @@ class _ProfileScreenState extends State<ProfileScreen>
       body: _isLoading
           ? const Center(child: AppTabLoader())
           : _userData == null
-          ? const Center(child: Text('Failed to load profile'))
+          ? const Center(
+              child: Text('Failed to load profile',
+                  style: AppTextStyles.bodySmall),
+            )
           : TabBarView(
               controller: _tabController,
               children: [
@@ -992,27 +994,18 @@ class _ProfileScreenState extends State<ProfileScreen>
             // Header Title
             const Text(
               'My Profile',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
-                letterSpacing: -0.5,
-              ),
+              style: AppTextStyles.headingLarge,
             ),
             const SizedBox(height: 4),
             const Text(
               'Your personal and contact details, as recorded by your administrator',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-                color: Color(0xFF64748B),
-              ),
+              style: AppTextStyles.bodySmall,
             ),
             const SizedBox(height: 16),
 
             // Profile Hero Card
             _buildWebProfileHeroCard(),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
 
             // 1. Personal Information Card
             _buildWebPersonalSection(),
@@ -1070,21 +1063,9 @@ class _ProfileScreenState extends State<ProfileScreen>
         !_profileImageError;
     if (showPhoto) _resolveAvatarFlip(photoUrlStr);
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
+    return AppCard(
+      padding: const EdgeInsets.all(20),
+      border: Border.all(color: _kHairline),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
@@ -1099,8 +1080,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                   height: 72,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: const Color(0xFFF8FAFC),
-                    border: Border.all(color: const Color(0xFFE2E8F0), width: 2),
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: kSoftCardShadow,
                   ),
                   clipBehavior: Clip.antiAlias,
                   child: showPhoto
@@ -1113,10 +1095,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                               return Center(
                                 child: Text(
                                   initials.isEmpty ? 'U' : initials,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 24,
-                                    fontWeight: FontWeight.w900,
-                                    color: Color(0xFFEFAA1F),
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.primaryText,
                                   ),
                                 ),
                               );
@@ -1126,10 +1108,10 @@ class _ProfileScreenState extends State<ProfileScreen>
                       : Center(
                           child: Text(
                             initials.isEmpty ? 'U' : initials,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 24,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFFEFAA1F),
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.primaryText,
                             ),
                           ),
                         ),
@@ -1139,14 +1121,15 @@ class _ProfileScreenState extends State<ProfileScreen>
                   right: -2,
                   child: Container(
                     padding: const EdgeInsets.all(5),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFEFAA1F),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
                       shape: BoxShape.circle,
+                      border: Border.all(color: Colors.white, width: 2),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.camera_alt_rounded,
                       size: 13,
-                      color: Colors.white,
+                      color: AppColors.onPrimary,
                     ),
                   ),
                 ),
@@ -1161,63 +1144,33 @@ class _ProfileScreenState extends State<ProfileScreen>
               children: [
                 Text(
                   fullName,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                  ),
+                  style: AppTextStyles.headingMedium
+                      .copyWith(fontWeight: FontWeight.w700),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 4),
                 Text(
                   'Emp ID: $empId',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF64748B),
-                  ),
+                  style: AppTextStyles.bodySmall
+                      .copyWith(fontWeight: FontWeight.w500),
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 12),
                 Wrap(
                   spacing: 6,
-                  runSpacing: 4,
+                  runSpacing: 6,
                   children: [
                     if (designation.isNotEmpty && designation != 'N/A')
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Text(
-                          designation,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF475569),
-                            letterSpacing: 0.5,
-                          ),
-                        ),
+                      _heroPill(
+                        designation,
+                        fg: AppColors.primaryText,
+                        bg: AppColors.primary.withValues(alpha: 0.12),
                       ),
                     if (department.isNotEmpty && department != 'N/A')
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF1F5F9),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Text(
-                          department,
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF475569),
-                            letterSpacing: 0.5,
-                          ),
-                        ),
+                      _heroPill(
+                        department,
+                        fg: AppColors.textSecondary,
+                        bg: AppColors.inputFill,
                       ),
                   ],
                 ),
@@ -1225,6 +1178,26 @@ class _ProfileScreenState extends State<ProfileScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Rounded tag pill used in the profile hero card.
+  Widget _heroPill(String text, {required Color fg, required Color bg}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: fg,
+          letterSpacing: 0.4,
+        ),
       ),
     );
   }
@@ -1252,23 +1225,19 @@ class _ProfileScreenState extends State<ProfileScreen>
                     children: [
                       const Text(
                         'Date of Birth (DOB)',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF334155),
-                        ),
+                        style: _kFieldLabelStyle,
                       ),
                       const SizedBox(height: 6),
                       InkWell(
                         onTap: _pickDobDate,
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(12),
                         child: Container(
                           width: double.infinity,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                           decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: const Color(0xFFCBD5E1)),
+                            color: const Color(0xFFF7F8FA),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE2E5EA)),
                           ),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1278,14 +1247,14 @@ class _ProfileScreenState extends State<ProfileScreen>
                                     ? _formData['dob'].toString()
                                     : 'Select DOB',
                                 style: TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.w500,
                                   color: (_formData['dob']?.toString().trim().isNotEmpty == true)
-                                      ? const Color(0xFF0F172A)
-                                      : const Color(0xFF94A3B8),
+                                      ? AppColors.textPrimary
+                                      : AppColors.textCaption,
                                 ),
                               ),
-                              const Icon(Icons.calendar_today_rounded, size: 16, color: Color(0xFF64748B)),
+                              const Icon(Icons.calendar_today_rounded, size: 18, color: AppColors.textSecondary),
                             ],
                           ),
                         ),
@@ -1513,30 +1482,14 @@ class _ProfileScreenState extends State<ProfileScreen>
     required List<Widget> children,
   }) {
     final isEditing = _editingSections[sectionKey] ?? false;
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: EdgeInsets.zero,
+      border: Border.all(color: _kHairline),
       clipBehavior: Clip.antiAlias,
-      child: IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Left Amber Accent Strip
-            Container(
-              width: 4,
-              color: const Color(0xFFEFAA1F),
-            ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -1550,18 +1503,22 @@ class _ProfileScreenState extends State<ProfileScreen>
                         Expanded(
                           child: Row(
                             children: [
-                              Icon(icon, size: 18, color: const Color(0xFFEFAA1F)),
-                              const SizedBox(width: 8),
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(icon, size: 20, color: AppColors.primaryText),
+                              ),
+                              const SizedBox(width: 12),
                               Flexible(
                                 child: Text(
                                   title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF1E293B),
-                                  ),
+                                  style: AppTextStyles.headingSmall,
                                 ),
                               ),
                             ],
@@ -1593,20 +1550,18 @@ class _ProfileScreenState extends State<ProfileScreen>
                                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                     minimumSize: Size.zero,
                                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                    backgroundColor: const Color(0xFFEFAA1F),
-                                    elevation: 0,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                                   ),
                                   icon: _isSavingSection
-                                      ? const SizedBox(
+                                      ? SizedBox(
                                           width: 12,
                                           height: 12,
-                                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                                         )
-                                      : const Icon(Icons.check_rounded, size: 14, color: Colors.white),
+                                      : const Icon(Icons.check_rounded, size: 14),
                                   label: Text(
                                     _isSavingSection ? 'Saving...' : 'Save',
-                                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                                   ),
                                 ),
                               ],
@@ -1637,9 +1592,9 @@ class _ProfileScreenState extends State<ProfileScreen>
                         ],
                       ],
                     ),
-                    const SizedBox(height: 12),
-                    const Divider(height: 1, color: Color(0xFFF1F5F9)),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
+                    const Divider(height: 1),
+                    const SizedBox(height: 16),
                     // Section Children
                     ...children,
                   ],
@@ -1648,7 +1603,6 @@ class _ProfileScreenState extends State<ProfileScreen>
             ),
           ],
         ),
-      ),
     );
   }
 
@@ -1671,11 +1625,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         children: [
           Text(
             label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF334155),
-            ),
+            style: _kFieldLabelStyle,
           ),
           const SizedBox(height: 6),
           if (isEditing && !isReadOnly)
@@ -1684,47 +1634,33 @@ class _ProfileScreenState extends State<ProfileScreen>
                   initialValue: rawVal?.toString() ?? '',
                   keyboardType: keyboardType,
                   style: const TextStyle(
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF0F172A),
+                    color: AppColors.textPrimary,
                   ),
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.white,
+                  decoration: const InputDecoration(
                     isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-                    ),
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                   ),
                   onChanged: (val) => _formData[fieldKey] = val,
                 )
           else
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _kHairline),
               ),
               child: Text(
                 displayVal,
                 style: TextStyle(
-                  fontSize: 13,
+                  fontSize: 14,
                   fontWeight: FontWeight.w500,
                   color: displayVal == 'N/A' || displayVal == 'None (Not Assigned)'
-                      ? const Color(0xFF94A3B8)
-                      : const Color(0xFF1E293B),
+                      ? AppColors.textCaption
+                      : AppColors.textPrimary,
                 ),
               ),
             ),
@@ -1769,38 +1705,20 @@ class _ProfileScreenState extends State<ProfileScreen>
         children: [
           const Text(
             'Gender',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF334155),
-            ),
+            style: _kFieldLabelStyle,
           ),
           const SizedBox(height: 6),
           DropdownButtonFormField<String>(
             value: current,
-            hint: const Text('Select Gender', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+            hint: const Text('Select Gender', style: TextStyle(fontSize: 14, color: AppColors.textCaption)),
             items: const [
               DropdownMenuItem(value: 'Male', child: Text('Male')),
               DropdownMenuItem(value: 'Female', child: Text('Female')),
               DropdownMenuItem(value: 'Other', child: Text('Other')),
             ],
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white,
+            decoration: const InputDecoration(
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-              ),
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             onChanged: (val) {
               if (val != null) setState(() => _formData['gender'] = val);
@@ -1823,11 +1741,7 @@ class _ProfileScreenState extends State<ProfileScreen>
         children: [
           const Text(
             'Marital Status',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF334155),
-            ),
+            style: _kFieldLabelStyle,
           ),
           const SizedBox(height: 6),
           DropdownButtonFormField<String>(
@@ -1836,23 +1750,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               DropdownMenuItem(value: 'Single', child: Text('Single')),
               DropdownMenuItem(value: 'Married', child: Text('Married')),
             ],
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.white,
+            decoration: const InputDecoration(
               isDense: true,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFCBD5E1)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: Color(0xFFEFAA1F), width: 1.5),
-              ),
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             ),
             onChanged: (val) {
               if (val != null) {
@@ -2560,7 +2460,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       onRefresh: _refreshProfile,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
             _buildCardSection(
@@ -2568,14 +2468,9 @@ class _ProfileScreenState extends State<ProfileScreen>
               title: 'Education',
               trailing: null,
               content: education.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 30),
-                        child: Text(
-                          'No education details found.',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ),
+                  ? _buildEmptyState(
+                      Icons.school_outlined,
+                      'No education details found.',
                     )
                   : Column(
                       children: education
@@ -2585,20 +2480,15 @@ class _ProfileScreenState extends State<ProfileScreen>
                           .toList(),
                     ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
             _buildCardSection(
               icon: Icons.business_center_outlined,
               title: 'Experience',
               trailing: null,
               content: experience.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.symmetric(vertical: 30),
-                        child: Text(
-                          'No experience details found.',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ),
+                  ? _buildEmptyState(
+                      Icons.business_center_outlined,
+                      'No experience details found.',
                     )
                   : Column(
                       children: experience
@@ -2615,36 +2505,112 @@ class _ProfileScreenState extends State<ProfileScreen>
     );
   }
 
-  Widget _buildEduItem(Map<String, dynamic> edu) {
-    final colorScheme = Theme.of(context).colorScheme;
+  /// Centered empty state: tinted icon circle + title (+ optional lines).
+  Widget _buildEmptyState(IconData icon, String title,
+      {List<String> messages = const []}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, size: 28, color: AppColors.primaryText),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              style: AppTextStyles.headingSmall,
+              textAlign: TextAlign.center,
+            ),
+            for (final m in messages) ...[
+              const SizedBox(height: 4),
+              Text(
+                m,
+                style: AppTextStyles.bodySmall,
+                textAlign: TextAlign.center,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Small tinted icon tile used in list rows (radius 12).
+  Widget _iconTile(IconData icon, {double size = 40, double iconSize = 20}) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, size: iconSize, color: AppColors.primaryText),
+    );
+  }
+
+  /// Rounded status/meta pill.
+  Widget _pill(String text, {required Color fg, required Color bg, IconData? icon}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 12, color: fg),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            text,
+            style: TextStyle(
+              color: fg,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEduItem(Map<String, dynamic> edu) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline),
+        border: Border.all(color: _kHairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.school, size: 18, color: AppColors.primary),
-              const SizedBox(width: 8),
+              _iconTile(Icons.school_outlined, size: 36, iconSize: 18),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   edu['qualification'] ?? 'N/A',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                 ),
               ),
               if (edu['yearOfPassing'] != null)
-                Text(
+                _pill(
                   edu['yearOfPassing'].toString(),
-                  style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  fg: AppColors.primaryText,
+                  bg: AppColors.primary.withValues(alpha: 0.12),
                 ),
             ],
           ),
@@ -2666,26 +2632,25 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   Widget _buildExpItem(Map<String, dynamic> exp) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline),
+        border: Border.all(color: _kHairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.work, size: 18, color: AppColors.primary),
-              const SizedBox(width: 8),
+              _iconTile(Icons.work_outline_rounded, size: 36, iconSize: 18),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   exp['designation'] ?? exp['role'] ?? 'N/A',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                 ),
               ),
             ],
@@ -2764,58 +2729,44 @@ class _ProfileScreenState extends State<ProfileScreen>
       onRefresh: _refreshProfile,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // Header with progress
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.03),
-                    blurRadius: 10,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
+            AppCard(
+              padding: const EdgeInsets.all(20),
+              border: Border.all(color: _kHairline),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Icon(
-                        Icons.description_outlined,
-                        color: AppColors.primary,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Documents',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                      _iconTile(Icons.description_outlined),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Documents',
+                              style: AppTextStyles.headingSmall,
+                            ),
+                            const SizedBox(height: 2),
+                            // Put progress text on its own line to avoid overflow
+                            Text(
+                              'Progress: $progress% • Status: $overallStatus',
+                              style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  // Put progress text on its own line to avoid overflow
-                  Text(
-                    'Progress: $progress% • Status: $overallStatus',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 16),
                   // Progress bar
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2826,29 +2777,31 @@ class _ProfileScreenState extends State<ProfileScreen>
                           const Text(
                             'Overall Progress',
                             style: TextStyle(
-                              fontSize: 12,
+                              fontSize: 13,
                               fontWeight: FontWeight.w500,
-                              color: Colors.black,
+                              color: AppColors.textPrimary,
                             ),
                           ),
                           Text(
                             '$progress%',
                             style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: progress == 100
+                                  ? AppColors.success
+                                  : AppColors.primaryText,
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 8),
                       ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.circular(999),
                         child: LinearProgressIndicator(
                           value: progress / 100,
-                          backgroundColor: Colors.grey[200],
+                          backgroundColor: AppColors.inputFill,
                           valueColor: AlwaysStoppedAnimation<Color>(
-                            progress == 100 ? Colors.green : AppColors.primary,
+                            progress == 100 ? AppColors.success : AppColors.primary,
                           ),
                           minHeight: 8,
                         ),
@@ -2858,62 +2811,25 @@ class _ProfileScreenState extends State<ProfileScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
             // Documents list
             docs.isEmpty
-                ? Container(
-                    width: double.infinity,
+                ? AppCard(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
-                      vertical: 40,
+                      vertical: 16,
                     ),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.02),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.folder_outlined,
-                          size: 48,
-                          color: Colors.grey[400],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No documents found.',
-                          style: TextStyle(
-                            color: Colors.grey[700],
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
+                    border: Border.all(color: _kHairline),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: _buildEmptyState(
+                        Icons.folder_outlined,
+                        'No documents found.',
+                        messages: const [
                           'Documents will appear here for viewing once they are available.',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
                           'Once HR/Admin verifies them, they will show as Verified.',
-                          style: TextStyle(
-                            color: Colors.grey[600],
-                            fontSize: 12,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   )
                 : Column(
@@ -2940,33 +2856,20 @@ class _ProfileScreenState extends State<ProfileScreen>
     final isRejected = status == 'REJECTED';
     final uploadedAt = doc['uploadedAt'];
 
-    return Container(
+    return AppCard(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      border: Border.all(color: _kHairline),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(
-                  docType == 'form'
-                      ? Icons.description_outlined
-                      : Icons.file_present_outlined,
-                  color: AppColors.primary,
-                  size: 20,
-                ),
+              _iconTile(
+                docType == 'form'
+                    ? Icons.description_outlined
+                    : Icons.file_present_outlined,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -2975,62 +2878,34 @@ class _ProfileScreenState extends State<ProfileScreen>
                   children: [
                     Text(
                       docName,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
+                      style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 8),
                     Wrap(
-                      spacing: 4,
-                      runSpacing: 4,
+                      spacing: 6,
+                      runSpacing: 6,
                       children: [
                         if (isRequired)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.red.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: const Text(
-                              'Required',
-                              style: TextStyle(
-                                color: Colors.red,
-                                fontSize: 9,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                          _pill(
+                            'Required',
+                            fg: AppColors.error,
+                            bg: AppColors.errorBg,
                           ),
                         _buildStatusBadge(status),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            'Type: ${docType == 'form' ? 'form' : 'document'}',
-                            style: TextStyle(
-                              color: Colors.grey[700],
-                              fontSize: 9,
-                            ),
-                          ),
+                        _pill(
+                          'Type: ${docType == 'form' ? 'form' : 'document'}',
+                          fg: AppColors.textSecondary,
+                          bg: AppColors.inputFill,
                         ),
                       ],
                     ),
                     if (uploadedAt != null) ...[
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 8),
                       Text(
                         'Uploaded: ${_formatDate(uploadedAt)}',
-                        style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                        style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -3040,7 +2915,7 @@ class _ProfileScreenState extends State<ProfileScreen>
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
           // Action buttons - view only (no upload/replace)
           Wrap(
             alignment: WrapAlignment.end,
@@ -3051,29 +2926,28 @@ class _ProfileScreenState extends State<ProfileScreen>
                 // View, Download buttons (always shown)
                 TextButton.icon(
                   onPressed: () => _viewDocument(doc['url']),
-                  icon: const Icon(Icons.visibility_outlined, size: 16),
-                  label: const Text('View', style: TextStyle(fontSize: 11)),
+                  icon: const Icon(Icons.visibility_outlined, size: 18),
+                  label: const Text('View', style: TextStyle(fontSize: 13)),
                   style: TextButton.styleFrom(
-                    foregroundColor: Colors.grey[700],
+                    foregroundColor: AppColors.textSecondary,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 6,
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-                    minimumSize: const Size(0, 32),
+                    minimumSize: const Size(0, 44),
                   ),
                 ),
                 const SizedBox(width: 4),
                 TextButton.icon(
                   onPressed: () => _downloadDocument(doc['url']),
-                  icon: const Icon(Icons.download_outlined, size: 16),
-                  label: const Text('Download', style: TextStyle(fontSize: 11)),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Download', style: TextStyle(fontSize: 13)),
                   style: TextButton.styleFrom(
-                    foregroundColor: AppColors.primary,
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 6,
+                      horizontal: 12,
+                      vertical: 8,
                     ),
-                    minimumSize: const Size(0, 32),
+                    minimumSize: const Size(0, 44),
                   ),
                 ),
               ],
@@ -3087,54 +2961,36 @@ class _ProfileScreenState extends State<ProfileScreen>
   Widget _buildStatusBadge(String status) {
     String displayText;
     Color badgeColor;
+    Color badgeBg;
     IconData? icon;
 
     switch (status) {
       case 'PENDING':
         displayText = 'Under Review';
-        badgeColor = AppColors.brand;
-        icon = Icons.access_time;
+        badgeColor = AppColors.warning;
+        badgeBg = AppColors.warningBg;
+        icon = Icons.access_time_rounded;
         break;
       case 'COMPLETED':
         displayText = 'Verified';
-        badgeColor = Colors.green;
-        icon = Icons.check_circle;
+        badgeColor = AppColors.success;
+        badgeBg = AppColors.successBg;
+        icon = Icons.check_circle_rounded;
         break;
       case 'REJECTED':
         displayText = 'Rejected';
-        badgeColor = Colors.red;
-        icon = Icons.cancel;
+        badgeColor = AppColors.error;
+        badgeBg = AppColors.errorBg;
+        icon = Icons.cancel_rounded;
         break;
       default:
         displayText = 'Not Started';
-        badgeColor = Colors.grey;
-        icon = Icons.radio_button_unchecked;
+        badgeColor = AppColors.textSecondary;
+        badgeBg = AppColors.inputFill;
+        icon = Icons.radio_button_unchecked_rounded;
     }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-      decoration: BoxDecoration(
-        color: badgeColor.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ...[
-            Icon(icon, size: 10, color: badgeColor),
-            const SizedBox(width: 3),
-          ],
-          Text(
-            displayText,
-            style: TextStyle(
-              color: badgeColor,
-              fontSize: 9,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
+    return _pill(displayText, fg: badgeColor, bg: badgeBg, icon: icon);
   }
 
   Widget _buildCardSection({
@@ -3144,71 +3000,47 @@ class _ProfileScreenState extends State<ProfileScreen>
     bool showProgress = false,
     Widget? trailing,
   }) {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            decoration: BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Colors.grey.shade100, width: 1),
+    return AppCard(
+      padding: EdgeInsets.zero,
+      border: Border.all(color: _kHairline),
+      child: SizedBox(
+        width: double.infinity,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(color: _kHairline, width: 1),
+                ),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      _iconTile(icon),
+                      const SizedBox(width: 12),
+                      Text(
+                        title,
+                        style: AppTextStyles.headingSmall,
+                      ),
+                    ],
+                  ),
+                  if (trailing != null) trailing,
+                  if (showProgress)
+                    _pill(
+                      'COMPLETED 100%',
+                      fg: AppColors.success,
+                      bg: AppColors.successBg,
+                    ),
+                ],
               ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Row(
-                  children: [
-                    Icon(icon, color: AppColors.primary, size: 22),
-                    const SizedBox(width: 12),
-                    Text(
-                      title,
-                      style: TextStyle(
-                        fontSize: _profileHeadingSize,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ],
-                ),
-                if (trailing != null) trailing,
-                if (showProgress)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.green.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      'COMPLETED 100%',
-                      style: TextStyle(
-                        fontSize: _profileValueSize,
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Padding(padding: const EdgeInsets.all(20), child: content),
-        ],
+            Padding(padding: const EdgeInsets.all(16), child: content),
+          ],
+        ),
       ),
     );
   }
@@ -3226,17 +3058,17 @@ class _ProfileScreenState extends State<ProfileScreen>
       children: [
         Text(
           label,
-          style: TextStyle(
-            fontSize: _profileHeadingSize,
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.bold,
+          style: const TextStyle(
+            fontSize: 12,
+            color: AppColors.textSecondary,
+            fontWeight: FontWeight.w500,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           value?.toString() ?? 'N/A',
-          style: TextStyle(
-            fontSize: _profileValueSize,
+          style: const TextStyle(
+            fontSize: _profileValueSize + 1,
             fontWeight: FontWeight.w500,
             color: AppColors.textPrimary,
           ),

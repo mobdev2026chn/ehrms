@@ -2,6 +2,8 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../config/app_colors.dart';
+
 import '../../../services/staff_interaction_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import 'staff_chat_thread_screen.dart';
@@ -77,28 +79,20 @@ class _StaffNewChatScreenState extends State<StaffNewChatScreen> {
     return Scaffold(
       backgroundColor: Colors.white,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: kInteractionInk,
-        title: const Text('New chat', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: const Text('New chat'),
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: TextField(
               autofocus: false,
               onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: 'Search people',
-                prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                prefixIcon: Icon(Icons.search_rounded, size: 20),
                 isDense: true,
-                filled: true,
-                fillColor: const Color(0xFFF1F5F9),
-                contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                contentPadding: EdgeInsets.symmetric(vertical: 12),
               ),
             ),
           ),
@@ -120,6 +114,7 @@ class _StaffNewChatScreenState extends State<StaffNewChatScreen> {
                               final c = list[i];
                               return ListTile(
                                 onTap: () => _start(c),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                                 leading: InteractionAvatar(
                                   name: c.name,
                                   url: c.avatar,
@@ -128,23 +123,33 @@ class _StaffNewChatScreenState extends State<StaffNewChatScreen> {
                                 ),
                                 title: Text(
                                   c.name,
-                                  style: const TextStyle(fontWeight: FontWeight.w700, color: kInteractionInk),
+                                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: kInteractionInk),
                                 ),
                                 subtitle: c.subtitle.isEmpty
                                     ? null
-                                    : Text(c.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                    : Text(
+                                        c.subtitle,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 13, color: kInteractionMuted),
+                                      ),
                                 trailing: _opening == c.id
                                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                                     : (c.isAdmin
                                         ? Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                             decoration: BoxDecoration(
-                                              color: kInteractionAccent.withValues(alpha: 0.12),
-                                              borderRadius: BorderRadius.circular(20),
+                                              color: AppColors.primary.withValues(alpha: 0.12),
+                                              borderRadius: BorderRadius.circular(999),
                                             ),
-                                            child: const Text(
+                                            child: Text(
                                               'ADMIN',
-                                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: kInteractionAccent),
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                                letterSpacing: 0.5,
+                                                color: AppColors.primaryText,
+                                              ),
                                             ),
                                           )
                                         : null),

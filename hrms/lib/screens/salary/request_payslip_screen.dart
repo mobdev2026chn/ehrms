@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/auth_service.dart';
 import '../../services/request_service.dart';
 import '../../utils/error_message_utils.dart';
@@ -227,71 +228,59 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     return showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.white,
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(
-          left: 24,
-          right: 24,
-          top: 24,
+          left: 20,
+          right: 20,
+          top: 12,
           bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Request payslip',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.textHint,
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 20),
+            Text(
+              'Request payslip',
+              style: AppTextStyles.headingMedium,
+            ),
+            const SizedBox(height: 4),
             Text(
               'Generate the payslip for $month $year.',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+              style: AppTextStyles.bodySmall,
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             TextField(
               controller: controller,
               maxLines: 2,
-              decoration: InputDecoration(
+              decoration: const InputDecoration(
                 hintText: 'Reason (optional)',
-                filled: true,
-                fillColor: AppColors.inputFill,
                 contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-                ),
+                    EdgeInsets.symmetric(horizontal: 14, vertical: 14),
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
                     onPressed: () => Navigator.pop(ctx),
                     style: OutlinedButton.styleFrom(
-                      foregroundColor: AppColors.textSecondary,
-                      side: BorderSide(color: AppColors.divider),
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
+                      minimumSize: const Size(0, 48),
                     ),
                     child: const Text('Cancel'),
                   ),
@@ -300,17 +289,7 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
                 Expanded(
                   child: ElevatedButton(
                     onPressed: () => Navigator.pop(ctx, controller.text),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    child: const Text('Confirm',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
+                    child: const Text('Confirm'),
                   ),
                 ),
               ],
@@ -344,29 +323,17 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        titleSpacing: 0,
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-        title: const Text(
-          'Request Payslip',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: AppColors.textPrimary,
-          ),
-        ),
+        title: const Text('Request Payslip'),
         actions: const [ProfileAppBarActions()],
       ),
       body: _loading
           ? const Center(child: AppTabLoader())
           : RefreshIndicator(
               onRefresh: _refresh,
+              color: AppColors.primary,
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                 children: [
                   // Text(
                   //   'Request Payslip',
@@ -377,17 +344,16 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
                   //   ),
                   // ),
                   // const SizedBox(height: 4),
-                  Text(
-                    'Select the period to generate your financial document.',
-                    style: TextStyle(
-                      fontSize: 13,
-                      height: 1.4,
-                      color: AppColors.textSecondary,
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      'Select the period to generate your financial document.',
+                      style: AppTextStyles.bodySmall,
                     ),
                   ),
-                  const SizedBox(height: 20),
-                  _buildYearCard(),
                   const SizedBox(height: 16),
+                  _buildYearCard(),
+                  const SizedBox(height: 12),
                   _buildMonthCard(),
                   const SizedBox(height: 24),
                   _buildRecentHeader(),
@@ -404,22 +370,18 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     return Row(
       children: [
         Container(
-          width: 34,
-          height: 34,
+          width: 40,
+          height: 40,
           decoration: BoxDecoration(
             color: AppColors.primary.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
           ),
-          child: Icon(icon, color: AppColors.primary, size: 18),
+          child: Icon(icon, color: AppColors.primaryText, size: 20),
         ),
         const SizedBox(width: 12),
         Text(
           title,
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
+          style: AppTextStyles.headingSmall,
         ),
       ],
     );
@@ -429,16 +391,18 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     final years = _allowedYears;
     return AppCard(
       padding: const EdgeInsets.all(20),
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _cardHeader(Icons.calendar_today_outlined, 'Year'),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
             decoration: BoxDecoration(
-              color: AppColors.inputFill,
+              color: const Color(0xFFF7F8FA),
               borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E5EA)),
             ),
             child: DropdownButtonHideUnderline(
               child: DropdownButton<int>(
@@ -495,27 +459,30 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     final months = _allowedMonthsDesc;
     return AppCard(
       padding: const EdgeInsets.all(20),
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _cardHeader(Icons.calendar_month_outlined, 'Select Month'),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
           if (months.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Text(
                 'No completed months are available to request for $_selectedYear yet.',
-                style: TextStyle(
-                  fontSize: 13,
-                  height: 1.4,
-                  color: AppColors.textSecondary,
-                ),
+                textAlign: TextAlign.center,
+                style: AppTextStyles.bodySmall,
               ),
             )
           else ...[
             LayoutBuilder(
               builder: (context, constraints) {
-                const spacing = 12.0;
+                const spacing = 8.0;
                 final itemWidth = (constraints.maxWidth - spacing * 3) / 4;
                 return Wrap(
                   spacing: spacing,
@@ -533,29 +500,20 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
               child: ElevatedButton.icon(
                 onPressed: _submitting ? null : _onRequestPressed,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
                   disabledBackgroundColor:
                       AppColors.primary.withValues(alpha: 0.6),
-                  foregroundColor: Colors.white,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(26),
-                  ),
+                  disabledForegroundColor: AppColors.onPrimary,
                 ),
                 icon: _submitting
-                    ? const SizedBox(
+                    ? SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
+                            strokeWidth: 2, color: AppColors.onPrimary),
                       )
                     : const Icon(Icons.description_outlined, size: 20),
                 label: Text(
                   _submitting ? 'Submitting...' : 'Request Payslip',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
                 ),
               ),
             ),
@@ -569,20 +527,24 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     final selected = month == _selectedMonth;
     return GestureDetector(
       onTap: () => setState(() => _selectedMonth = month),
-      child: Container(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
         width: width,
         height: 48,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary : AppColors.inputFill,
+          color: selected ? AppColors.primary : const Color(0xFFF7F8FA),
           borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected ? AppColors.primary : const Color(0xFFE2E5EA),
+          ),
         ),
         child: Text(
           month.substring(0, 3),
           style: TextStyle(
             fontSize: 14,
             fontWeight: FontWeight.w600,
-            color: selected ? Colors.white : AppColors.textPrimary,
+            color: selected ? AppColors.onPrimary : AppColors.textPrimary,
           ),
         ),
       ),
@@ -593,23 +555,26 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(
-          'Recent Payslips',
-          style: TextStyle(
-            fontSize: 17,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Text(
+            'Recent Payslips',
+            style: AppTextStyles.headingSmall,
           ),
         ),
         GestureDetector(
           onTap: _openAllRequests,
-          child: Text(
-            'VIEW ALL',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 0.5,
-              color: AppColors.primary,
+          behavior: HitTestBehavior.opaque,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+            child: Text(
+              'VIEW ALL',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.5,
+                color: AppColors.primaryText,
+              ),
             ),
           ),
         ),
@@ -620,13 +585,31 @@ class _RequestPayslipScreenState extends State<RequestPayslipScreen> {
   List<Widget> _buildRecentList() {
     if (_recent.isEmpty) {
       return [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 24),
-          child: Center(
-            child: Text(
-              'No payslip requests yet.',
-              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-            ),
+        AppCard(
+          padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          child: Column(
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.receipt_long_outlined,
+                  size: 30,
+                  color: AppColors.primaryText,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No payslip requests yet.',
+                textAlign: TextAlign.center,
+                style: AppTextStyles.headingSmall,
+              ),
+            ],
           ),
         ),
       ];

@@ -5,8 +5,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../config/app_colors.dart';
 import '../../../services/staff_interaction_service.dart';
 import '../../../utils/snackbar_utils.dart';
+import '../../../widgets/app_card.dart';
 import 'attachment_viewer.dart';
 import 'staff_interaction_widgets.dart';
 
@@ -84,14 +86,9 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0.5,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: kInteractionInk,
-        title: const Text('Announcement', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: const Text('Announcement'),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
@@ -109,7 +106,7 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                         onRefresh: _load,
                         child: ListView(
                           physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.only(bottom: 24),
                           children: _content(_a!),
                         ),
                       ),
@@ -126,25 +123,40 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
       if (cover != null)
         GestureDetector(
           onTap: () => showImageViewer(context, a.coverUrl, title: a.title),
-          child: AspectRatio(
-            aspectRatio: 16 / 8,
-            child: Image(image: cover, fit: BoxFit.cover, errorBuilder: (_, _, _) => const SizedBox()),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(16),
+              child: AspectRatio(
+                aspectRatio: 16 / 8,
+                child: Image(image: cover, fit: BoxFit.cover, errorBuilder: (_, _, _) => const SizedBox()),
+              ),
+            ),
           ),
         ),
       Container(
-        color: Colors.white,
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+        decoration: _cardDecoration,
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                const Icon(Icons.campaign_rounded, size: 16, color: kInteractionAccent),
-                const SizedBox(width: 6),
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(Icons.campaign_rounded, size: 16, color: AppColors.primaryText),
+                ),
+                const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     a.from.isNotEmpty ? a.from : 'Announcement',
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: kInteractionMuted),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: kInteractionMuted),
                   ),
                 ),
                 if (a.publishDate != null)
@@ -154,18 +166,18 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                   ),
               ],
             ),
-            const SizedBox(height: 10),
-            Text(a.title, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900, color: kInteractionInk, height: 1.25)),
+            const SizedBox(height: 12),
+            Text(a.title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: kInteractionInk, height: 1.3)),
             if (a.subject.isNotEmpty) ...[
               const SizedBox(height: 6),
-              Text(a.subject, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: kInteractionMuted)),
+              Text(a.subject, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: kInteractionMuted)),
             ],
             if (a.description.isNotEmpty) ...[
               const SizedBox(height: 12),
               SelectableText(a.description, style: const TextStyle(fontSize: 14.5, color: kInteractionInk, height: 1.5)),
             ],
             if (a.expiryDate != null) ...[
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Text(
                 'Valid till ${DateFormat('d MMM yyyy').format(a.expiryDate!)}',
                 style: const TextStyle(fontSize: 12, color: kInteractionMuted),
@@ -177,14 +189,14 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
       for (final s in a.sections)
         if (s.title.isNotEmpty || s.body.isNotEmpty || s.image.isNotEmpty)
           Container(
-            margin: const EdgeInsets.only(top: 8),
-            color: Colors.white,
+            margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            decoration: _cardDecoration,
             padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (s.title.isNotEmpty)
-                  Text(s.title, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: kInteractionInk)),
+                  Text(s.title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk)),
                 if (s.image.isNotEmpty && mediaImageProvider(s.image) != null) ...[
                   const SizedBox(height: 10),
                   GestureDetector(
@@ -204,38 +216,51 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
           ),
       if (a.attachments.isNotEmpty)
         Container(
-          margin: const EdgeInsets.only(top: 8),
-          color: Colors.white,
+          margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          decoration: _cardDecoration,
           padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Attachments', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: kInteractionInk)),
+              const Text('Attachments', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk)),
               const SizedBox(height: 8),
               for (final att in a.attachments)
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   dense: true,
-                  leading: Icon(
-                    att.isImage
-                        ? Icons.image_outlined
-                        : (att.type == 'pdf' ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_outlined),
-                    color: att.type == 'pdf' ? const Color(0xFFDC2626) : const Color(0xFF6366F1),
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: (att.type == 'pdf' ? AppColors.error : AppColors.indigo).withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      att.isImage
+                          ? Icons.image_outlined
+                          : (att.type == 'pdf' ? Icons.picture_as_pdf_rounded : Icons.insert_drive_file_outlined),
+                      color: att.type == 'pdf' ? AppColors.error : AppColors.indigo,
+                      size: 20,
+                    ),
                   ),
-                  title: Text(att.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  title: Text(
+                    att.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: kInteractionInk),
+                  ),
                   subtitle: Text(
                     att.url.trim().isEmpty
                         ? 'File not uploaded'
                         : (att.size > 0 ? fileSizeLabel(att.size) : (att.type == 'pdf' ? 'PDF' : 'File')),
-                    style: TextStyle(color: att.url.trim().isEmpty ? const Color(0xFFB91C1C) : null),
+                    style: TextStyle(fontSize: 12, color: att.url.trim().isEmpty ? AppColors.error : kInteractionMuted),
                   ),
                   trailing: att.url.trim().isEmpty
                       ? null
                       : TextButton.icon(
                           onPressed: () => viewAttachment(context, att),
                           icon: const Icon(Icons.visibility_outlined, size: 18),
-                          label: const Text('View', style: TextStyle(fontWeight: FontWeight.w800)),
-                          style: TextButton.styleFrom(foregroundColor: kInteractionAccent),
+                          label: const Text('View'),
                         ),
                   onTap: () => viewAttachment(context, att),
                 ),
@@ -243,22 +268,22 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
           ),
         ),
       Container(
-        margin: const EdgeInsets.only(top: 8),
-        color: Colors.white,
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        decoration: _cardDecoration,
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               a.threads.isEmpty ? 'Questions or feedback?' : 'Your comments',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: kInteractionInk),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk),
             ),
             const SizedBox(height: 4),
             Text(
               a.threads.isEmpty
                   ? 'Comment below — only you and HR can see your conversation.'
                   : 'Only you and HR can see these.',
-              style: const TextStyle(fontSize: 12, color: kInteractionMuted),
+              style: const TextStyle(fontSize: 13, color: kInteractionMuted),
             ),
             for (final t in a.threads) _thread(t),
           ],
@@ -267,12 +292,19 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
     ];
   }
 
+  static const BoxDecoration _cardDecoration = BoxDecoration(
+    color: Colors.white,
+    borderRadius: BorderRadius.all(Radius.circular(16)),
+    border: Border.fromBorderSide(BorderSide(color: kInteractionLine)),
+    boxShadow: kSoftCardShadow,
+  );
+
   Widget _thread(AnnouncementThread t) {
     return Container(
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: AppColors.background,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: kInteractionLine),
       ),
@@ -293,7 +325,7 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
               onPressed: () => setState(() => _replyTo = t),
               icon: const Icon(Icons.reply_rounded, size: 16),
               label: const Text('Reply'),
-              style: TextButton.styleFrom(foregroundColor: kInteractionAccent, visualDensity: VisualDensity.compact),
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
             ),
           ),
         ],
@@ -318,27 +350,27 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                     Text(
                       who,
                       style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                        color: mine ? kInteractionInk : const Color(0xFF059669),
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: mine ? kInteractionInk : AppColors.success,
                       ),
                     ),
                     if (!mine) ...[
                       const SizedBox(width: 4),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFD1FAE5),
-                          borderRadius: BorderRadius.circular(4),
+                          color: AppColors.successBg,
+                          borderRadius: BorderRadius.circular(999),
                         ),
-                        child: const Text('HR', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: Color(0xFF059669))),
+                        child: const Text('HR', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppColors.success)),
                       ),
                     ],
                     const Spacer(),
                     if (at != null)
                       Text(
                         DateFormat('d MMM, hh:mm a').format(at),
-                        style: const TextStyle(fontSize: 10.5, color: kInteractionMuted),
+                        style: const TextStyle(fontSize: 11, color: kInteractionMuted),
                       ),
                   ],
                 ),
@@ -356,15 +388,18 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
     return SafeArea(
       top: false,
       child: Container(
-        color: Colors.white,
-        padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: kInteractionLine)),
+        ),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_replyTo != null)
               Row(
                 children: [
-                  const Icon(Icons.reply_rounded, size: 16, color: kInteractionAccent),
+                  Icon(Icons.reply_rounded, size: 16, color: AppColors.primaryText),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
@@ -376,6 +411,7 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                   ),
                   IconButton(
                     visualDensity: VisualDensity.compact,
+                    tooltip: 'Cancel reply',
                     icon: const Icon(Icons.close_rounded, size: 18),
                     onPressed: () => setState(() => _replyTo = null),
                   ),
@@ -393,20 +429,33 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                     decoration: InputDecoration(
                       hintText: _replyTo == null ? 'Write a comment…' : 'Write a reply…',
                       isDense: true,
-                      filled: true,
-                      fillColor: const Color(0xFFF1F5F9),
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(22), borderSide: BorderSide.none),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: const BorderSide(color: Color(0xFFE2E5EA)),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                        borderSide: BorderSide(color: AppColors.primary, width: 1.6),
+                      ),
                     ),
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 IconButton.filled(
                   onPressed: _posting || _input.text.trim().isEmpty ? null : _post,
-                  style: IconButton.styleFrom(backgroundColor: kInteractionAccent),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    foregroundColor: AppColors.onPrimary,
+                    disabledBackgroundColor: const Color(0xFFE2E5EA),
+                    disabledForegroundColor: AppColors.textCaption,
+                    fixedSize: const Size(48, 48),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                  ),
                   icon: _posting
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                      ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary))
+                      : const Icon(Icons.send_rounded, size: 20),
                 ),
               ],
             ),

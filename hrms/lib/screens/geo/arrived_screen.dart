@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/geo/exit_ride_bottom_sheet.dart';
 import 'package:hrms/screens/geo/field_out_form_screen.dart';
@@ -368,20 +370,14 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
         await _onExitRide();
       },
       child: Scaffold(
-        backgroundColor: Colors.white,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
-          backgroundColor: AppColors.background,
-          foregroundColor: AppColors.textPrimary,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Exit ride',
             onPressed: _onExitRide,
           ),
-          title: const Text(
-            'Arrived',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          centerTitle: true,
-          elevation: 0,
+          title: const Text('Arrived'),
           actions: [
             if (task != null)
               IconButton(
@@ -404,7 +400,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
             color: AppColors.primary,
             child: SingleChildScrollView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -414,8 +410,8 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                       builder: (context) {
                         final t = task ?? widget.task!;
                         return Container(
-                          padding: const EdgeInsets.all(16),
-                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(20),
+                          margin: const EdgeInsets.only(bottom: 12),
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
                               colors: [
@@ -425,12 +421,12 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
-                            borderRadius: BorderRadius.circular(16),
+                            borderRadius: BorderRadius.circular(20),
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.primary.withOpacity(0.3),
-                                blurRadius: 8,
-                                offset: const Offset(0, 4),
+                                color: AppColors.primary.withValues(alpha: 0.12),
+                                blurRadius: 16,
+                                offset: const Offset(0, 6),
                               ),
                             ],
                           ),
@@ -439,27 +435,24 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                             children: [
                               Text(
                                 t.taskTitle,
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
+                                style: AppTextStyles.headingSmall.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.onPrimary,
                                 ),
                               ),
                               const SizedBox(height: 6),
                               Text(
                                 'ID: ${t.taskId}',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.white.withOpacity(0.95),
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: AppColors.onPrimary.withValues(alpha: 0.85),
                                 ),
                               ),
                               if (t.description.isNotEmpty) ...[
                                 const SizedBox(height: 6),
                                 Text(
                                   t.description,
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.white.withOpacity(0.95),
+                                  style: AppTextStyles.bodySmall.copyWith(
+                                    color: AppColors.onPrimary.withValues(alpha: 0.85),
                                   ),
                                 ),
                               ],
@@ -469,49 +462,34 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                       },
                     ),
                   // Arrival confirmation card
-                  Container(
+                  AppCard(
                     padding: const EdgeInsets.all(24),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
+                    border: Border.all(color: const Color(0xFFECEEF1)),
                     child: Column(
                       children: [
                         Container(
                           width: 72,
                           height: 72,
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
+                          decoration: const BoxDecoration(
+                            color: AppColors.successBg,
                             shape: BoxShape.circle,
                           ),
                           child: const Icon(
                             Icons.check_rounded,
-                            color: Colors.white,
-                            size: 40,
+                            color: AppColors.success,
+                            size: 36,
                           ),
                         ),
                         const SizedBox(height: 16),
-                        Text(
+                        const Text(
                           "You've Arrived!",
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade800,
-                          ),
+                          style: AppTextStyles.headingLarge,
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Great job! You reached the customer location.',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: AppColors.textSecondary,
                           ),
                           textAlign: TextAlign.center,
                         ),
@@ -519,72 +497,57 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                           const SizedBox(height: 16),
                           Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
+                              horizontal: 12,
+                              vertical: 6,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.primary.withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(10),
+                              color: AppColors.successBg,
+                              borderRadius: BorderRadius.circular(999),
                             ),
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(
+                                const Icon(
                                   Icons.check_circle_rounded,
-                                  color: AppColors.primary,
-                                  size: 20,
+                                  color: AppColors.success,
+                                  size: 18,
                                 ),
-                                const SizedBox(width: 8),
+                                const SizedBox(width: 6),
                                 Text(
                                   'Within Geo-Fence',
-                                  style: TextStyle(
+                                  style: AppTextStyles.bodySmall.copyWith(
                                     fontWeight: FontWeight.w600,
-                                    color: AppColors.primary,
+                                    color: AppColors.success,
                                   ),
                                 ),
                               ],
                             ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 8),
                           Text(
                             // The server checked the real radius (task / customer / branch) at Arrived.
                             "You're at the task location",
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.textSecondary,
                             ),
                           ),
                         ],
                       ],
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
                   // Trip details card - all trip info
-                  Container(
+                  AppCard(
                     padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
+                    border: Border.all(color: const Color(0xFFECEEF1)),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        const Text(
                           'Trip Details',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade800,
-                          ),
+                          style: AppTextStyles.headingSmall,
                         ),
-                        const SizedBox(height: 16),
+                        const SizedBox(height: 12),
                         _row(
                           'Total Distance',
                           '${_displayDistanceKm.toStringAsFixed(2)} km',
@@ -644,10 +607,9 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                             padding: const EdgeInsets.only(top: 12),
                             child: Text(
                               'Arrival differs from customer location (>50m).',
-                              style: TextStyle(
-                                fontSize: 12,
+                              style: AppTextStyles.caption.copyWith(
                                 fontWeight: FontWeight.w600,
-                                color: AppColors.brandDark,
+                                color: AppColors.warning,
                               ),
                             ),
                           ),
@@ -658,52 +620,31 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                             padding: const EdgeInsets.only(top: 8),
                             child: Text(
                               'Arrival differs from destination (>50m).',
-                              style: TextStyle(
-                                fontSize: 12,
+                              style: AppTextStyles.caption.copyWith(
                                 fontWeight: FontWeight.w600,
-                                color: AppColors.brandDark,
+                                color: AppColors.warning,
                               ),
                             ),
                           ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
                   // Next Steps card – all steps, then Continue to Form (→ OTP if required).
-                  Container(
+                  AppCard(
                     padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border(
-                        left: BorderSide(color: AppColors.primary, width: 4),
-                      ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.06),
-                          blurRadius: 12,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
+                    border: Border.all(color: const Color(0xFFECEEF1)),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        const Text(
                           'Next Steps',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade800,
-                          ),
+                          style: AppTextStyles.headingSmall,
                         ),
-                        const SizedBox(height: 8),
-                        Text(
+                        const SizedBox(height: 4),
+                        const Text(
                           'Complete these requirements to finish the task:',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Colors.grey.shade600,
-                          ),
+                          style: AppTextStyles.bodySmall,
                         ),
                         const SizedBox(height: 16),
                         _nextStepRow(
@@ -744,7 +685,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                 color:
                                     !_submittingComplete
                                     ? null
-                                    : Colors.grey.shade300,
+                                    : AppColors.inputFill,
                               ),
                               child: ElevatedButton.icon(
                                 onPressed:
@@ -889,9 +830,9 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                   backgroundColor: Colors.transparent,
                                   shadowColor: Colors.transparent,
                                   surfaceTintColor: Colors.transparent,
-                                  foregroundColor: Colors.white,
+                                  foregroundColor: AppColors.onPrimary,
                                   disabledBackgroundColor: Colors.transparent,
-                                  disabledForegroundColor: Colors.grey.shade600,
+                                  disabledForegroundColor: AppColors.textSecondary,
                                   minimumSize: const Size.fromHeight(52),
                                   padding: const EdgeInsets.symmetric(
                                     vertical: 14,
@@ -906,12 +847,12 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                                         height: 22,
                                         child: CircularProgressIndicator(
                                           strokeWidth: 2,
-                                          color: Colors.white,
+                                          color: AppColors.textSecondary,
                                         ),
                                       )
                                     : const Icon(
                                         Icons.check_circle_rounded,
-                                        size: 22,
+                                        size: 20,
                                       ),
                                 label: Text(
                                   _submittingComplete
@@ -1024,17 +965,17 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
           Flexible(
             child: Text(
               label,
-              style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
           const SizedBox(width: 8),
           Flexible(
             child: Text(
               value,
-              style: TextStyle(
-                fontSize: 14,
+              style: AppTextStyles.bodyMedium.copyWith(
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade800,
               ),
               textAlign: TextAlign.end,
               overflow: TextOverflow.ellipsis,
@@ -1064,15 +1005,13 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                     ? Icons.gps_fixed_rounded
                     : Icons.location_on_rounded,
                 size: 18,
-                color: title == 'Source' ? Colors.green : Colors.red,
+                color: title == 'Source' ? AppColors.success : AppColors.error,
               ),
               const SizedBox(width: 6),
               Text(
                 title,
-                style: TextStyle(
-                  fontSize: 14,
+                style: AppTextStyles.label.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade800,
                 ),
               ),
             ],
@@ -1080,7 +1019,9 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
           const SizedBox(height: 4),
           Text(
             '—',
-            style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textCaption,
+            ),
           ),
         ],
       );
@@ -1095,15 +1036,14 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
                   ? Icons.gps_fixed_rounded
                   : Icons.location_on_rounded,
               size: 18,
+              color: AppColors.textSecondary,
               // color: title == 'Source' ? Colors.green : Colors.red,
             ),
             const SizedBox(width: 6),
             Text(
               title,
-              style: TextStyle(
-                fontSize: 14,
+              style: AppTextStyles.label.copyWith(
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade800,
               ),
             ),
           ],
@@ -1115,7 +1055,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
               : (hasCoords
                     ? '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}'
                     : '—'),
-          style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+          style: AppTextStyles.bodySmall,
         ),
       ],
     );
@@ -1127,43 +1067,53 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     required bool done,
     VoidCallback? onTap,
   }) {
+    final Color tint = done ? AppColors.success : AppColors.textSecondary;
     final content = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        color: done
-            ? AppColors.primary.withOpacity(0.12)
-            : Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(10),
+        color: done ? AppColors.successBg.withValues(alpha: 0.5) : AppColors.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: done
+              ? AppColors.success.withValues(alpha: 0.2)
+              : const Color(0xFFECEEF1),
+        ),
       ),
       child: Row(
         children: [
-          Icon(
-            done ? Icons.check_circle_rounded : icon,
-            color: done ? AppColors.primary : Colors.grey.shade600,
-            size: 22,
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: tint.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(
+              done ? Icons.check_circle_rounded : icon,
+              color: tint,
+              size: 20,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               label,
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: done ? AppColors.primary : Colors.grey.shade800,
+              style: AppTextStyles.label.copyWith(
+                color: done ? AppColors.success : AppColors.textPrimary,
               ),
             ),
           ),
           if (onTap != null && !done)
-            Icon(Icons.chevron_right_rounded, color: Colors.grey.shade500),
+            const Icon(Icons.chevron_right_rounded, color: AppColors.textCaption),
         ],
       ),
     );
     return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.only(bottom: 8),
       child: onTap != null && !done
           ? InkWell(
               onTap: onTap,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
               child: content,
             )
           : content,

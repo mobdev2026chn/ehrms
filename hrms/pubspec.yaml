@@ -83,6 +83,7 @@ dependencies:
   # 6.x pulls record_linux 1.x compatible with record_platform_interface (5.x was broken on Linux/desktop resolve).
   record: ^6.0.0
   just_audio: ^0.10.5
+  flutter_tts: ^4.2.0
   country_code_picker: ^3.4.1
   # Pure-Dart libphonenumber metadata: validates mobile numbers per country
   # (length + prefix rules) without platform channels.

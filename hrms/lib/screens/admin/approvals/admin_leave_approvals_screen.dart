@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../services/admin_approvals_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
+import 'approval_shared_widgets.dart';
 
 class AdminLeaveRecord {
   final String id;
@@ -52,32 +54,47 @@ class AdminLeaveRecord {
     return name.isNotEmpty ? name[0].toUpperCase() : 'U';
   }
 
+  /// One row of GET /admin/approvals/leave (`data.requests[]`).
   factory AdminLeaveRecord.fromJson(Map<String, dynamic> json) {
-    final staffObj = json['staffId'] is Map ? json['staffId'] : json;
     final isHalf = json['isHalfDay'] == true;
-    final daysVal = isHalf ? 0.5 : (double.tryParse((json['days'] ?? '1').toString()) ?? 1.0);
+    final daysVal = double.tryParse((json['days'] ?? (isHalf ? 0.5 : 1)).toString()) ?? (isHalf ? 0.5 : 1.0);
+    final id = (json['id'] ?? json['_id'] ?? '').toString();
 
     return AdminLeaveRecord(
-      id: (json['_id'] ?? json['id'] ?? '').toString(),
-      requestId: (json['requestId'] ?? 'LV-${(json['_id'] ?? json['id'] ?? '101').toString().toUpperCase().padLeft(6, '0')}').toString(),
-      employeeId: (staffObj['employeeId'] ?? json['employeeId'] ?? 'EMP-015').toString(),
-      name: (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString().isNotEmpty
-          ? (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString()
-          : (json['name'] ?? 'Staff Member').toString(),
-      department: (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? json['department'] ?? 'Engineering')).toString(),
-      designation: (staffObj['designation'] is Map ? staffObj['designation']['name'] : (staffObj['designation'] ?? json['designation'] ?? 'Developer')).toString(),
-      leaveType: (json['leaveType'] ?? 'Unpaid').toString(),
-      leaveTypeCategory: (json['leaveTypeCategory'] ?? (json['leaveType']?.toString().toLowerCase().contains('unpaid') == true ? 'unpaid' : 'paid')).toString(),
+      id: id,
+      requestId: (json['requestId'] ?? '').toString(),
+      employeeId: (json['employeeId'] ?? '—').toString(),
+      name: (json['name'] ?? 'Staff Member').toString(),
+      department: (json['department'] ?? '—').toString(),
+      designation: (json['designation'] ?? '—').toString(),
+      leaveType: (json['leaveType'] ?? 'Leave').toString(),
+      leaveTypeCategory: (json['leaveTypeCategory'] ?? 'paid').toString(),
       days: daysVal,
       isHalfDay: isHalf,
       halfDaySession: (json['halfDaySession'] ?? '').toString(),
-      startDate: (json['startDate'] ?? '2026-08-17').toString(),
-      endDate: (json['endDate'] ?? json['startDate'] ?? '2026-08-17').toString(),
+      startDate: (json['startDate'] ?? '').toString(),
+      endDate: (json['endDate'] ?? json['startDate'] ?? '').toString(),
       status: (json['status'] ?? 'Pending').toString(),
-      approvedBy: (json['approvedBy'] ?? (json['status'] == 'Approved' ? 'Admin' : '—')).toString(),
-      reason: (json['reason'] ?? 'test').toString(),
+      approvedBy: (json['approvedBy'] ?? '—').toString(),
+      reason: (json['reason'] ?? '').toString(),
       remarks: (json['remarks'] ?? '').toString(),
     );
+  }
+
+  DateTime? get startDay {
+    final d = DateTime.tryParse(startDate)?.toLocal();
+    return d == null ? null : DateTime(d.year, d.month, d.day);
+  }
+
+  DateTime? get endDay {
+    final d = DateTime.tryParse(endDate)?.toLocal();
+    return d == null ? startDay : DateTime(d.year, d.month, d.day);
+  }
+
+  String get dateLabel {
+    final s = formatApprovalDate(startDate);
+    final e = formatApprovalDate(endDate);
+    return (e == s || e == '—') ? s : '$s → $e';
   }
 }
 
@@ -90,7 +107,9 @@ class AdminLeaveApprovalsScreen extends StatefulWidget {
 
 class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> with SingleTickerProviderStateMixin {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final ApiClient _api = ApiClient();
+  final AdminApprovalsService _service = AdminApprovalsService();
+  String? _loadError;
+  final Set<String> _knownLeaveTypes = {};
 
   late TabController _tabController;
   bool _isLoading = true;
@@ -102,7 +121,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
   String _startDateFilter = '';
   String _endDateFilter = '';
 
-  DateTime _calendarMonth = DateTime(2026, 8, 1);
+  DateTime _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month, 1);
   List<AdminLeaveRecord> _records = [];
 
   @override
@@ -119,325 +138,191 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
   }
 
   Future<void> _loadData({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
-    try {
-      final res = await _api.request(
-        '/admin/staff/approvals/leave',
-        queryParameters: {
-          'search': _searchQuery.isNotEmpty ? _searchQuery : null,
-          'status': _statusFilter != 'All Statuses' ? _statusFilter : null,
-          'leaveType': _leaveTypeFilter != 'All Types' ? _leaveTypeFilter : null,
-          'tab': _timelineFilter == 'Upcoming Leaves' ? 'upcoming' : (_timelineFilter == 'Past Leaves' ? 'previous' : null),
-        },
-      );
-
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data']?['requests'] as List?) ?? (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _records = list.map((e) => AdminLeaveRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRecords();
-        }
-      } else {
-        _setMockRecords();
-      }
-    } catch (_) {
-      _setMockRecords();
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
     }
 
-    if (showLoader && mounted) setState(() => _isLoading = false);
-  }
-
-  void _setMockRecords() {
-    _records = [
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362EF',
-        requestId: 'LV-362EF',
-        employeeId: 'EMP-015',
-        name: 'sarannn saran',
-        department: 'Engineering',
-        designation: 'Junior',
-        leaveType: 'Unpaid',
-        leaveTypeCategory: 'unpaid',
-        days: 0.5,
-        isHalfDay: true,
-        halfDaySession: '2nd Half',
-        startDate: '17 Aug 2026',
-        endDate: '17 Aug 2026',
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'test1',
-      ),
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362EE',
-        requestId: 'LV-362EE',
-        employeeId: 'EMP-015',
-        name: 'sarannn saran',
-        department: 'Engineering',
-        designation: 'Junior',
-        leaveType: 'Unpaid',
-        leaveTypeCategory: 'unpaid',
-        days: 0.5,
-        isHalfDay: true,
-        halfDaySession: '1st Half',
-        startDate: '18 Aug 2026',
-        endDate: '18 Aug 2026',
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'test',
-      ),
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362ED',
-        requestId: 'LV-362ED',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        leaveType: 'sick',
-        leaveTypeCategory: 'paid',
-        days: 1.0,
-        isHalfDay: false,
-        startDate: '31 Aug 2026',
-        endDate: '31 Aug 2026',
-        status: 'Pending',
-        approvedBy: '—',
-        reason: 'test',
-      ),
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362EC',
-        requestId: 'LV-362EC',
-        employeeId: 'EMP-007',
-        name: 'personal notouch',
-        department: 'IT',
-        designation: 'Support',
-        leaveType: 'sick',
-        leaveTypeCategory: 'paid',
-        days: 0.5,
-        isHalfDay: true,
-        halfDaySession: '1st Half',
-        startDate: '26 Aug 2026',
-        endDate: '26 Aug 2026',
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'qwer',
-      ),
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362EB',
-        requestId: 'LV-362EB',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        leaveType: 'sick',
-        leaveTypeCategory: 'paid',
-        days: 0.5,
-        isHalfDay: true,
-        halfDaySession: '2nd Half',
-        startDate: '20 Aug 2026',
-        endDate: '20 Aug 2026',
-        status: 'Approved',
-        approvedBy: 'Admin',
-        reason: 'gfd',
-      ),
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362EA',
-        requestId: 'LV-362EA',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        leaveType: 'sick',
-        leaveTypeCategory: 'paid',
-        days: 1.0,
-        isHalfDay: false,
-        startDate: '05 Aug 2026',
-        endDate: '05 Aug 2026',
-        status: 'Pending',
-        approvedBy: '—',
-        reason: 'd',
-      ),
-      AdminLeaveRecord(
-        id: '6A92ABE9DB2F72F310B362E9',
-        requestId: 'LV-362E9',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Developer',
-        leaveType: 'sick',
-        leaveTypeCategory: 'paid',
-        days: 1.0,
-        isHalfDay: false,
-        startDate: '05 Aug 2026',
-        endDate: '05 Aug 2026',
-        status: 'Pending',
-        approvedBy: '—',
-        reason: 'dss',
-      ),
-    ];
+    try {
+      final page = await _service.getLeaveRequests(
+        status: _statusFilter != 'All Statuses' ? _statusFilter : null,
+        leaveType: _leaveTypeFilter != 'All Types' ? _leaveTypeFilter : null,
+        tab: _timelineFilter == 'Upcoming Leaves' ? 'upcoming' : (_timelineFilter == 'Past Leaves' ? 'previous' : null),
+        sort: _sortOrder == 'Oldest First' ? 'Oldest' : null,
+        startDate: _startDateFilter.isNotEmpty ? _startDateFilter : null,
+        endDate: _endDateFilter.isNotEmpty ? _endDateFilter : null,
+      );
+      if (!mounted) return;
+      setState(() {
+        _records = page.requests.map(AdminLeaveRecord.fromJson).toList();
+        for (final r in _records) {
+          if (r.leaveType.isNotEmpty) _knownLeaveTypes.add(r.leaveType);
+        }
+        _loadError = null;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final msg = AdminApprovalsService.messageOf(e, fallback: 'Failed to load leave requests');
+      setState(() {
+        _loadError = msg;
+        _isLoading = false;
+      });
+      if (!showLoader) SnackBarUtils.showSnackBar(context, msg, isError: true);
+    }
   }
 
   List<AdminLeaveRecord> get _filteredRecords {
+    final q = _searchQuery.toLowerCase();
+    if (q.isEmpty) return _records;
     return _records.where((r) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          r.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.employeeId.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.leaveType.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.reason.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesStatus = _statusFilter == 'All Statuses' || r.status.toLowerCase() == _statusFilter.toLowerCase();
-      final matchesType = _leaveTypeFilter == 'All Types' || r.leaveType.toLowerCase().contains(_leaveTypeFilter.toLowerCase());
-
-      return matchesSearch && matchesStatus && matchesType;
+      return r.name.toLowerCase().contains(q) ||
+          r.employeeId.toLowerCase().contains(q) ||
+          r.leaveType.toLowerCase().contains(q) ||
+          r.reason.toLowerCase().contains(q);
     }).toList();
   }
 
-  // ── Action: View Leave Details Modal (Screenshot 3) ──
-  void _showLeaveDetailModal(AdminLeaveRecord r) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.all(20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.description_outlined, color: AppColors.brandDark, size: 18),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Leave Request Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text(r.id, style: const TextStyle(fontSize: 9.5, color: Color(0xFF94A3B8)), overflow: TextOverflow.ellipsis),
-                    ],
-                  ),
-                ),
-                IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => Navigator.pop(ctx)),
-              ],
-            ),
-            const SizedBox(height: 14),
-
-            // Staff Info Pill
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 14,
-                    backgroundColor: const Color(0xFFFEE2E2),
-                    child: Text(r.initials, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFFDC2626))),
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.name, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text(r.employeeId, style: const TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            _detailRow('LEAVE TYPE', r.leaveType),
-            _detailRow('DURATION', '${r.days} Days${r.isHalfDay ? " (${r.halfDaySession})" : ""}'),
-            _detailRow('DATES', '📅 ${r.startDate}'),
-            _detailRow('STATUS', r.status, isStatus: true),
-            _detailRow('APPROVED BY', r.approvedBy),
-            _detailRow('REASON', r.reason.isNotEmpty ? r.reason : '—'),
-            _detailRow('REMARKS / NOTES', r.remarks.isNotEmpty ? r.remarks : 'No remarks provided.'),
-            const SizedBox(height: 14),
-
-            if (r.status == 'Pending')
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        setState(() => r.status = 'Rejected');
-                        try {
-                          await _api.request('/admin/staff/approvals/leave/${r.id}/reject', method: 'POST', data: {'reason': 'Rejected by admin'});
-                        } catch (_) {}
-                        if (mounted) SnackBarUtils.showSnackBar(context, 'Leave request rejected');
-                      },
-                      style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFDC2626), side: const BorderSide(color: Color(0xFFFECACA))),
-                      child: const Text('Reject', style: TextStyle(fontWeight: FontWeight.w700)),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        setState(() => r.status = 'Approved');
-                        try {
-                          await _api.request('/admin/staff/approvals/leave/${r.id}/approve', method: 'POST', data: {'remarks': 'Approved'});
-                        } catch (_) {}
-                        if (mounted) SnackBarUtils.showSnackBar(context, 'Leave request approved');
-                      },
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white),
-                      child: const Text('Approve', style: TextStyle(fontWeight: FontWeight.w800)),
-                    ),
-                  ),
-                ],
-              )
-            else
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                  child: const Text('Close Details', style: TextStyle(fontWeight: FontWeight.w800)),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
+  // ── Actions (update the list only after the backend accepts) ──
+  Future<void> _approve(AdminLeaveRecord r) async {
+    try {
+      final msg = await _service.approveLeave(r.id, remarks: 'Approved');
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to approve leave');
+    }
   }
 
-  Widget _detailRow(String label, String value, {bool isStatus = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
-          const SizedBox(width: 8),
-          if (isStatus)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: value == 'Approved' ? const Color(0xFFDCFCE7) : (value == 'Pending' ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2)),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                value,
-                style: TextStyle(
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.w900,
-                  color: value == 'Approved' ? const Color(0xFF16A34A) : (value == 'Pending' ? AppColors.brandDark : const Color(0xFFDC2626)),
-                ),
-              ),
-            )
-          else
-            Expanded(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)))),
-        ],
-      ),
+  Future<void> _reject(AdminLeaveRecord r) async {
+    final reason = await showApprovalReasonDialog(
+      context,
+      title: r.status == 'Approved' ? 'Revoke Approved Leave' : 'Reject Leave Request',
+      subtitle: 'Please provide a reason for rejecting ${r.name}\'s ${r.leaveType} request:',
+    );
+    if (reason == null || !mounted) return;
+    try {
+      final msg = await _service.rejectLeave(r.id, reason: reason, remarks: reason);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to reject leave');
+    }
+  }
+
+  /// POST /admin/approvals/leave/:id/cancel — only for Approved leave.
+  Future<void> _cancel(AdminLeaveRecord r) async {
+    final reason = await showApprovalReasonDialog(
+      context,
+      title: 'Cancel Approved Leave',
+      subtitle: 'The days go back to ${r.name}\'s balance and the attendance for them is cleared so it can be marked again.',
+      actionLabel: 'Cancel Leave',
+      hint: 'Reason (optional)',
+      required: false,
+    );
+    if (reason == null || !mounted) return;
+    try {
+      final msg = await _service.cancelLeave(r.id, reason: reason.isEmpty ? null : reason);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to cancel leave');
+    }
+  }
+
+  List<Widget> _actionButtons(AdminLeaveRecord r, VoidCallback close) {
+    if (r.status == 'Pending') {
+      return [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: () {
+              close();
+              _reject(r);
+            },
+            style: approvalRejectStyle(),
+            child: const Text('Reject'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ElevatedButton(
+            onPressed: () {
+              close();
+              _approve(r);
+            },
+            style: approvalApproveStyle(),
+            child: const Text('Approve'),
+          ),
+        ),
+      ];
+    }
+    if (r.status == 'Approved') {
+      return [
+        Expanded(
+          child: OutlinedButton(
+            onPressed: () {
+              close();
+              _cancel(r);
+            },
+            style: approvalRejectStyle().copyWith(
+              foregroundColor: const WidgetStatePropertyAll(AppColors.warning),
+              side: WidgetStatePropertyAll(BorderSide(color: AppColors.warning.withValues(alpha: 0.5), width: 1.2)),
+            ),
+            child: const Text('Cancel Leave'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: OutlinedButton(
+            onPressed: () {
+              close();
+              _reject(r);
+            },
+            style: approvalRejectStyle(),
+            child: const Text('Revoke'),
+          ),
+        ),
+      ];
+    }
+    return const [];
+  }
+
+  // ── Action: View Leave Details (GET /admin/approvals/leave/:id) ──
+  void _showLeaveDetailModal(AdminLeaveRecord r) {
+    showApprovalDetailSheet(
+      context,
+      title: 'Leave Request Details',
+      loader: () => _service.getLeaveDetail(r.id),
+      buildRows: (d) {
+        final staff = d['staffId'];
+        final isHalf = d['isHalfDay'] == true;
+        final reviewer = d['reviewedBy'];
+        final status = (d['status'] ?? r.status).toString();
+        return [
+          MapEntry('REQUEST ID', r.requestId.isNotEmpty ? r.requestId : r.id),
+          MapEntry('EMPLOYEE', approvalStaffName(staff, fallback: r.name)),
+          MapEntry('EMPLOYEE ID', (staff is Map ? staff['employeeId'] : null)?.toString() ?? r.employeeId),
+          MapEntry('DEPARTMENT', (staff is Map ? staff['department'] : null)?.toString() ?? r.department),
+          MapEntry('LEAVE TYPE', (d['leaveTypeName'] ?? r.leaveType).toString()),
+          MapEntry('CATEGORY', (d['leaveTypeCategory'] ?? r.leaveTypeCategory).toString()),
+          MapEntry('DURATION', '${d['duration'] ?? r.days} day(s)${isHalf ? ' (${d['halfDaySession'] ?? ''})' : ''}'),
+          MapEntry('FROM', formatApprovalDate(d['startDate'])),
+          MapEntry('TO', formatApprovalDate(d['endDate'])),
+          MapEntry('STATUS', status),
+          MapEntry('REVIEWED BY', approvalStaffName(reviewer, fallback: r.approvedBy)),
+          if (d['reviewedAt'] != null) MapEntry('REVIEWED ON', formatApprovalDate(d['reviewedAt'])),
+          MapEntry('REASON', (d['reason'] ?? '').toString()),
+          if ((d['rejectionReason'] ?? '').toString().isNotEmpty) MapEntry('REJECTION REASON', d['rejectionReason'].toString()),
+          MapEntry('REMARKS / NOTES', (d['remarks'] ?? '').toString().isNotEmpty ? d['remarks'].toString() : 'No remarks provided.'),
+          MapEntry('APPLIED ON', formatApprovalDate(d['createdAt'])),
+        ];
+      },
+      actions: (sheetCtx, d) => _actionButtons(r, () => Navigator.pop(sheetCtx)),
     );
   }
 
@@ -450,61 +335,80 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDrawerState) {
           return Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            child: Column(
+            child: SafeArea(
+              top: false,
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(999)),
+                  ),
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
-                      children: const [
-                        Icon(Icons.filter_alt_outlined, color: Color(0xFFEFAA1F), size: 20),
-                        SizedBox(width: 8),
-                        Text('ADVANCED FILTERS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                          child: Icon(Icons.filter_alt_outlined, color: AppColors.primaryText, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('ADVANCED FILTERS', style: AppTextStyles.headingSmall),
                       ],
                     ),
-                    IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(ctx)),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
 
                 // Leave Status (Screenshot 1)
-                const Text('LEAVE STATUS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('LEAVE STATUS', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_statusFilter, ['All Statuses', 'Pending', 'Approved', 'Rejected', 'Cancelled'], (v) {
                   setDrawerState(() => _statusFilter = v);
                   setState(() => _statusFilter = v);
                 }),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Leave Type (Screenshot 2)
-                const Text('LEAVE TYPE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
-                _drawerDropdown(_leaveTypeFilter, ['All Types', 'Unpaid', 'sick', 'casual'], (v) {
+                const Text('LEAVE TYPE', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
+                _drawerDropdown(_leaveTypeFilter, ['All Types', ...(_knownLeaveTypes.toList()..sort())], (v) {
                   setDrawerState(() => _leaveTypeFilter = v);
                   setState(() => _leaveTypeFilter = v);
                 }),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Sort Order (Screenshot 3)
-                const Text('SORT ORDER', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('SORT ORDER', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_sortOrder, ['Newest First', 'Oldest First'], (v) {
                   setDrawerState(() => _sortOrder = v);
                   setState(() => _sortOrder = v);
                 }),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
 
                 Row(
                   children: [
                     Expanded(
-                      child: TextButton(
+                      child: OutlinedButton(
                         onPressed: () {
                           setDrawerState(() {
                             _statusFilter = 'All Statuses';
@@ -517,21 +421,25 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                             _sortOrder = 'Newest First';
                           });
                           Navigator.pop(ctx);
+                          _loadData();
                         },
-                        child: const Text('Clear All', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
+                        child: const Text('Clear All'),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                        child: const Text('Apply Filters', style: TextStyle(fontWeight: FontWeight.w800)),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _loadData();
+                        },
+                        child: const Text('Apply Filters'),
                       ),
                     ),
                   ],
                 ),
               ],
+              ),
             ),
           );
         },
@@ -541,14 +449,16 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
 
   Widget _drawerDropdown(String value, List<String> items, Function(String) onChanged) {
     return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: items.contains(value) ? value : items.first,
           isExpanded: true,
-          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)))).toList(),
+          borderRadius: BorderRadius.circular(12),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500)))).toList(),
           onChanged: (v) {
             if (v != null) onChanged(v);
           },
@@ -561,29 +471,20 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          icon: const Icon(Icons.menu_rounded),
+          tooltip: 'Open menu',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Leaves Approvals',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Leaves Approvals'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          labelColor: AppColors.brandDark,
-          unselectedLabelColor: const Color(0xFF64748B),
-          indicatorColor: const Color(0xFFEFAA1F),
-          indicatorWeight: 3,
-          labelStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+          tabAlignment: TabAlignment.start,
           tabs: [
             Tab(text: 'Leave Requests (${_records.length})'),
             const Tab(text: 'Leave Calendar'),
@@ -613,21 +514,25 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
           // Filter & Timeline Row
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+            decoration: approvalCardDecoration(),
             child: Column(
               children: [
                 // Search
                 Container(
-                  height: 38,
-                  decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+                  height: 44,
+                  decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                   child: TextField(
                     onChanged: (v) => setState(() => _searchQuery = v),
+                    style: AppTextStyles.bodyMedium,
                     decoration: const InputDecoration(
                       hintText: 'Search employee, leave...',
-                      hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                      prefixIcon: Icon(Icons.search_rounded, size: 16, color: Color(0xFF94A3B8)),
+                      hintStyle: TextStyle(fontSize: 14, color: AppColors.textCaption),
+                      prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.textCaption),
+                      filled: false,
                       border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(vertical: 9),
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
                 ),
@@ -638,15 +543,17 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                     // Timeline Dropdown (Screenshot 2)
                     Expanded(
                       child: Container(
-                        height: 36,
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFE2E8F0))),
+                        height: 44,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String>(
                             value: _timelineFilter,
                             isExpanded: true,
+                            borderRadius: BorderRadius.circular(12),
+                            icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
                             items: ['All Timeline', 'Upcoming Leaves', 'Past Leaves']
-                                .map((t) => DropdownMenuItem(value: t, child: Text(t, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700))))
+                                .map((t) => DropdownMenuItem(value: t, child: Text(t, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500))))
                                 .toList(),
                             onChanged: (v) {
                               if (v != null) {
@@ -663,13 +570,12 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                     // Filters Button
                     OutlinedButton.icon(
                       onPressed: _showAdvancedFiltersDrawer,
-                      icon: const Icon(Icons.filter_alt_outlined, size: 14),
-                      label: const Text('Filters', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                      icon: const Icon(Icons.filter_alt_outlined, size: 18),
+                      label: const Text('Filters'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: const Color(0xFF475569),
-                        side: const BorderSide(color: Color(0xFFE2E8F0)),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                        minimumSize: const Size(0, 44),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -677,10 +583,12 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                     // Refresh Button
                     IconButton(
                       onPressed: () => _loadData(),
-                      icon: const Icon(Icons.refresh_rounded, color: Color(0xFF64748B), size: 18),
+                      tooltip: 'Refresh',
+                      icon: const Icon(Icons.refresh_rounded, color: AppColors.textSecondary, size: 20),
                       style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFFF8FAFC),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6), side: const BorderSide(color: Color(0xFFE2E8F0))),
+                        backgroundColor: const Color(0xFFF7F8FA),
+                        minimumSize: const Size(44, 44),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: Color(0xFFE2E5EA))),
                       ),
                     ),
                   ],
@@ -688,28 +596,45 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
               ],
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
 
           // Header count
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('List of All & Past Leaves', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              Text('Showing ${_filteredRecords.length} records', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+              const Expanded(child: Text('List of All & Past Leaves', style: AppTextStyles.headingSmall)),
+              const SizedBox(width: 8),
+              Text('Showing ${_filteredRecords.length} records', style: AppTextStyles.bodySmall),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
           // Cards
-          if (_filteredRecords.isEmpty)
+          if (_loadError != null)
+            ApprovalErrorView(message: _loadError!, onRetry: () => _loadData())
+          else if (_filteredRecords.isEmpty)
             Container(
-              padding: const EdgeInsets.all(36),
               alignment: Alignment.center,
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-              child: const Text('No leave applications found', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+              decoration: approvalCardDecoration(),
+              child: const ApprovalEmptyView(
+                icon: Icons.event_busy_outlined,
+                title: 'No leave applications found',
+              ),
             )
           else
             ..._filteredRecords.map((r) => _buildLeaveCard(r)),
+        ],
+      ),
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(String value, IconData icon, String label, Color color) {
+    return PopupMenuItem(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(width: 12),
+          Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: color)),
         ],
       ),
     );
@@ -720,110 +645,105 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
     final isPending = r.status == 'Pending';
     final isUnpaid = r.leaveTypeCategory == 'unpaid' || r.leaveType.toLowerCase().contains('unpaid');
 
-    Color typeBg = isUnpaid ? const Color(0xFFFCE7F3) : const Color(0xFFE0F2FE);
-    Color typeFg = isUnpaid ? const Color(0xFFDB2777) : const Color(0xFF0284C7);
+    Color typeBg = isUnpaid ? AppColors.indigoBg : AppColors.infoBg;
+    Color typeFg = isUnpaid ? AppColors.indigo : AppColors.info;
 
-    return InkWell(
-      onTap: () => _showLeaveDetailModal(r),
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFF1F5F9)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          onTap: () => _showLeaveDetailModal(r),
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: kApprovalBorder),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: const Color(0xFFFEE2E2),
-                  child: Text(r.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFFDC2626))),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text('${r.employeeId} • ${r.department}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: isApproved ? const Color(0xFFDCFCE7) : (isPending ? const Color(0xFFFEF3C7) : const Color(0xFFFEE2E2)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(isApproved ? Icons.check_circle_outline_rounded : Icons.schedule_rounded, size: 11, color: isApproved ? const Color(0xFF16A34A) : AppColors.brandDark),
-                      const SizedBox(width: 4),
-                      Text(r.status, style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: isApproved ? const Color(0xFF16A34A) : AppColors.brandDark)),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 4),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, size: 18, color: Color(0xFF64748B)),
-                  onSelected: (val) {
-                    if (val == 'view') {
-                      _showLeaveDetailModal(r);
-                    }
-                  },
-                  itemBuilder: (ctx) => [
-                    const PopupMenuItem(
-                      value: 'view',
-                      child: Row(
-                        children: [
-                          Icon(Icons.visibility_outlined, size: 16, color: Color(0xFF2563EB)),
-                          SizedBox(width: 8),
-                          Text('View Details', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
-                        ],
+                Row(
+                  children: [
+                    Expanded(
+                      child: ApprovalCardHeader(
+                        leading: ApprovalAvatar(name: r.name, initials: r.initials),
+                        title: r.name,
+                        subtitle: '${r.employeeId} • ${r.department}',
+                        trailing: ApprovalStatusPill(status: r.status, label: r.status),
                       ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.textSecondary),
+                      tooltip: 'More actions',
+                      onSelected: (val) {
+                        if (val == 'view') {
+                          _showLeaveDetailModal(r);
+                        } else if (val == 'approve') {
+                          _approve(r);
+                        } else if (val == 'reject') {
+                          _reject(r);
+                        } else if (val == 'cancel') {
+                          _cancel(r);
+                        }
+                      },
+                      itemBuilder: (ctx) => [
+                        const PopupMenuItem(
+                          value: 'view',
+                          child: Row(
+                            children: [
+                              Icon(Icons.visibility_outlined, size: 18, color: AppColors.info),
+                              SizedBox(width: 12),
+                              Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                            ],
+                          ),
+                        ),
+                        if (isPending) _menuItem('approve', Icons.check_circle_outline_rounded, 'Approve', AppColors.success),
+                        if (isPending) _menuItem('reject', Icons.cancel_outlined, 'Reject', AppColors.error),
+                        if (isApproved) _menuItem('cancel', Icons.event_busy_outlined, 'Cancel Leave', AppColors.warning),
+                        if (isApproved) _menuItem('reject', Icons.cancel_outlined, 'Revoke (Reject)', AppColors.error),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 10),
+                const SizedBox(height: 12),
 
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(right: 8),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Type
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(4)),
-                        child: Text('${r.leaveType}${r.isHalfDay ? " (${r.halfDaySession})" : ""}', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: typeFg)),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          // Type
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(color: typeBg, borderRadius: BorderRadius.circular(999)),
+                            child: Text('${r.leaveType}${r.isHalfDay ? " (${r.halfDaySession})" : ""}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: typeFg)),
+                          ),
+                          // Days
+                          Text('${r.days} days', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                          // Date
+                          Text(r.dateLabel, style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w500)),
+                        ],
                       ),
-                      // Days
-                      Text('${r.days} days', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF1E293B))),
-                      // Date
-                      Text(r.startDate, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                      const SizedBox(height: 8),
+                      // Reason
+                      Text('Reason: ${r.reason}', maxLines: 2, overflow: TextOverflow.ellipsis, style: AppTextStyles.bodySmall),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  // Reason
-                  Text('Reason: ${r.reason}', maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -837,34 +757,44 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
         // Month Selector Header
         Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+          decoration: approvalCardDecoration(),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Flexible(
                 child: Row(
-                  children: const [
-                    Icon(Icons.calendar_month_outlined, color: AppColors.brandDark, size: 18),
-                    SizedBox(width: 6),
-                    Flexible(child: Text('Leave Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800))),
+                  children: [
+                    Icon(Icons.calendar_month_outlined, color: AppColors.primaryText, size: 20),
+                    const SizedBox(width: 8),
+                    const Flexible(child: Text('Leave Calendar', maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.headingSmall)),
                   ],
                 ),
               ),
               Row(
                 children: [
                   OutlinedButton(
-                    onPressed: () => setState(() => _calendarMonth = DateTime(2026, 8, 1)),
-                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), minimumSize: Size.zero),
-                    child: const Text('Today', style: TextStyle(fontSize: 11)),
+                    onPressed: () => setState(() => _calendarMonth = DateTime(DateTime.now().year, DateTime.now().month, 1)),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                    ),
+                    child: const Text('Today'),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                   IconButton(
-                    icon: const Icon(Icons.chevron_left_rounded, size: 18),
+                    icon: const Icon(Icons.chevron_left_rounded, size: 20),
+                    tooltip: 'Previous month',
+                    visualDensity: VisualDensity.compact,
                     onPressed: () => setState(() => _calendarMonth = DateTime(_calendarMonth.year, _calendarMonth.month - 1, 1)),
                   ),
-                  Text(DateFormat('MMMM yyyy').format(_calendarMonth), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800)),
+                  Text(DateFormat('MMMM yyyy').format(_calendarMonth), style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
                   IconButton(
-                    icon: const Icon(Icons.chevron_right_rounded, size: 18),
+                    icon: const Icon(Icons.chevron_right_rounded, size: 20),
+                    tooltip: 'Next month',
+                    visualDensity: VisualDensity.compact,
                     onPressed: () => setState(() => _calendarMonth = DateTime(_calendarMonth.year, _calendarMonth.month + 1, 1)),
                   ),
                 ],
@@ -879,7 +809,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
           children: ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'].map((d) {
             return Expanded(
               child: Center(
-                child: Text(d, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
+                child: Text(d, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
               ),
             );
           }).toList(),
@@ -892,23 +822,19 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
 
         // Bottom Legend Bar (Screenshot 4)
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: approvalCardDecoration(),
           child: Wrap(
             spacing: 12,
-            runSpacing: 6,
+            runSpacing: 8,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              const Text('Legend:', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-              _legendItem('Sick Leave', const Color(0xFF0284C7)),
-              _legendItem('Casual Leave', const Color(0xFF16A34A)),
+              Text('Legend:', style: AppTextStyles.caption.copyWith(fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+              _legendItem('Sick Leave', AppColors.info),
+              _legendItem('Casual Leave', AppColors.success),
               _legendItem('Medical Leave', const Color(0xFF7C3AED)),
-              _legendItem('Pending Approval', AppColors.brandDark),
-              _legendItem('Rejected / Cancelled', const Color(0xFFDC2626)),
+              _legendItem('Pending Approval', AppColors.warning),
+              _legendItem('Rejected / Cancelled', AppColors.error),
             ],
           ),
         ),
@@ -922,7 +848,7 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
       children: [
         Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w600, color: Color(0xFF475569))),
+        Text(label, style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
       ],
     );
   }
@@ -937,38 +863,44 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
 
     // Empty lead cells
     for (int i = 0; i < firstDayWeekday; i++) {
-      dayWidgets.add(Container(margin: const EdgeInsets.all(2), decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(6))));
+      dayWidgets.add(Container(margin: const EdgeInsets.all(2), decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(8))));
     }
 
     // Days 1..totalDays
     for (int d = 1; d <= totalDays; d++) {
-      final dayDateStr = '$d ${DateFormat('MMM').format(_calendarMonth)} $year';
-      final leavesForDay = _records.where((r) => r.startDate.contains('$d Aug') || r.startDate.contains(dayDateStr)).toList();
+      final day = DateTime(year, month, d);
+      final leavesForDay = _records.where((r) {
+        final s = r.startDay;
+        final e = r.endDay ?? s;
+        if (s == null || e == null) return false;
+        if (r.status == 'Rejected' || r.status == 'Cancelled') return false;
+        return !day.isBefore(s) && !day.isAfter(e);
+      }).toList();
 
       dayWidgets.add(
         Container(
           margin: const EdgeInsets.all(2),
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: leavesForDay.isNotEmpty ? AppColors.brandBorder : kApprovalBorder),
           ),
           child: ClipRect(
             child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('$d', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
+              Text('$d', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
               if (leavesForDay.isNotEmpty) ...[
                 const SizedBox(height: 2),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 1),
-                  decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(3)),
+                  decoration: BoxDecoration(color: AppColors.warningBg, borderRadius: BorderRadius.circular(4)),
                   child: Text(
                     '${leavesForDay.length} on leave',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w800, color: AppColors.brandDark),
+                    style: const TextStyle(fontSize: 8, fontWeight: FontWeight.w700, color: AppColors.warning),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -977,8 +909,8 @@ class _AdminLeaveApprovalsScreenState extends State<AdminLeaveApprovalsScreen> w
                       child: Container(
                         margin: const EdgeInsets.only(bottom: 1),
                         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
-                        decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(2)),
-                        child: Text(l.name, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: Color(0xFF16A34A)), maxLines: 1, overflow: TextOverflow.ellipsis),
+                        decoration: BoxDecoration(color: AppColors.successBg, borderRadius: BorderRadius.circular(4)),
+                        child: Text(l.name, style: const TextStyle(fontSize: 7.5, fontWeight: FontWeight.w600, color: AppColors.success), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ),
                     )),
               ],

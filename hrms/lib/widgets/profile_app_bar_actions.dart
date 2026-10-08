@@ -122,13 +122,26 @@ class _ProfileAppBarActionsState extends State<ProfileAppBarActions> {
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const NotificationsScreen()),
             ),
-            child: const Icon(
-              Icons.notifications_none_rounded,
-              size: 26,
-              color: AppColors.textPrimary,
+            child: Tooltip(
+              message: 'Notifications',
+              child: Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFECEEF1)),
+                ),
+                child: const Icon(
+                  Icons.notifications_none_rounded,
+                  size: 22,
+                  color: AppColors.textPrimary,
+                ),
+              ),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => Navigator.of(context).push(
@@ -137,13 +150,14 @@ class _ProfileAppBarActionsState extends State<ProfileAppBarActions> {
               ),
             ),
             child: Container(
+              padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
-                border: Border.all(color: AppColors.primary, width: 2),
+                border: Border.all(color: AppColors.primary, width: 1.6),
               ),
               child: CircleAvatar(
                 radius: 17,
-                backgroundColor: AppColors.primary.withValues(alpha: 0.15),
+                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                 backgroundImage: hasPhoto ? CachedNetworkImageProvider(_avatarUrl!) : null,
                 child: hasPhoto
                     ? null
@@ -151,8 +165,8 @@ class _ProfileAppBarActionsState extends State<ProfileAppBarActions> {
                         _initial,
                         style: TextStyle(
                           fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.primary,
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.primaryText,
                         ),
                       ),
               ),

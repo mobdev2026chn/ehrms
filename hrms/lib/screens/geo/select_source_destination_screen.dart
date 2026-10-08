@@ -6,6 +6,8 @@ import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
@@ -230,69 +232,50 @@ class _SelectSourceDestinationScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        foregroundColor: AppColors.textPrimary,
-        title: const Text(
-          'Select Source & Destination',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-          ),
-        ),
+        title: const Text('Select Source & Destination'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(),
         ),
-        elevation: 0,
       ),
       body: SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             // Top card: Source & Destination (Uber-like, at TOP).
-            Container(
-              margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            AppCard(
+              margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.08),
-                    blurRadius: 12,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
+              border: Border.all(color: const Color(0xFFECEEF1)),
               child: Column(
                 children: [
                   _buildTopRow(
                     icon: Icons.gps_fixed_rounded,
-                    iconColor: AppColors.primary,
+                    iconColor: AppColors.primaryText,
                     label: 'Your location',
                     value: _sourceAddress,
                     trailing: Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
+                        horizontal: 10,
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(12),
+                        color: AppColors.inputFill,
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         'Auto',
-                        style: TextStyle(
-                          fontSize: 11,
+                        style: AppTextStyles.caption.copyWith(
                           fontWeight: FontWeight.w600,
-                          color: Colors.grey.shade700,
+                          color: AppColors.textSecondary,
                         ),
                       ),
                     ),
                   ),
-                  Divider(height: 24, color: Colors.grey.shade200),
+                  const Divider(height: 24, indent: 52),
                   _buildTopRow(
                     icon: Icons.location_on_rounded,
                     iconColor: AppColors.error,
@@ -311,19 +294,19 @@ class _SelectSourceDestinationScreenState
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
                 'Confirm your trip details',
-                style: TextStyle(fontSize: 14, color: Colors.grey.shade700),
+                style: AppTextStyles.headingSmall,
               ),
             ),
             const SizedBox(height: 12),
             // Taller form area for source/destination cards.
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -331,14 +314,14 @@ class _SelectSourceDestinationScreenState
                       height: 120,
                       child: _buildCard(
                         icon: Icons.gps_fixed_rounded,
-                        iconColor: AppColors.primary,
+                        iconColor: AppColors.primaryText,
                         label: 'Source',
                         value: _sourceAddress,
                         subtitle: 'Your current location',
                         showChange: false,
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 12),
                     SizedBox(
                       height: 120,
                       child: _buildCard(
@@ -364,44 +347,23 @@ class _SelectSourceDestinationScreenState
               ),
             ),
             Container(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.06),
-                    blurRadius: 8,
-                    offset: const Offset(0, -2),
-                  ),
-                ],
+              padding: const EdgeInsets.all(16),
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
               ),
               child: SafeArea(
                 top: false,
                 child: SizedBox(
                   width: double.infinity,
+                  height: 52,
                   child: ElevatedButton.icon(
                     onPressed: _canContinue ? _onContinueToMap : null,
                     icon: const Icon(
-                      Icons.map_rounded,
-                      color: Colors.white,
-                      size: 22,
+                      Icons.map_outlined,
+                      size: 20,
                     ),
-                    label: const Text(
-                      'Continue to Map',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
-                      ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 2,
-                    ),
+                    label: const Text('Continue to Map'),
                   ),
                 ),
               ),
@@ -409,6 +371,18 @@ class _SelectSourceDestinationScreenState
           ],
         ),
       ),
+    );
+  }
+
+  Widget _iconTile(IconData icon, Color color) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, color: color, size: 20),
     );
   }
 
@@ -422,7 +396,7 @@ class _SelectSourceDestinationScreenState
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        Icon(icon, color: iconColor, size: 24),
+        _iconTile(icon, iconColor),
         const SizedBox(width: 12),
         Expanded(
           child: Column(
@@ -431,19 +405,16 @@ class _SelectSourceDestinationScreenState
             children: [
               Text(
                 label,
-                style: TextStyle(
-                  fontSize: 12,
+                style: AppTextStyles.caption.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade600,
+                  color: AppColors.textSecondary,
                 ),
               ),
               const SizedBox(height: 2),
               Text(
                 value,
-                style: TextStyle(
-                  fontSize: 15,
+                style: AppTextStyles.bodyMedium.copyWith(
                   fontWeight: FontWeight.w500,
-                  color: AppColors.textPrimary,
                 ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
@@ -466,43 +437,29 @@ class _SelectSourceDestinationScreenState
     VoidCallback? onChange,
     bool loading = false,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+    return AppCard(
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, color: iconColor, size: 28),
-          const SizedBox(width: 16),
+          _iconTile(icon, iconColor),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   label,
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppTextStyles.caption.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: Colors.grey.shade600,
+                    color: AppColors.textSecondary,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   value,
-                  style: TextStyle(
-                    fontSize: 15,
+                  style: AppTextStyles.bodyMedium.copyWith(
                     fontWeight: FontWeight.w500,
-                    color: AppColors.textPrimary,
                   ),
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
@@ -511,7 +468,7 @@ class _SelectSourceDestinationScreenState
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                    style: AppTextStyles.bodySmall,
                   ),
                 ],
               ],
@@ -597,15 +554,15 @@ class _DestinationSearchSheetState extends State<_DestinationSearchSheet> {
   Widget _buildPredictionTile(PlacePrediction p) {
     return ListTile(
       dense: true,
-      leading: Icon(Icons.place_rounded, size: 20, color: Colors.grey.shade600),
+      leading: const Icon(Icons.place_outlined, size: 20, color: AppColors.textSecondary),
       title: Text(
         p.mainText,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+        style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500),
       ),
       subtitle: p.secondaryText.isNotEmpty
           ? Text(
               p.secondaryText,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+              style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
             )
           : null,
       onTap: () async {
@@ -635,42 +592,47 @@ class _DestinationSearchSheetState extends State<_DestinationSearchSheet> {
       child: Container(
         height: MediaQuery.of(context).size.height * 0.7,
         decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         child: Column(
           children: [
-            const SizedBox(height: 12),
+            const SizedBox(height: 8),
             Container(
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: AppColors.divider,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
               child: Row(
                 children: [
-                  Icon(
-                    Icons.location_on_rounded,
-                    color: AppColors.primary,
-                    size: 28,
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.location_on_rounded,
+                      color: AppColors.primaryText,
+                      size: 20,
+                    ),
                   ),
                   const SizedBox(width: 12),
-                  Expanded(
+                  const Expanded(
                     child: Text(
                       'Select Destination',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: AppColors.textPrimary,
-                      ),
+                      style: AppTextStyles.headingMedium,
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
+                    tooltip: 'Close',
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -680,14 +642,9 @@ class _DestinationSearchSheetState extends State<_DestinationSearchSheet> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: TextField(
                 controller: _searchController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Search cities, areas, streets, landmarks...',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  filled: true,
-                  fillColor: Colors.grey.shade50,
+                  prefixIcon: Icon(Icons.search_rounded),
                 ),
                 autofocus: true,
               ),
@@ -698,14 +655,31 @@ class _DestinationSearchSheetState extends State<_DestinationSearchSheet> {
                   ? const Center(child: AppTabLoader())
                   : _predictions.isEmpty
                   ? Center(
-                      child: Text(
-                        _searchController.text.trim().isEmpty
-                            ? 'Type to search address'
-                            : 'No results',
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 14,
-                        ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.search_rounded,
+                              size: 28,
+                              color: AppColors.primaryText,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            _searchController.text.trim().isEmpty
+                                ? 'Type to search address'
+                                : 'No results',
+                            style: AppTextStyles.bodySmall,
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
                     )
                   : ListView.builder(

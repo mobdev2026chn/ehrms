@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/screens/dashboard/dashboard_screen.dart';
 import 'package:hrms/screens/geo/my_tasks_screen.dart';
@@ -335,23 +337,23 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   Color _colorForType(String type) {
     switch (type) {
       case 'start':
-        return Colors.green;
+        return AppColors.success;
       case 'movement':
-        return Colors.blue;
+        return AppColors.info;
       case 'exit':
-        return AppColors.brand;
+        return AppColors.warning;
       case 'restart':
         return Colors.teal;
       case 'arrived':
-        return Colors.pink;
+        return AppColors.error;
       case 'photo':
         return Colors.purple;
       case 'otp':
-        return Colors.indigo;
+        return AppColors.indigo;
       case 'completed':
-        return AppColors.primary;
+        return AppColors.success;
       default:
-        return Colors.grey;
+        return AppColors.textCaption;
     }
   }
 
@@ -367,20 +369,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         _goToMyTasks(context);
       },
       child: Scaffold(
-        backgroundColor: Colors.grey.shade100,
+        backgroundColor: AppColors.background,
         appBar: AppBar(
-          backgroundColor: AppColors.background,
-          foregroundColor: AppColors.textPrimary,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back_rounded),
+            tooltip: 'Back',
             onPressed: () => _goToMyTasks(context),
           ),
-          title: const Text(
-            'Task Completion Report',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-          ),
-          centerTitle: true,
-          elevation: 0,
+          title: const Text('Task Completion Report'),
         ),
         body: _loading
             ? const Center(child: AppTabLoader())
@@ -388,7 +384,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                 onRefresh: _fetchReport,
                 child: SingleChildScrollView(
                   physics: const AlwaysScrollableScrollPhysics(),
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -397,33 +393,28 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                           padding: const EdgeInsets.only(bottom: 8),
                           child: Text(
                             'Using cached data. $_error',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: AppColors.brandDark,
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.warning,
                             ),
                           ),
                         ),
                       _buildTaskInfoCard(task),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       _buildAddressCard(task),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       _buildTimingsCard(task),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       _buildProofsCard(task),
                       if (report?.formResponses.isNotEmpty == true) ...[
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 12),
                         _buildFormsCard(report!),
                       ],
-                      const SizedBox(height: 10),
-                      Text(
+                      const SizedBox(height: 20),
+                      const Text(
                         'Activity Timeline & Route',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey.shade800,
-                        ),
+                        style: AppTextStyles.headingSmall,
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       LayoutBuilder(
                         builder: (context, constraints) {
                           final isWide = constraints.maxWidth > 600;
@@ -435,7 +426,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                                   flex: 1,
                                   child: _buildMapSection(report),
                                 ),
-                                const SizedBox(width: 10),
+                                const SizedBox(width: 12),
                                 Expanded(
                                   flex: 1,
                                   child: _buildTimelineSection(report),
@@ -447,27 +438,20 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
                               _buildMapSection(report),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 12),
                               _buildTimelineSection(report),
                             ],
                           );
                         },
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 20),
                       SizedBox(
                         width: double.infinity,
+                        height: 52,
                         child: ElevatedButton.icon(
                           onPressed: () => _goToMyTasks(context),
-                          icon: const Icon(Icons.list_rounded, size: 22),
+                          icon: const Icon(Icons.list_rounded, size: 20),
                           label: const Text('Return to Tasks'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
                         ),
                       ),
                     ],
@@ -486,13 +470,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
 
   Widget _buildTaskInfoCard(Task task) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -504,15 +489,15 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('🆔', style: TextStyle(fontSize: 18)),
+              Icon(Icons.tag_rounded, size: 20, color: AppColors.primaryText),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   'Task #${task.taskId}',
                   style: const TextStyle(
                     fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.textPrimary,
                   ),
                   overflow: TextOverflow.ellipsis,
                   maxLines: 2,
@@ -526,31 +511,30 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             style: const TextStyle(
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: Colors.black,
+              color: AppColors.textPrimary,
             ),
           ),
           if (task.description.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
               task.description,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
               maxLines: 3,
               overflow: TextOverflow.ellipsis,
             ),
           ],
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.15),
-              borderRadius: BorderRadius.circular(8),
+              color: AppColors.successBg,
+              borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               'Status: Completed',
-              style: TextStyle(
-                fontSize: 13,
+              style: AppTextStyles.caption.copyWith(
                 fontWeight: FontWeight.w600,
-                color: AppColors.primary,
+                color: AppColors.success,
               ),
             ),
           ),
@@ -578,20 +562,21 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                     ? '${task.destinationLocation!.lat.toStringAsFixed(4)}, ${task.destinationLocation!.lng.toStringAsFixed(4)}'
                     : '—'));
 
+    final Color onHero = AppColors.onPrimary;
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: AppColors.primary.withValues(alpha: 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -600,17 +585,13 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         children: [
           Text(
             'Source & Destination',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            ),
+            style: AppTextStyles.headingSmall.copyWith(color: onHero),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('📍', style: TextStyle(fontSize: 14)),
+              Icon(Icons.trip_origin_rounded, size: 18, color: onHero),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -618,27 +599,26 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                   children: [
                     Text(
                       'Source',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withOpacity(0.9),
+                      style: AppTextStyles.caption.copyWith(
+                        color: onHero.withValues(alpha: 0.75),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       source,
-                      style: TextStyle(fontSize: 13, color: Colors.white),
+                      style: AppTextStyles.bodySmall.copyWith(color: onHero),
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('🎯', style: TextStyle(fontSize: 14)),
+              Icon(Icons.location_on_rounded, size: 18, color: onHero),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -646,16 +626,15 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                   children: [
                     Text(
                       'Destination',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.white.withOpacity(0.9),
+                      style: AppTextStyles.caption.copyWith(
+                        color: onHero.withValues(alpha: 0.75),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       dest,
-                      style: TextStyle(fontSize: 13, color: Colors.white),
+                      style: AppTextStyles.bodySmall.copyWith(color: onHero),
                     ),
                   ],
                 ),
@@ -669,13 +648,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
 
   Widget _buildTimingsCard(Task task) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -686,14 +666,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         children: [
           Row(
             children: [
-              const Text('🕒', style: TextStyle(fontSize: 16)),
+              Icon(Icons.schedule_rounded, size: 20, color: AppColors.primaryText),
               const SizedBox(width: 8),
               Text(
                 'Timings',
                 style: TextStyle(
                   fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade800,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
               ),
             ],
@@ -728,7 +708,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           Flexible(
             child: Text(
               label,
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade700),
+              style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
             ),
           ),
           const SizedBox(width: 8),
@@ -740,7 +720,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w500,
-                color: Colors.black,
+                color: AppColors.textPrimary,
               ),
               textAlign: TextAlign.right,
             ),
@@ -752,13 +732,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
 
   Widget _buildProofsCard(Task task) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -771,8 +752,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             'Verification',
             style: TextStyle(
               fontSize: 14,
-              fontWeight: FontWeight.bold,
-              color: Colors.grey.shade800,
+              fontWeight: FontWeight.w600,
+              color: AppColors.textPrimary,
             ),
           ),
           const SizedBox(height: 8),
@@ -809,21 +790,21 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                       errorBuilder: (_, __, ___) => Container(
                         height: 120,
                         width: double.infinity,
-                        color: Colors.grey.shade200,
+                        color: AppColors.divider,
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
                               Icons.broken_image_outlined,
                               size: 40,
-                              color: Colors.grey.shade600,
+                              color: AppColors.textSecondary,
                             ),
                             const SizedBox(height: 8),
                             Text(
                               'Image not found',
                               style: TextStyle(
                                 fontSize: 13,
-                                color: Colors.grey.shade700,
+                                color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w500,
                               ),
                             ),
@@ -849,7 +830,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
               height: 120,
               width: double.infinity,
               decoration: BoxDecoration(
-                color: Colors.grey.shade200,
+                color: AppColors.divider,
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Column(
@@ -858,14 +839,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                   Icon(
                     Icons.image_not_supported_outlined,
                     size: 40,
-                    color: Colors.grey.shade600,
+                    color: AppColors.textSecondary,
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Image not found',
                     style: TextStyle(
                       fontSize: 13,
-                      color: Colors.grey.shade700,
+                      color: AppColors.textSecondary,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -883,13 +864,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     if (forms.isEmpty) return const SizedBox.shrink();
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -900,14 +882,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         children: [
           Row(
             children: [
-              const Text('📋', style: TextStyle(fontSize: 16)),
+              Icon(Icons.assignment_outlined, size: 20, color: AppColors.primaryText),
               const SizedBox(width: 8),
               Text(
                 'Filled Forms',
                 style: TextStyle(
                   fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.grey.shade800,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
                 ),
               ),
             ],
@@ -920,10 +902,9 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
               children: [
                 Text(
                   templateName,
-                  style: TextStyle(
-                    fontSize: 13,
+                  style: AppTextStyles.bodySmall.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: AppColors.primary,
+                    color: AppColors.primaryText,
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -981,8 +962,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
               label,
               style: TextStyle(
                 fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
               ),
             ),
           ),
@@ -991,7 +972,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
             Expanded(
               child: Text(
                 value,
-                style: TextStyle(fontSize: 12, color: Colors.black),
+                style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
               ),
             ),
           ],
@@ -1026,13 +1007,33 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       return Container(
         height: 200,
         decoration: BoxDecoration(
-          color: Colors.grey.shade200,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFFECEEF1)),
         ),
         child: Center(
-          child: Text(
-            'No location data',
-            style: TextStyle(color: Colors.grey.shade600),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.map_outlined,
+                  size: 28,
+                  color: AppColors.primaryText,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'No location data',
+                style: AppTextStyles.bodySmall,
+              ),
+            ],
           ),
         ),
       );
@@ -1136,7 +1137,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.08),
+            color: Colors.black.withValues(alpha: 0.08),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1181,12 +1182,12 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: color)),
+                    Text(title, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: color)),
                     Text(
                       detail,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11.5, color: Color(0xFF475569)),
+                      style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     ),
                   ],
                 ),
@@ -1195,11 +1196,11 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           ),
         );
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.background,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1211,7 +1212,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
           ),
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            child: Icon(Icons.arrow_forward_rounded, size: 16, color: Color(0xFF94A3B8)),
+            child: Icon(Icons.arrow_forward_rounded, size: 16, color: AppColors.textCaption),
           ),
           end(
             const Color(0xFFDC2626),
@@ -1224,11 +1225,11 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
                 color: _legColor.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
                 '${leg.km!.toStringAsFixed(1)} km',
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: _legColor),
+                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _legColor),
               ),
             ),
           ],
@@ -1281,7 +1282,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
 
   Widget _viewButton(VoidCallback onTap) {
     return Material(
-      color: Colors.black.withOpacity(0.6),
+      color: Colors.black.withValues(alpha: 0.6),
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         borderRadius: BorderRadius.circular(20),
@@ -1347,14 +1348,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       MaterialPageRoute(
         builder: (_) => Scaffold(
           appBar: AppBar(
-            backgroundColor: AppColors.background,
-            foregroundColor: AppColors.textPrimary,
-            title: const Text(
-              'Route Map',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
-            centerTitle: true,
-            elevation: 0,
+            title: const Text('Route Map'),
           ),
           body: _routeMap(center, displayRoute, markers),
         ),
@@ -1403,31 +1397,27 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.06),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: kSoftCardShadow,
         ),
-        child: Text(
+        child: const Text(
           'No timeline data available for this task.',
-          style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+          style: AppTextStyles.bodySmall,
         ),
       );
     }
 
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 2),
           ),
@@ -1452,7 +1442,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                           BoxShadow(
                             color: _colorForType(
                               timeline[i].type,
-                            ).withOpacity(0.4),
+                            ).withValues(alpha: 0.4),
                             blurRadius: 4,
                             offset: const Offset(0, 1),
                           ),
@@ -1468,7 +1458,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                       Container(
                         width: 2,
                         height: 36,
-                        color: Colors.grey.shade300,
+                        color: AppColors.divider,
                       ),
                   ],
                 ),
@@ -1489,7 +1479,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                                   : '—',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Colors.grey.shade600,
+                                color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w600,
                               ),
                             ),
@@ -1499,8 +1489,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                                 Icons.battery_std_rounded,
                                 size: 16,
                                 color: timeline[i].batteryPercent! < 10
-                                    ? Colors.red
-                                    : Colors.blue,
+                                    ? AppColors.error
+                                    : AppColors.info,
                               ),
                               const SizedBox(width: 4),
                               Text(
@@ -1508,8 +1498,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                                 style: TextStyle(
                                   fontSize: 12,
                                   color: timeline[i].batteryPercent! < 10
-                                      ? Colors.red
-                                      : Colors.blue,
+                                      ? AppColors.error
+                                      : AppColors.info,
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -1521,8 +1511,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                           timeline[i].label,
                           style: const TextStyle(
                             fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
                           ),
                         ),
                         if (timeline[i].address != null &&
@@ -1532,7 +1522,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                             timeline[i].address!,
                             style: TextStyle(
                               fontSize: 12,
-                              color: Colors.grey.shade700,
+                              color: AppColors.textSecondary,
                             ),
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
@@ -1544,8 +1534,8 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
                           Text(
                             'Reason: ${timeline[i].exitReason}',
                             style: TextStyle(
-                              fontSize: 11,
-                              color: AppColors.brandDark,
+                              fontSize: 12,
+                              color: AppColors.warning,
                             ),
                           ),
                         ],

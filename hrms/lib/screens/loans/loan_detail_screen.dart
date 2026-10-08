@@ -6,11 +6,13 @@
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../models/loan_models.dart';
 import '../../services/loan_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../admin/loans/admin_loan_sheets.dart';
 import 'loan_widgets.dart';
 
 class LoanDetailScreen extends StatefulWidget {
@@ -63,39 +65,11 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
   // ── Admin actions ──
 
   Future<void> _disburse() async {
-    var mode = 'Bank Transfer';
-    final ref = TextEditingController();
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setD) => AlertDialog(
-          title: const Text('Disburse loan'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<String>(
-                initialValue: mode,
-                decoration: const InputDecoration(labelText: 'Mode'),
-                items: const [
-                  DropdownMenuItem(value: 'Bank Transfer', child: Text('Bank Transfer')),
-                  DropdownMenuItem(value: 'Cash', child: Text('Cash')),
-                ],
-                onChanged: (v) => setD(() => mode = v ?? mode),
-              ),
-              TextField(controller: ref, decoration: const InputDecoration(labelText: 'Reference (optional)')),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Disburse')),
-          ],
-        ),
-      ),
-    );
-    final reference = ref.text.trim();
-    ref.dispose();
-    if (ok != true) return;
-    await _run(() => _service.adminDisburse(widget.loanId, mode: mode, reference: reference), 'Disbursement recorded.');
+    final loan = _loan;
+    if (loan == null) return;
+    // The sheet records the disbursement (mode, date, reference, remarks) and reports errors.
+    final updated = await showLoanDisburseSheet(context, loan);
+    if (updated != null && mounted) setState(() => _loan = updated);
   }
 
   Future<void> _payment({required bool foreclose}) async {
@@ -209,11 +183,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
       child: Scaffold(
         backgroundColor: AppColors.background,
         appBar: AppBar(
-          title: Text(l?.loanNo ?? 'Loan', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-          backgroundColor: Colors.white,
-          foregroundColor: AppColors.textPrimary,
-          elevation: 0,
-          surfaceTintColor: Colors.transparent,
+          title: Text(l?.loanNo ?? 'Loan'),
           actions: [
             if (menu.isNotEmpty)
               PopupMenuButton<String>(
@@ -227,17 +197,27 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
             ? Center(
                 child: _error == null
                     ? const AppTabLoader()
-                    : Padding(padding: const EdgeInsets.all(24), child: Text(_error!, textAlign: TextAlign.center)),
+                    : Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+                            child: const Icon(Icons.error_outline_rounded, size: 28, color: AppColors.error),
+                          ),
+                          const SizedBox(height: 12),
+                          Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodyMedium),
+                        ]),
+                      ),
               )
             : NestedScrollView(
                 headerSliverBuilder: (_, __) => [
-                  SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(16), child: _summary(l))),
+                  SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.fromLTRB(16, 16, 16, 8), child: _summary(l))),
                   SliverToBoxAdapter(
                     child: TabBar(
                       isScrollable: true,
-                      labelColor: AppColors.brandDark,
-                      unselectedLabelColor: AppColors.textSecondary,
-                      indicatorColor: AppColors.brand,
+                      tabAlignment: TabAlignment.start,
                       tabs: [for (final t in tabs) Tab(text: t)],
                     ),
                   ),
@@ -268,24 +248,30 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
             Row(
               children: [
                 Expanded(
-                  child: Text(l.isAdvance ? 'Salary Advance' : l.loanType,
-                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                  child: Text(l.isAdvance ? 'Salary Advance' : l.loanType, style: AppTextStyles.headingMedium),
                 ),
+                const SizedBox(width: 8),
                 LoanStatusChip(l.status),
               ],
             ),
             if (widget.admin && l.employee.name.isNotEmpty)
-              Text('${l.employee.name} · ${l.employee.employeeId}',
-                  style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(child: LoanStat('Principal', loanMoney(l.principal))),
-                Expanded(child: LoanStat('EMI', loanMoney(l.emiAmount))),
-                Expanded(child: LoanStat('Outstanding', loanMoney(l.outstanding))),
-              ],
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('${l.employee.name} · ${l.employee.employeeId}', style: AppTextStyles.bodySmall),
+              ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
+              child: Row(
+                children: [
+                  Expanded(child: LoanStat('Principal', loanMoney(l.principal))),
+                  Expanded(child: LoanStat('EMI', loanMoney(l.emiAmount))),
+                  Expanded(child: LoanStat('Outstanding', loanMoney(l.outstanding))),
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             LoanInfoRow(
               'Interest',
               l.interestMethod == 'None' || l.interestRate == 0
@@ -306,7 +292,7 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
 
   Widget _activity(Loan l) {
     if (l.activity.isEmpty) {
-      return const Text('No activity yet.', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary));
+      return const Text('No activity yet.', style: AppTextStyles.bodySmall);
     }
     return Column(
       children: [
@@ -314,10 +300,10 @@ class _LoanDetailScreenState extends State<LoanDetailScreen> {
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,
-            title: Text(a.action, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            title: Text(a.action, style: AppTextStyles.label.copyWith(fontSize: 13.5, fontWeight: FontWeight.w600)),
             subtitle: Text(
               [if (a.detail.isNotEmpty) a.detail, [loanDate(a.at), if (a.actor.isNotEmpty) a.actor].join(' · ')].join('\n'),
-              style: const TextStyle(fontSize: 11.5),
+              style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
             ),
           ),
       ],

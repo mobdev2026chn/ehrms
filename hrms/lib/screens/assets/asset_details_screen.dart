@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/asset_service.dart';
 import '../../models/asset_model.dart';
@@ -83,17 +85,10 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(
-          'Asset Details',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-          ),
-        ),
-        elevation: 0,
-        centerTitle: true,
+        title: const Text('Asset Details'),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -101,58 +96,62 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
           ? const Center(child: AppTabLoader())
           : _errorMessage != null
               ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.error_outline,
-                        size: 64,
-                        color: AppColors.error,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        _errorMessage!,
-                        style: TextStyle(
-                          fontSize: 16,
-                          color: AppColors.textSecondary,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: const BoxDecoration(
+                            color: AppColors.errorBg,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.error_outline_rounded,
+                            size: 32,
+                            color: AppColors.error,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: Text('OK'),
-                      ),
-                    ],
+                        const SizedBox(height: 16),
+                        Text(
+                          _errorMessage!,
+                          textAlign: TextAlign.center,
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        ElevatedButton(
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('OK'),
+                        ),
+                      ],
+                    ),
                   ),
                 )
               : _asset == null
-                  ? const Center(
-                      child: Text('Asset not found'),
+                  ? Center(
+                      child: Text(
+                        'Asset not found',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
                     )
                   : RefreshIndicator(
                       onRefresh: _fetchAssetDetails,
                       child: SingleChildScrollView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        padding: const EdgeInsets.all(24.0),
+                        padding: const EdgeInsets.all(16.0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                           // Asset Details Card
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(24.0),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.grey.shade200),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.05),
-                                  blurRadius: 10,
-                                  offset: const Offset(0, 4),
-                                ),
-                              ],
-                            ),
+                          AppCard(
+                            padding: const EdgeInsets.all(20.0),
+                            border: Border.all(color: const Color(0xFFECEEF1)),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -160,59 +159,61 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
                                 Row(
                                   children: [
                                     Container(
-                                      padding: const EdgeInsets.all(8),
+                                      width: 44,
+                                      height: 44,
                                       decoration: BoxDecoration(
-                                        color: AppColors.info.withOpacity(0.1),
-                                        borderRadius: BorderRadius.circular(8),
+                                        color: AppColors.info.withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(12),
                                       ),
                                       child: const Icon(
-                                        Icons.info_outline,
+                                        Icons.info_outline_rounded,
                                         color: AppColors.info,
-                                        size: 24,
+                                        size: 22,
                                       ),
                                     ),
                                     const SizedBox(width: 12),
-                                    Text(
-                                      'Asset Details',
-                                      style: TextStyle(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.bold,
-                                        color: AppColors.textPrimary,
+                                    const Expanded(
+                                      child: Text(
+                                        'Asset Details',
+                                        style: AppTextStyles.headingMedium,
                                       ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 24),
+                                const SizedBox(height: 20),
                                 // Asset Photo (if available)
                                 if (_asset!.assetPhoto != null &&
                                     _asset!.assetPhoto!.isNotEmpty)
                                   Center(
                                     child: Container(
-                                      margin: const EdgeInsets.only(bottom: 24),
+                                      margin: const EdgeInsets.only(bottom: 20),
                                       width: 200,
                                       height: 200,
                                       decoration: BoxDecoration(
-                                        borderRadius: BorderRadius.circular(12),
+                                        color: AppColors.inputFill,
+                                        borderRadius: BorderRadius.circular(16),
                                         border: Border.all(
-                                          color: Colors.grey.shade300,
+                                          color: const Color(0xFFECEEF1),
                                         ),
                                       ),
                                       child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(12),
+                                        borderRadius: BorderRadius.circular(16),
                                         child: OrientedImage.network(
                                           _asset!.assetPhoto!,
                                           fit: BoxFit.cover,
                                           errorBuilder: (context, error, stackTrace) {
                                             return const Icon(
-                                              Icons.image_not_supported,
+                                              Icons.image_not_supported_outlined,
                                               size: 48,
-                                              color: Colors.grey,
+                                              color: AppColors.textCaption,
                                             );
                                           },
                                         ),
                                       ),
                                     ),
                                   ),
+                                const Divider(height: 1),
+                                const SizedBox(height: 20),
                                 // Two-column layout for details
                                 Row(
                                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -251,7 +252,7 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
                                         ],
                                       ),
                                     ),
-                                    const SizedBox(width: 32),
+                                    const SizedBox(width: 16),
                                     // Right Column
                                     Expanded(
                                       child: Column(
@@ -286,23 +287,10 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
                           // OK Button
                           SizedBox(
                             width: double.infinity,
+                            height: 52,
                             child: ElevatedButton(
                               onPressed: () => Navigator.pop(context),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primary,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                              ),
-                              child: Text(
-                                'OK',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              child: const Text('OK'),
                             ),
                           ),
                         ],
@@ -323,25 +311,24 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(
-            fontSize: 14,
-            color: AppColors.textSecondary,
+          style: AppTextStyles.caption.copyWith(
             fontWeight: FontWeight.w500,
+            color: AppColors.textSecondary,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         isStatus
             ? Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: _getStatusColor(value).withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
+                  color: _getStatusColor(value).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   value,
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: _getStatusColor(value),
                   ),
@@ -349,8 +336,7 @@ class _AssetDetailsScreenState extends State<AssetDetailsScreen> {
               )
             : Text(
                 value,
-                style: TextStyle(
-                  fontSize: 16,
+                style: AppTextStyles.bodyLarge.copyWith(
                   fontWeight: FontWeight.w600,
                   color: AppColors.textPrimary,
                 ),

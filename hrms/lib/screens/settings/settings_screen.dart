@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/app_drawer.dart';
@@ -36,34 +38,51 @@ class SettingsScreen extends StatelessWidget {
         },
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.all(16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Card(
-                elevation: 2,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                margin: EdgeInsets.zero,
+                clipBehavior: Clip.antiAlias,
                 child: ListTile(
-                  leading: Icon(
-                    Icons.privacy_tip_outlined,
-                    color: colorScheme.primary,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  leading: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(
+                      Icons.privacy_tip_outlined,
+                      size: 22,
+                      color: AppColors.primaryText,
+                    ),
                   ),
                   title: Text(
                     'Privacy Policy',
-                    style: TextStyle(color: colorScheme.onSurface),
-                  ),
-                  subtitle: Text(
-                    'View how we collect and use your data',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: colorScheme.onSurfaceVariant,
+                    style: AppTextStyles.headingSmall.copyWith(
+                      fontSize: 15,
+                      color: colorScheme.onSurface,
                     ),
                   ),
-                  trailing: Icon(
-                    Icons.open_in_new,
-                    color: colorScheme.onSurfaceVariant,
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'View how we collect and use your data',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                  trailing: const Icon(
+                    Icons.open_in_new_rounded,
+                    size: 20,
+                    color: AppColors.textCaption,
                   ),
                   onTap: () => _openPrivacyPolicy(context),
                 ),

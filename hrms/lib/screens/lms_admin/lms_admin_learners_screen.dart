@@ -4,8 +4,10 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../widgets/app_card.dart';
 import 'lms_admin_utils.dart';
 
 class LmsAdminLearnersScreen extends StatefulWidget {
@@ -105,18 +107,13 @@ class _LmsAdminLearnersScreenState extends State<LmsAdminLearnersScreen> {
                 const Expanded(
                   child: Text(
                     'Learners Management',
-                    style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingLarge,
                   ),
                 ),
                 TextButton.icon(
                   onPressed: _load,
-                  icon: const Icon(Icons.refresh, size: 18),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
                   label: const Text('Refresh'),
-                  style: TextButton.styleFrom(foregroundColor: AppColors.primary),
                 ),
               ],
             ),
@@ -168,7 +165,7 @@ class _LmsAdminLearnersScreenState extends State<LmsAdminLearnersScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(
               'Total ${filtered.length} learner${filtered.length == 1 ? '' : 's'}',
-              style: const TextStyle(fontSize: 12, color: AppColors.textCaption),
+              style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
             ),
           ),
           const SizedBox(height: 8),
@@ -176,7 +173,7 @@ class _LmsAdminLearnersScreenState extends State<LmsAdminLearnersScreen> {
             LmsAdminUtils.emptyState('No learners found.')
           else
             ...pageItems.map((m) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: _LearnerCard(
                     name: _name(m),
                     email: _email(m),
@@ -202,26 +199,26 @@ class _LmsAdminLearnersScreenState extends State<LmsAdminLearnersScreen> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            icon: const Icon(Icons.chevron_left, size: 22),
+            icon: const Icon(Icons.chevron_left_rounded, size: 24),
             onPressed: _page > 1 ? () => setState(() => _page--) : null,
           ),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
             decoration: BoxDecoration(
-              color: AppColors.primaryLight,
-              borderRadius: BorderRadius.circular(8),
+              color: AppColors.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               '$_page / $totalPages',
               style: TextStyle(
-                color: AppColors.primary,
-                fontWeight: FontWeight.bold,
+                color: AppColors.primaryText,
+                fontWeight: FontWeight.w700,
                 fontSize: 13,
               ),
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.chevron_right, size: 22),
+            icon: const Icon(Icons.chevron_right_rounded, size: 24),
             onPressed: _page < totalPages ? () => setState(() => _page++) : null,
           ),
         ],
@@ -253,11 +250,12 @@ class _LearnerCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -265,13 +263,13 @@ class _LearnerCard extends StatelessWidget {
           Row(
             children: [
               CircleAvatar(
-                radius: 18,
-                backgroundColor: AppColors.primaryLight,
+                radius: 20,
+                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                 child: Text(
                   initial,
                   style: TextStyle(
-                    color: AppColors.primary,
-                    fontWeight: FontWeight.bold,
+                    color: AppColors.primaryText,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -294,8 +292,8 @@ class _LearnerCard extends StatelessWidget {
                       Text(
                         email,
                         style: const TextStyle(
-                          fontSize: 11,
-                          color: AppColors.textCaption,
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -306,6 +304,8 @@ class _LearnerCard extends StatelessWidget {
               LmsAdminUtils.statusPill(status),
             ],
           ),
+          const SizedBox(height: 12),
+          const Divider(height: 1),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -328,15 +328,15 @@ class _LearnerCard extends StatelessWidget {
           Text(
             label.toUpperCase(),
             style: const TextStyle(
-              fontSize: 9,
+              fontSize: 10,
               fontWeight: FontWeight.w600,
-              color: AppColors.textCaption,
-              letterSpacing: 0.3,
+              color: AppColors.textSecondary,
+              letterSpacing: 0.5,
             ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Text(
             value,
             style: const TextStyle(

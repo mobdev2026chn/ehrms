@@ -2,13 +2,17 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../services/admin_approvals_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
+import 'approval_shared_widgets.dart';
 
+/// One row of GET /admin/approvals/expense (`data.requests[]`).
 class AdminReimbursementRecord {
   final String id;
+  final String staffId;
   final String name;
   final String employeeId;
   final String department;
@@ -20,6 +24,9 @@ class AdminReimbursementRecord {
   final String? paymentRoute; // 'Immediate' | 'Payroll'
   final String? payrollMonth;
   final String? proofImgUrl;
+  final String? upiId;
+  final String? accountNo;
+  final String? ifscCode;
   String status; // 'Pending' | 'Approved' | 'Paid' | 'Rejected' | 'Cancelled'
   final String approvedBy;
   final String remarksDate;
@@ -27,6 +34,7 @@ class AdminReimbursementRecord {
 
   AdminReimbursementRecord({
     required this.id,
+    this.staffId = '',
     required this.name,
     required this.employeeId,
     required this.department,
@@ -38,41 +46,49 @@ class AdminReimbursementRecord {
     this.paymentRoute,
     this.payrollMonth,
     this.proofImgUrl,
+    this.upiId,
+    this.accountNo,
+    this.ifscCode,
     required this.status,
-    this.approvedBy = 'Admin',
+    this.approvedBy = '—',
     this.remarksDate = '',
     this.remarks = '',
   });
 
   String get initials {
-    final parts = name.trim().split(' ');
+    final parts = name.trim().split(' ').where((p) => p.isNotEmpty).toList();
     if (parts.length > 1) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
     return name.isNotEmpty ? name[0].toUpperCase() : 'U';
   }
 
-  factory AdminReimbursementRecord.fromJson(Map<String, dynamic> json) {
-    final staffObj = json['staffId'] is Map ? json['staffId'] : json;
-    final pRoute = json['paymentRoute']?.toString();
-    final pMonth = json['payrollMonth']?.toString();
+  static String? _opt(dynamic v) {
+    if (v == null) return null;
+    final s = v.toString();
+    return s.isEmpty ? null : s;
+  }
 
+  factory AdminReimbursementRecord.fromJson(Map<String, dynamic> json) {
+    final receipt = _opt(json['receiptName']);
     return AdminReimbursementRecord(
-      id: (json['_id'] ?? json['id'] ?? '').toString(),
-      name: (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString().isNotEmpty
-          ? (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString()
-          : (json['name'] ?? 'James fernado').toString(),
-      employeeId: (staffObj['employeeId'] ?? json['employeeId'] ?? 'EMP-002').toString(),
-      department: (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? json['department'] ?? 'IT')).toString(),
-      category: (json['category'] ?? 'Travel').toString(),
+      id: (json['id'] ?? json['_id'] ?? '').toString(),
+      staffId: (json['staffId'] is Map ? json['staffId']['_id'] : json['staffId'])?.toString() ?? '',
+      name: (json['name'] ?? 'Staff Member').toString(),
+      employeeId: (json['employeeId'] ?? '—').toString(),
+      department: (json['role'] ?? json['department'] ?? '—').toString(),
+      category: (json['category'] ?? '—').toString(),
       amount: double.tryParse((json['amount'] ?? '0').toString()) ?? 0.0,
-      claimDate: (json['date'] ?? json['claimDate'] ?? '2026-08-29').toString(),
+      claimDate: (json['date'] ?? '').toString(),
       description: (json['description'] ?? '').toString(),
-      receiptUrl: json['receiptName']?.toString() ?? json['receiptUrl']?.toString(),
-      paymentRoute: pRoute,
-      payrollMonth: pMonth,
-      proofImgUrl: json['proofImg']?.toString() ?? json['proofUrl']?.toString(),
+      receiptUrl: receipt == 'No Proof' ? null : receipt,
+      paymentRoute: _opt(json['paymentRoute']),
+      payrollMonth: _opt(json['payrollMonth']),
+      proofImgUrl: _opt(json['proofImg']),
+      upiId: _opt(json['upiId']),
+      accountNo: _opt(json['accountNo']),
+      ifscCode: _opt(json['ifscCode']),
       status: (json['status'] ?? 'Pending').toString(),
-      approvedBy: (json['approvedBy'] ?? 'Admin').toString(),
-      remarksDate: (json['remarksDate'] ?? json['updatedAt'] ?? '').toString(),
+      approvedBy: (json['approvedBy'] ?? '—').toString(),
+      remarksDate: (json['remarksDate'] ?? '').toString(),
       remarks: (json['remarks'] ?? '').toString(),
     );
   }
@@ -87,7 +103,8 @@ class AdminReimbursementApprovalsScreen extends StatefulWidget {
 
 class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementApprovalsScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final ApiClient _api = ApiClient();
+  final AdminApprovalsService _service = AdminApprovalsService();
+  String? _loadError;
 
   bool _isLoading = true;
   String _searchQuery = '';
@@ -105,379 +122,135 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
   }
 
   Future<void> _loadData({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
-    try {
-      final res = await _api.request(
-        '/admin/staff/approvals/expense',
-        queryParameters: {
-          'search': _searchQuery.isNotEmpty ? _searchQuery : null,
-          'status': _statusFilter != 'All Statuses' ? _statusFilter : null,
-          'startDate': _startDateFilter.isNotEmpty ? _startDateFilter : null,
-          'endDate': _endDateFilter.isNotEmpty ? _endDateFilter : null,
-          'sort': _sortOrder.startsWith('Newest') ? 'Newest' : 'Oldest',
-        },
-      );
-
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data']?['requests'] as List?) ?? (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _records = list.map((e) => AdminReimbursementRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRecords();
-        }
-      } else {
-        _setMockRecords();
-      }
-    } catch (_) {
-      _setMockRecords();
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
     }
 
-    if (showLoader && mounted) setState(() => _isLoading = false);
-  }
-
-  void _setMockRecords() {
-    _records = [
-      AdminReimbursementRecord(
-        id: 'rem_1',
-        name: 'James fernado',
-        employeeId: 'EMP-002',
-        department: 'IT',
-        category: 'Meals',
-        amount: 200,
-        claimDate: '2026-08-29',
-        description: 'test',
-        receiptUrl: 'https://example.com/receipt1.pdf',
-        status: 'Pending',
-      ),
-      AdminReimbursementRecord(
-        id: 'rem_2',
-        name: 'hp hai th',
-        employeeId: 'EMP-006',
-        department: 'IT',
-        category: 'Travel',
-        amount: 12,
-        claimDate: '2026-08-26',
-        description: 'asd',
-        receiptUrl: 'https://example.com/receipt2.pdf',
-        status: 'Pending',
-      ),
-      AdminReimbursementRecord(
-        id: 'rem_3',
-        name: 'hp hai th',
-        employeeId: 'EMP-006',
-        department: 'IT',
-        category: 'Travel',
-        amount: 23,
-        claimDate: '2026-08-18',
-        description: 'asfd',
-        status: 'Rejected',
-        approvedBy: 'Admin',
-        remarks: 's',
-        remarksDate: 'Aug 24, 2026',
-      ),
-      AdminReimbursementRecord(
-        id: 'rem_4',
-        name: 'James fernado',
-        employeeId: 'EMP-002',
-        department: 'IT',
-        category: 'Other',
-        amount: 600,
-        claimDate: '2026-08-19',
-        description: 'jmj',
-        receiptUrl: 'https://example.com/receipt3.pdf',
-        status: 'Pending',
-      ),
-      AdminReimbursementRecord(
-        id: 'rem_5',
-        name: 'James fernado',
-        employeeId: 'EMP-002',
-        department: 'IT',
-        category: 'Travel',
-        amount: 23423,
-        claimDate: '2026-08-27',
-        description: 'asdfsd',
-        receiptUrl: 'https://example.com/receipt4.pdf',
-        paymentRoute: 'Immediate',
-        proofImgUrl: 'https://example.com/proof1.png',
-        status: 'Paid',
-        approvedBy: 'Admin',
-        remarksDate: 'Aug 19, 2026',
-      ),
-      AdminReimbursementRecord(
-        id: 'rem_6',
-        name: 'James fernado',
-        employeeId: 'EMP-002',
-        department: 'IT',
-        category: 'Other',
-        amount: 200,
-        claimDate: '2026-08-13',
-        description: 'dfhb',
-        paymentRoute: 'Immediate',
-        proofImgUrl: 'https://example.com/proof2.png',
-        status: 'Paid',
-        approvedBy: 'Admin',
-        remarksDate: 'Aug 18, 2026',
-      ),
-      AdminReimbursementRecord(
-        id: 'rem_7',
-        name: 'James fernado',
-        employeeId: 'EMP-002',
-        department: 'IT',
-        category: 'Food',
-        amount: 300,
-        claimDate: '2026-08-12',
-        description: 'ghgu',
-        receiptUrl: 'https://example.com/receipt5.pdf',
-        paymentRoute: 'Payroll',
-        payrollMonth: 'August 2026',
-        status: 'Paid',
-        approvedBy: 'Admin',
-        remarksDate: 'Aug 18, 2026',
-      ),
-    ];
+    try {
+      final page = await _service.getExpenseRequests(
+        status: _statusFilter != 'All Statuses' ? _statusFilter : null,
+        startDate: _startDateFilter.isNotEmpty ? _startDateFilter : null,
+        endDate: _endDateFilter.isNotEmpty ? _endDateFilter : null,
+        sort: _sortOrder.startsWith('Newest') ? 'Newest' : 'Oldest',
+      );
+      if (!mounted) return;
+      setState(() {
+        _records = page.requests.map(AdminReimbursementRecord.fromJson).toList();
+        _loadError = null;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final msg = AdminApprovalsService.messageOf(e, fallback: 'Failed to load reimbursement claims');
+      setState(() {
+        _loadError = msg;
+        _isLoading = false;
+      });
+      if (!showLoader) SnackBarUtils.showSnackBar(context, msg, isError: true);
+    }
   }
 
   List<AdminReimbursementRecord> get _filteredRecords {
+    final q = _searchQuery.toLowerCase();
+    if (q.isEmpty) return _records;
     return _records.where((r) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          r.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.employeeId.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.category.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.description.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesStatus = _statusFilter == 'All Statuses' || r.status.toLowerCase() == _statusFilter.toLowerCase();
-
-      return matchesSearch && matchesStatus;
+      return r.name.toLowerCase().contains(q) ||
+          r.employeeId.toLowerCase().contains(q) ||
+          r.category.toLowerCase().contains(q) ||
+          r.description.toLowerCase().contains(q);
     }).toList();
   }
 
-  // ── Action: Approve Reimbursement Modal ──
-  void _showApproveModal(AdminReimbursementRecord r) {
-    String paymentRoute = 'Immediate'; // 'Immediate' | 'Payroll'
-    String payrollMonth = 'August 2026';
-    final remarksController = TextEditingController(text: 'Approved');
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            contentPadding: const EdgeInsets.all(20),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Approve Reimbursement', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                    IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => Navigator.pop(ctx)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-
-                Text('${r.name} • ₹${r.amount.toStringAsFixed(0)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-                const SizedBox(height: 14),
-
-                const Text('PAYMENT ROUTE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: InkWell(
-                        onTap: () => setDialogState(() => paymentRoute = 'Immediate'),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: paymentRoute == 'Immediate' ? const Color(0xFFFEF3C7) : const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: paymentRoute == 'Immediate' ? const Color(0xFFEFAA1F) : const Color(0xFFE2E8F0)),
-                          ),
-                          child: Text('Immediate Transfer', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: paymentRoute == 'Immediate' ? AppColors.brandDark : const Color(0xFF64748B))),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: InkWell(
-                        onTap: () => setDialogState(() => paymentRoute = 'Payroll'),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: paymentRoute == 'Payroll' ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: paymentRoute == 'Payroll' ? const Color(0xFF2563EB) : const Color(0xFFE2E8F0)),
-                          ),
-                          child: Text('With Payroll', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: paymentRoute == 'Payroll' ? const Color(0xFF2563EB) : const Color(0xFF64748B))),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-
-                if (paymentRoute == 'Payroll') ...[
-                  const Text('PAYROLL MONTH', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                  const SizedBox(height: 4),
-                  Container(
-                    height: 38,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: payrollMonth,
-                        isExpanded: true,
-                        items: ['August 2026', 'September 2026', 'October 2026'].map((m) => DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700)))).toList(),
-                        onChanged: (v) {
-                          if (v != null) setDialogState(() => payrollMonth = v);
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                const Text('REMARKS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
-                TextField(
-                  controller: remarksController,
-                  decoration: InputDecoration(
-                    hintText: 'Add remarks...',
-                    filled: true,
-                    fillColor: const Color(0xFFF8FAFC),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                  ),
-                  style: const TextStyle(fontSize: 11),
-                ),
-                const SizedBox(height: 16),
-
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700)),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () async {
-                          Navigator.pop(ctx);
-                          setState(() {
-                            r.status = 'Paid';
-                          });
-                          try {
-                            await _api.request(
-                              '/admin/staff/approvals/expense/${r.id}/approve',
-                              method: 'POST',
-                              data: {
-                                'paymentRoute': paymentRoute,
-                                'payrollMonth': paymentRoute == 'Payroll' ? payrollMonth : null,
-                                'remarks': remarksController.text,
-                              },
-                            );
-                          } catch (_) {}
-                          if (mounted) SnackBarUtils.showSnackBar(context, 'Reimbursement claim approved!');
-                        },
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white),
-                        child: const Text('Approve & Pay', style: TextStyle(fontWeight: FontWeight.w800)),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+  // ── Action: Approve (payout workflow, same body as the web modal) ──
+  Future<void> _showApproveModal(AdminReimbursementRecord r) async {
+    final ok = await showReimbursementPayoutSheet(
+      context,
+      expenseId: r.id,
+      staffId: r.staffId,
+      staffName: r.name,
+      amount: r.amount,
+      claimUpiId: r.upiId,
+      claimAccountNo: r.accountNo,
+      claimIfscCode: r.ifscCode,
     );
+    if (ok && mounted) _loadData(showLoader: false);
   }
 
-  // ── Action: Reject Reimbursement Modal ──
-  void _showRejectModal(AdminReimbursementRecord r) {
-    final reasonController = TextEditingController();
+  // ── Action: Reject ──
+  Future<void> _showRejectModal(AdminReimbursementRecord r) async {
+    final reason = await showApprovalReasonDialog(
+      context,
+      title: 'Reject Reimbursement',
+      subtitle: 'Rejecting claim of ₹${r.amount.toStringAsFixed(0)} for ${r.name}',
+      actionLabel: 'Reject Claim',
+    );
+    if (reason == null || !mounted) return;
+    try {
+      final msg = await _service.rejectExpense(r.id, reason: reason, remarks: reason);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (mounted) showApprovalError(context, e, fallback: 'Failed to reject claim');
+    }
+  }
 
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        contentPadding: const EdgeInsets.all(20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Reject Reimbursement', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => Navigator.pop(ctx)),
-              ],
-            ),
-            const SizedBox(height: 10),
-
-            Text('Rejecting claim of ₹${r.amount.toStringAsFixed(0)} for ${r.name}', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-            const SizedBox(height: 12),
-
-            const Text('REASON FOR REJECTION', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-            const SizedBox(height: 4),
-            TextField(
-              controller: reasonController,
-              maxLines: 2,
-              decoration: InputDecoration(
-                hintText: 'Enter reason...',
-                filled: true,
-                fillColor: const Color(0xFFF8FAFC),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                contentPadding: const EdgeInsets.all(10),
-              ),
-              style: const TextStyle(fontSize: 11),
-            ),
-            const SizedBox(height: 16),
-
-            Row(
-              children: [
+  // ── Action: View details (GET /admin/approvals/expense/:id) ──
+  void _showDetails(AdminReimbursementRecord r) {
+    showApprovalDetailSheet(
+      context,
+      title: 'Reimbursement Claim Details',
+      loader: () => _service.getExpenseDetail(r.id),
+      buildRows: (d) {
+        final reviewer = d['reviewedBy'];
+        return [
+          MapEntry('EMPLOYEE', approvalStaffName(d['staffId'], fallback: r.name)),
+          MapEntry('EMPLOYEE ID', (d['staffId'] is Map ? d['staffId']['employeeId'] : null)?.toString() ?? r.employeeId),
+          MapEntry('CATEGORY', (d['type'] ?? r.category).toString()),
+          MapEntry('AMOUNT', '₹${d['amount'] ?? r.amount}'),
+          MapEntry('CLAIM DATE', formatApprovalDate(d['date'])),
+          MapEntry('DESCRIPTION', (d['description'] ?? '').toString()),
+          MapEntry('RECEIPT', (d['proofFile'] ?? '').toString().isEmpty ? 'No Proof' : (d['proofFile']).toString()),
+          MapEntry('STATUS', (d['status'] ?? r.status).toString()),
+          if (d['paymentRoute'] != null) MapEntry('PAYMENT ROUTE', d['paymentRoute'].toString()),
+          if (d['payrollMonth'] != null) MapEntry('PAYROLL MONTH', d['payrollMonth'].toString()),
+          if (d['accountNo'] != null) MapEntry('ACCOUNT NO.', d['accountNo'].toString()),
+          if (d['ifscCode'] != null) MapEntry('IFSC CODE', d['ifscCode'].toString()),
+          if (d['upiId'] != null) MapEntry('UPI ID', d['upiId'].toString()),
+          if (d['proofImg'] != null) MapEntry('PAYMENT PROOF', d['proofImg'].toString()),
+          MapEntry('REVIEWED BY', (d['approvedBy'] ?? approvalStaffName(reviewer, fallback: '—')).toString()),
+          if (d['reviewedAt'] != null) MapEntry('REVIEWED ON', formatApprovalDate(d['reviewedAt'])),
+          MapEntry('REMARKS', (d['remarks'] ?? '').toString()),
+        ];
+      },
+      actions: r.status == 'Pending'
+          ? (sheetCtx, d) => [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Cancel', style: TextStyle(fontWeight: FontWeight.w700)),
+                    onPressed: () {
+                      Navigator.pop(sheetCtx);
+                      _showRejectModal(r);
+                    },
+                    style: approvalRejectStyle(),
+                    child: const Text('Reject'),
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 12),
                 Expanded(
                   child: ElevatedButton(
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        r.status = 'Rejected';
-                      });
-                      try {
-                        await _api.request(
-                          '/admin/staff/approvals/expense/${r.id}/reject',
-                          method: 'POST',
-                          data: {'reason': reasonController.text},
-                        );
-                      } catch (_) {}
-                      if (mounted) SnackBarUtils.showSnackBar(context, 'Reimbursement claim rejected');
+                    onPressed: () {
+                      Navigator.pop(sheetCtx);
+                      _showApproveModal(r);
                     },
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFDC2626), foregroundColor: Colors.white),
-                    child: const Text('Reject Claim', style: TextStyle(fontWeight: FontWeight.w800)),
+                    style: approvalApproveStyle(),
+                    child: const Text('Approve'),
                   ),
                 ),
-              ],
-            ),
-          ],
-        ),
-      ),
+              ]
+          : null,
     );
   }
 
@@ -490,38 +263,57 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDrawerState) {
           return Container(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
             decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+              color: AppColors.surface,
+              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
             ),
-            child: Column(
+            child: SafeArea(
+              top: false,
+              child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(color: AppColors.divider, borderRadius: BorderRadius.circular(999)),
+                  ),
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Row(
-                      children: const [
-                        Icon(Icons.filter_alt_outlined, color: Color(0xFFEFAA1F), size: 20),
-                        SizedBox(width: 8),
-                        Text('ADVANCED FILTERS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                          child: Icon(Icons.filter_alt_outlined, color: AppColors.primaryText, size: 20),
+                        ),
+                        const SizedBox(width: 12),
+                        const Text('ADVANCED FILTERS', style: AppTextStyles.headingSmall),
                       ],
                     ),
-                    IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.pop(ctx)),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textSecondary),
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(ctx),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
 
                 // Claim Status (Screenshot 4)
-                const Text('CLAIM STATUS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('CLAIM STATUS', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_statusFilter, ['All Statuses', 'Pending', 'Approved', 'Paid', 'Rejected', 'Cancelled'], (v) {
                   setDrawerState(() => _statusFilter = v);
                   setState(() => _statusFilter = v);
                 }),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Start & End Date (Screenshot 4)
                 Row(
@@ -530,82 +322,62 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('START DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
+                          const Text('START DATE', style: AppTextStyles.sectionLabel),
+                          const SizedBox(height: 8),
                           InkWell(
+                            borderRadius: BorderRadius.circular(12),
                             onTap: () async {
                               final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2024), lastDate: DateTime(2028));
                               if (picked != null) {
-                                final s = DateFormat('MM/dd/yyyy').format(picked);
+                                final s = DateFormat('yyyy-MM-dd').format(picked);
                                 setDrawerState(() => _startDateFilter = s);
                                 setState(() => _startDateFilter = s);
                               }
                             },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(_startDateFilter.isNotEmpty ? _startDateFilter : 'mm/dd/yyyy', style: TextStyle(fontSize: 11, color: _startDateFilter.isNotEmpty ? const Color(0xFF0F172A) : const Color(0xFF94A3B8))),
-                                  const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF64748B)),
-                                ],
-                              ),
-                            ),
+                            child: _dateBox(_startDateFilter),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('END DATE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                          const SizedBox(height: 4),
+                          const Text('END DATE', style: AppTextStyles.sectionLabel),
+                          const SizedBox(height: 8),
                           InkWell(
+                            borderRadius: BorderRadius.circular(12),
                             onTap: () async {
                               final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2024), lastDate: DateTime(2028));
                               if (picked != null) {
-                                final s = DateFormat('MM/dd/yyyy').format(picked);
+                                final s = DateFormat('yyyy-MM-dd').format(picked);
                                 setDrawerState(() => _endDateFilter = s);
                                 setState(() => _endDateFilter = s);
                               }
                             },
-                            child: Container(
-                              height: 38,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(_endDateFilter.isNotEmpty ? _endDateFilter : 'mm/dd/yyyy', style: TextStyle(fontSize: 11, color: _endDateFilter.isNotEmpty ? const Color(0xFF0F172A) : const Color(0xFF94A3B8))),
-                                  const Icon(Icons.calendar_today_rounded, size: 14, color: Color(0xFF64748B)),
-                                ],
-                              ),
-                            ),
+                            child: _dateBox(_endDateFilter),
                           ),
                         ],
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
 
                 // Sort Order (Screenshot 5)
-                const Text('SORT ORDER', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
+                const Text('SORT ORDER', style: AppTextStyles.sectionLabel),
+                const SizedBox(height: 8),
                 _drawerDropdown(_sortOrder, ['Newest First (Descending)', 'Oldest First (Ascending)'], (v) {
                   setDrawerState(() => _sortOrder = v);
                   setState(() => _sortOrder = v);
                 }),
-                const SizedBox(height: 20),
+                const SizedBox(height: 24),
 
                 Row(
                   children: [
                     Expanded(
-                      child: TextButton(
+                      child: OutlinedButton(
                         onPressed: () {
                           setDrawerState(() {
                             _statusFilter = 'All Statuses';
@@ -620,21 +392,25 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
                             _sortOrder = 'Newest First (Descending)';
                           });
                           Navigator.pop(ctx);
+                          _loadData();
                         },
-                        child: const Text('Clear All', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
+                        child: const Text('Clear All'),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: ElevatedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                        child: const Text('Apply Filters', style: TextStyle(fontWeight: FontWeight.w800)),
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _loadData();
+                        },
+                        child: const Text('Apply Filters'),
                       ),
                     ),
                   ],
                 ),
               ],
+              ),
             ),
           );
         },
@@ -642,16 +418,34 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
     );
   }
 
+  /// Read-only date field look used by the filter sheet.
+  Widget _dateBox(String value) {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(value.isNotEmpty ? value : 'yyyy-mm-dd', style: TextStyle(fontSize: 14, color: value.isNotEmpty ? AppColors.textPrimary : AppColors.textCaption)),
+          const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.textSecondary),
+        ],
+      ),
+    );
+  }
+
   Widget _drawerDropdown(String value, List<String> items, Function(String) onChanged) {
     return Container(
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 10),
-      decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String>(
           value: items.contains(value) ? value : items.first,
           isExpanded: true,
-          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)))).toList(),
+          borderRadius: BorderRadius.circular(12),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+          items: items.map((i) => DropdownMenuItem(value: i, child: Text(i, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w500)))).toList(),
           onChanged: (v) {
             if (v != null) onChanged(v);
           },
@@ -664,21 +458,16 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          icon: const Icon(Icons.menu_rounded),
+          tooltip: 'Open menu',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Reimbursement',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Reimbursement'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
       ),
       body: _isLoading
           ? const Center(child: AppTabLoader())
@@ -691,21 +480,25 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
                   // Header Bar: Search & Filter
                   Container(
                     padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+                    decoration: approvalCardDecoration(),
                     child: Row(
                       children: [
                         Expanded(
                           child: Container(
-                            height: 38,
-                            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+                            height: 44,
+                            decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                             child: TextField(
                               onChanged: (v) => setState(() => _searchQuery = v),
+                              style: AppTextStyles.bodyMedium,
                               decoration: const InputDecoration(
                                 hintText: 'Search (case-insensitive)...',
-                                hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                                prefixIcon: Icon(Icons.search_rounded, size: 16, color: Color(0xFF94A3B8)),
+                                hintStyle: TextStyle(fontSize: 14, color: AppColors.textCaption),
+                                prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.textCaption),
+                                filled: false,
                                 border: InputBorder.none,
-                                contentPadding: EdgeInsets.symmetric(vertical: 9),
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding: EdgeInsets.symmetric(vertical: 12),
                               ),
                             ),
                           ),
@@ -714,37 +507,40 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
 
                         OutlinedButton.icon(
                           onPressed: _showAdvancedFiltersDrawer,
-                          icon: const Icon(Icons.filter_alt_outlined, size: 14),
-                          label: const Text('Filters', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                          icon: const Icon(Icons.filter_alt_outlined, size: 18),
+                          label: const Text('Filters'),
                           style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF475569),
-                            side: const BorderSide(color: Color(0xFFE2E8F0)),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                            minimumSize: const Size(0, 44),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
 
                   // Sub-header title
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text('ALL REIMBURSEMENT CLAIMS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                      Text('Showing ${_filteredRecords.length} claims', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
+                      const Expanded(child: Text('ALL REIMBURSEMENT CLAIMS', style: AppTextStyles.sectionLabel)),
+                      const SizedBox(width: 8),
+                      Text('Showing ${_filteredRecords.length} claims', style: AppTextStyles.bodySmall),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
 
                   // Records Cards
-                  if (_filteredRecords.isEmpty)
+                  if (_loadError != null)
+                    ApprovalErrorView(message: _loadError!, onRetry: () => _loadData())
+                  else if (_filteredRecords.isEmpty)
                     Container(
-                      padding: const EdgeInsets.all(36),
                       alignment: Alignment.center,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                      child: const Text('No reimbursement claims found', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+                      decoration: approvalCardDecoration(),
+                      child: const ApprovalEmptyView(
+                        icon: Icons.receipt_long_outlined,
+                        title: 'No reimbursement claims found',
+                      ),
                     )
                   else
                     ..._filteredRecords.map((r) => _buildReimbursementCard(r)),
@@ -755,83 +551,77 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
   }
 
   Widget _buildReimbursementCard(AdminReimbursementRecord r) {
-    final isPaid = r.status == 'Paid';
     final isPending = r.status == 'Pending';
     final isRejected = r.status == 'Rejected';
 
-    Color statusBg = isPaid ? const Color(0xFF2563EB) : (isPending ? const Color(0xFFF1F5F9) : (isRejected ? const Color(0xFFDC2626) : const Color(0xFFEFAA1F)));
-    Color statusFg = (isPaid || isRejected || r.status == 'Approved') ? Colors.white : const Color(0xFF475569);
-
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-      ),
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.fromLTRB(16, 16, 8, 16),
+      decoration: approvalCardDecoration(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Row 1: Avatar + Name + Amount + Status
           Row(
             children: [
-              CircleAvatar(
-                radius: 16,
-                backgroundColor: const Color(0xFFEFF6FF),
-                child: Text(r.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF2563EB))),
-              ),
-              const SizedBox(width: 8),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(r.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                    Text('${r.employeeId} • ${r.department}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                  ],
+                child: ApprovalCardHeader(
+                  leading: ApprovalAvatar(name: r.name, initials: r.initials),
+                  title: r.name,
+                  subtitle: '${r.employeeId} • ${r.department}',
+                  trailing: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text('₹${r.amount.toStringAsFixed(0)}', style: AppTextStyles.headingSmall.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 4),
+                      ApprovalStatusPill(status: r.status, label: r.status),
+                    ],
+                  ),
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text('₹${r.amount.toStringAsFixed(0)}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 2),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                    decoration: BoxDecoration(color: statusBg, borderRadius: BorderRadius.circular(10)),
-                    child: Text(r.status, style: TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: statusFg)),
-                  ),
-                ],
-              ),
-              if (isPending) ...[
-                const SizedBox(width: 4),
+              ...[
                 PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert_rounded, size: 18, color: Color(0xFF64748B)),
+                  icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.textSecondary),
+                  tooltip: 'More actions',
                   onSelected: (val) {
                     if (val == 'approve') {
                       _showApproveModal(r);
                     } else if (val == 'reject') {
                       _showRejectModal(r);
+                    } else if (val == 'view') {
+                      _showDetails(r);
                     }
                   },
                   itemBuilder: (ctx) => [
                     const PopupMenuItem(
-                      value: 'approve',
+                      value: 'view',
                       child: Row(
                         children: [
-                          Icon(Icons.check_circle_outline_rounded, size: 16, color: Color(0xFF16A34A)),
-                          SizedBox(width: 8),
-                          Text('Approve', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF16A34A))),
+                          Icon(Icons.visibility_outlined, size: 18, color: AppColors.info),
+                          SizedBox(width: 12),
+                          Text('View Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
+                    if (isPending)
+                    const PopupMenuItem(
+                      value: 'approve',
+                      child: Row(
+                        children: [
+                          Icon(Icons.check_circle_outline_rounded, size: 18, color: AppColors.success),
+                          SizedBox(width: 12),
+                          Text('Approve', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.success)),
+                        ],
+                      ),
+                    ),
+                    if (isPending)
                     const PopupMenuItem(
                       value: 'reject',
                       child: Row(
                         children: [
-                          Icon(Icons.cancel_outlined, size: 16, color: Color(0xFFDC2626)),
-                          SizedBox(width: 8),
-                          Text('Reject', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFFDC2626))),
+                          Icon(Icons.cancel_outlined, size: 18, color: AppColors.error),
+                          SizedBox(width: 12),
+                          Text('Reject', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.error)),
                         ],
                       ),
                     ),
@@ -840,41 +630,54 @@ class _AdminReimbursementApprovalsScreenState extends State<AdminReimbursementAp
               ],
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
           // Details Card
           Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+            margin: const EdgeInsets.only(right: 8),
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
             child: Column(
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Category: ${r.category}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
-                    Text('📅 ${r.claimDate}', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
+                    Expanded(child: Text('Category: ${r.category}', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600, color: AppColors.textPrimary))),
+                    const SizedBox(width: 8),
+                    Text('📅 ${r.claimDate}', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
                   ],
                 ),
                 if (r.description.isNotEmpty) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   Row(
                     children: [
-                      const Text('Description: ', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-                      Expanded(child: Text(r.description, style: const TextStyle(fontSize: 10.5, color: Color(0xFF0F172A)), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      Text('Description: ', style: AppTextStyles.bodySmall.copyWith(fontWeight: FontWeight.w600)),
+                      Expanded(child: Text(r.description, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary), maxLines: 1, overflow: TextOverflow.ellipsis)),
                     ],
                   ),
                 ],
                 if (r.paymentRoute != null) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 8),
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        r.paymentRoute == 'Payroll' ? 'Payment: Payroll (${r.payrollMonth})' : 'Payment: Immediate',
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: r.paymentRoute == 'Payroll' ? const Color(0xFF2563EB) : const Color(0xFF16A34A)),
+                      Flexible(
+                        child: Text(
+                          r.paymentRoute == 'Payroll' ? 'Payment: Payroll (${r.payrollMonth})' : 'Payment: Immediate',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: r.paymentRoute == 'Payroll' ? AppColors.info : AppColors.success),
+                        ),
                       ),
-                      if (r.approvedBy.isNotEmpty)
-                        Text(isRejected ? 'Rejected: ${r.remarks}' : 'Approved by: ${r.approvedBy}', style: const TextStyle(fontSize: 9.5, color: AppColors.brandDark, fontWeight: FontWeight.w700)),
+                      if (r.approvedBy.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            isRejected ? 'Rejected: ${r.remarks}' : 'Approved by: ${r.approvedBy}',
+                            textAlign: TextAlign.right,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: AppColors.primaryText, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],

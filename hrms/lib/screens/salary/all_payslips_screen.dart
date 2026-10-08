@@ -11,6 +11,7 @@ import '../../services/payslip_service.dart';
 import 'payslip_screen.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/request_service.dart';
 import '../../services/salary_service.dart';
 import '../../utils/snackbar_utils.dart';
@@ -204,47 +205,50 @@ class _AllPayslipsScreenState extends State<AllPayslipsScreen> {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        titleSpacing: 0,
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-        title: const Text(
-          'All Payslips',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: AppColors.textPrimary,
-          ),
-        ),
+        title: const Text('All Payslips'),
         actions: const [ProfileAppBarActions()],
       ),
       body: _loading
           ? const Center(child: AppTabLoader())
           : RefreshIndicator(
               onRefresh: _refresh,
+              color: AppColors.primary,
               child: _requests.isEmpty
                   ? ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
                       children: [
                         Padding(
-                          padding: const EdgeInsets.only(top: 120),
-                          child: Center(
-                            child: Text(
-                              'No payslip requests yet.',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: AppColors.textSecondary,
+                          padding: const EdgeInsets.fromLTRB(24, 96, 24, 24),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 64,
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary
+                                      .withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.receipt_long_outlined,
+                                  size: 30,
+                                  color: AppColors.primaryText,
+                                ),
                               ),
-                            ),
+                              const SizedBox(height: 16),
+                              Text(
+                                'No payslip requests yet.',
+                                textAlign: TextAlign.center,
+                                style: AppTextStyles.headingSmall,
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     )
                   : ListView.separated(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
                       itemCount: _requests.length,
                       separatorBuilder: (_, __) => const SizedBox(height: 12),
                       itemBuilder: (_, i) => PayslipRequestCard(
@@ -312,64 +316,59 @@ class PayslipRequestCard extends StatelessWidget {
     }
 
     return AppCard(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Row(
         children: [
           Container(
-            width: 48,
-            height: 48,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               color: AppColors.surfaceDark,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: const Icon(Icons.description, color: Colors.white, size: 24),
+            child: const Icon(Icons.description_outlined,
+                color: Colors.white, size: 22),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   period.isEmpty ? 'Payslip Request' : period,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
-                  ),
+                  style: AppTextStyles.headingSmall,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 4),
                 Text(
                   when,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: AppColors.textSecondary,
-                  ),
+                  style: AppTextStyles.bodySmall,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           GestureDetector(
             onTap: () => payrollId != null
                 ? onDownloadPayroll!(payrollId, period)
                 : onDownload(url),
             child: Container(
-              width: 40,
-              height: 40,
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: hasUrl
                     ? AppColors.primary.withValues(alpha: 0.12)
                     : AppColors.inputFill,
-                shape: BoxShape.circle,
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(
                 Icons.download_rounded,
                 size: 20,
-                color: hasUrl ? AppColors.primary : AppColors.textCaption,
+                color: hasUrl ? AppColors.primaryText : AppColors.textCaption,
               ),
             ),
           ),

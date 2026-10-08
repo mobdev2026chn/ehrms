@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'package:hrms/services/geo/address_resolution_service.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
 
@@ -289,9 +290,17 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Material(
-          elevation: 4,
-          borderRadius: BorderRadius.circular(12),
+        Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1A000000),
+                blurRadius: 16,
+                offset: Offset(0, 4),
+              ),
+            ],
+          ),
           child: TextField(
             controller: _searchController,
             focusNode: _searchFocus,
@@ -312,40 +321,42 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
                   : (_searchController.text.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.close_rounded),
+                          tooltip: 'Clear search',
                           onPressed: _clearSearch,
                         )
                       : null),
               filled: true,
-              fillColor: Colors.white,
+              fillColor: AppColors.surface,
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 borderSide: BorderSide.none,
               ),
               enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
                 borderSide: BorderSide.none,
               ),
               focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide(color: AppColors.primary, width: 1.6),
               ),
             ),
           ),
         ),
         if (_suggestions.isNotEmpty)
           Container(
-            margin: const EdgeInsets.only(top: 6),
+            margin: const EdgeInsets.only(top: 8),
             constraints: const BoxConstraints(maxHeight: 260),
+            clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: const [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.15),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
+                  color: Color(0x1A000000),
+                  blurRadius: 16,
+                  offset: Offset(0, 4),
                 ),
               ],
             ),
@@ -353,9 +364,9 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
               padding: EdgeInsets.zero,
               shrinkWrap: true,
               itemCount: _suggestions.length,
-              separatorBuilder: (_, __) => Divider(
+              separatorBuilder: (_, __) => const Divider(
                 height: 1,
-                color: Colors.grey.shade200,
+                indent: 56,
               ),
               itemBuilder: (context, i) {
                 final s = _suggestions[i];
@@ -363,12 +374,12 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
                   dense: true,
                   leading: const Icon(
                     Icons.location_on_outlined,
-                    color: Colors.grey,
+                    size: 20,
+                    color: AppColors.textSecondary,
                   ),
                   title: Text(
                     s.primaryText ?? s.description,
-                    style: const TextStyle(
-                      fontSize: 14,
+                    style: AppTextStyles.bodyMedium.copyWith(
                       fontWeight: FontWeight.w500,
                     ),
                     maxLines: 1,
@@ -377,9 +388,8 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
                   subtitle: s.secondaryText != null
                       ? Text(
                           s.secondaryText!,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey.shade600,
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -404,9 +414,9 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pin Destination'),
-        centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.close_rounded),
+          tooltip: 'Close',
           onPressed: () => Navigator.of(context).pop(),
         ),
         actions: [
@@ -472,8 +482,8 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
             },
           ),
           Positioned(
-            left: 12,
-            right: 12,
+            left: 16,
+            right: 16,
             top: 12,
             child: _buildSearchBar(),
           ),
@@ -484,13 +494,13 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
             child: Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: const [
                   BoxShadow(
-                    color: Colors.black.withOpacity(0.15),
-                    blurRadius: 12,
-                    offset: const Offset(0, 4),
+                    color: Color(0x1A000000),
+                    blurRadius: 16,
+                    offset: Offset(0, 4),
                   ),
                 ],
               ),
@@ -498,16 +508,27 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'Tap or long-press to drop pin',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Colors.grey.shade600,
-                      fontWeight: FontWeight.w500,
-                    ),
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.touch_app_outlined,
+                        size: 16,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Tap or long-press to drop pin',
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   if (_pinnedLocation != null) ...[
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     _loadingAddress
                         ? const SizedBox(
                             height: 24,
@@ -515,39 +536,46 @@ class _PinDestinationMapScreenState extends State<PinDestinationMapScreen> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             ),
                           )
-                        : Text(
-                            _pinnedAddress,
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: AppColors.textPrimary,
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                        : Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: AppColors.error.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: const Icon(
+                                  Icons.location_on_rounded,
+                                  size: 20,
+                                  color: AppColors.error,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  _pinnedAddress,
+                                  style: AppTextStyles.bodyMedium.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
                           ),
                   ],
                   const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: _pinnedLocation != null ? _onConfirm : null,
-                    icon: const Icon(
-                      Icons.check_rounded,
-                      size: 20,
-                      color: Colors.white,
-                    ),
-                    label: const Text(
-                      'Confirm Destination',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.white,
+                  SizedBox(
+                    height: 52,
+                    child: ElevatedButton.icon(
+                      onPressed: _pinnedLocation != null ? _onConfirm : null,
+                      icon: const Icon(
+                        Icons.check_rounded,
+                        size: 20,
                       ),
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+                      label: const Text('Confirm Destination'),
                     ),
                   ),
                 ],

@@ -2,10 +2,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/api_client.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../services/admin_approvals_service.dart';
 import '../../../utils/snackbar_utils.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
+import 'approval_shared_widgets.dart';
 
 class AdminPunchRecord {
   final String id;
@@ -44,28 +46,28 @@ class AdminPunchRecord {
     return staffName.isNotEmpty ? staffName[0].toUpperCase() : 'U';
   }
 
+  /// One row of GET /admin/approvals/punch (`data[]`).
   factory AdminPunchRecord.fromJson(Map<String, dynamic> json) {
-    final staffObj = json['staffId'] is Map ? json['staffId'] : json;
-    final inTime = (json['punchInTime'] ?? json['inTime'] ?? '09:00 AM').toString();
-    final outTime = (json['punchOutTime'] ?? json['outTime'] ?? '07:30 PM').toString();
-    final isPending = json['isPendingApproval'] == true || (json['status'] ?? '').toString().toLowerCase() == 'pending';
+    final isPending = json['isPendingApproval'] == true;
+    String? photo(dynamic v) {
+      final s = (v ?? '').toString();
+      return s.isEmpty ? null : s;
+    }
 
     return AdminPunchRecord(
-      id: (json['_id'] ?? json['id'] ?? '').toString(),
-      staffName: (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString().isNotEmpty
-          ? (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString()
-          : (json['staffName'] ?? 'James fernado').toString(),
-      employeeId: (staffObj['employeeId'] ?? json['employeeId'] ?? 'EMP-002').toString(),
-      department: (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? json['department'] ?? 'IT')).toString(),
-      shiftName: (json['shiftName'] ?? json['shift'] ?? 'General Shift').toString(),
-      punchInTime: inTime,
-      punchInLocation: (json['punchInLocation'] ?? json['inLocation'] ?? 'Office Wi-Fi Zone').toString(),
-      punchInPhoto: json['punchInPhoto']?.toString(),
-      punchOutTime: outTime,
-      punchOutLocation: (json['punchOutLocation'] ?? json['outLocation'] ?? 'Office Wi-Fi Zone').toString(),
-      punchOutPhoto: json['punchOutPhoto']?.toString(),
+      id: (json['id'] ?? json['_id'] ?? '').toString(),
+      staffName: (json['staffName'] ?? 'Staff Member').toString(),
+      employeeId: (json['employeeId'] ?? '—').toString(),
+      department: (json['department'] ?? '—').toString(),
+      shiftName: (json['shiftName'] ?? 'General Shift').toString(),
+      punchInTime: (json['punchInTime'] ?? '—').toString(),
+      punchInLocation: (json['punchInLocation'] ?? '—').toString(),
+      punchInPhoto: photo(json['punchInSelfie']),
+      punchOutTime: (json['punchOutTime'] ?? '—').toString(),
+      punchOutLocation: (json['punchOutLocation'] ?? '—').toString(),
+      punchOutPhoto: photo(json['punchOutSelfie']),
       isPendingApproval: isPending,
-      status: (json['status'] ?? (isPending ? 'Pending' : 'Approved')).toString(),
+      status: (json['status'] ?? '').toString(),
     );
   }
 }
@@ -79,11 +81,13 @@ class AdminPunchApprovalsScreen extends StatefulWidget {
 
 class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final ApiClient _api = ApiClient();
+  final AdminApprovalsService _service = AdminApprovalsService();
+  String? _loadError;
+  bool _submitting = false;
 
   bool _isLoading = true;
   String _searchQuery = '';
-  DateTime _selectedDate = DateTime(2026, 8, 29);
+  DateTime _selectedDate = DateTime.now();
   final Set<String> _selectedIds = {};
   List<AdminPunchRecord> _records = [];
 
@@ -94,89 +98,31 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
   }
 
   Future<void> _loadData({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
-    final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
-    try {
-      final res = await _api.request(
-        '/admin/staff/approvals/punch',
-        queryParameters: {'date': dateStr},
-      );
-
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _records = list.map((e) => AdminPunchRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRecords();
-        }
-      } else {
-        _setMockRecords();
-      }
-    } catch (_) {
-      _setMockRecords();
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _loadError = null;
+      });
     }
 
-    if (showLoader && mounted) setState(() => _isLoading = false);
-  }
-
-  void _setMockRecords() {
-    _records = [
-      AdminPunchRecord(
-        id: 'punch_1',
-        staffName: 'James fernado',
-        employeeId: 'EMP-002',
-        department: 'IT',
-        shiftName: 'General Shift',
-        punchInTime: '01:50 PM',
-        punchInLocation: 'Office Wi-Fi Zone',
-        punchOutTime: '10:00 PM',
-        punchOutLocation: 'Office Wi-Fi Zone',
-        isPendingApproval: false,
-        status: 'Approved',
-      ),
-      AdminPunchRecord(
-        id: 'punch_2',
-        staffName: 'c man',
-        employeeId: 'EMP-003',
-        department: 'Design',
-        shiftName: 'General Shift',
-        punchInTime: '03:00 PM',
-        punchInLocation: 'Office Wi-Fi Zone',
-        punchOutTime: '03:00 AM',
-        punchOutLocation: 'Office Wi-Fi Zone',
-        isPendingApproval: false,
-        status: 'Approved',
-      ),
-      AdminPunchRecord(
-        id: 'punch_3',
-        staffName: 'sarannn saran',
-        employeeId: 'EMP-004',
-        department: 'Support',
-        shiftName: 'General Shift',
-        punchInTime: '10:00 AM',
-        punchInLocation: 'Office Wi-Fi Zone',
-        punchOutTime: '01:30 PM',
-        punchOutLocation: 'Office Wi-Fi Zone',
-        isPendingApproval: false,
-        status: 'Approved',
-      ),
-      AdminPunchRecord(
-        id: 'punch_4',
-        staffName: 'hp hai th',
-        employeeId: 'EMP-006',
-        department: 'IT',
-        shiftName: 'General Shift',
-        punchInTime: '09:00 AM',
-        punchInLocation: 'Office Wi-Fi Zone',
-        punchOutTime: '07:30 PM',
-        punchOutLocation: 'Office Wi-Fi Zone',
-        isPendingApproval: false,
-        status: 'Approved',
-      ),
-    ];
+    try {
+      final list = await _service.getPunchApprovals(date: DateFormat('yyyy-MM-dd').format(_selectedDate));
+      if (!mounted) return;
+      setState(() {
+        _records = list.map(AdminPunchRecord.fromJson).toList();
+        _selectedIds.removeWhere((id) => !_records.any((r) => r.id == id));
+        _loadError = null;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final msg = AdminApprovalsService.messageOf(e, fallback: 'Failed to load punch approvals');
+      setState(() {
+        _loadError = msg;
+        _isLoading = false;
+      });
+      if (!showLoader) SnackBarUtils.showSnackBar(context, msg, isError: true);
+    }
   }
 
   List<AdminPunchRecord> get _filteredRecords {
@@ -197,29 +143,79 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
     return map;
   }
 
-  // ── Bulk Actions ──
-  Future<void> _handleBulkAction(String decision) async {
-    if (_selectedIds.isEmpty) return;
-    final ids = _selectedIds.toList();
-    setState(() {
-      for (var r in _records) {
-        if (_selectedIds.contains(r.id)) {
-          r.status = decision;
-        }
-      }
-      _selectedIds.clear();
-    });
-
-    try {
-      final endpoint = decision == 'Approved'
-          ? '/admin/staff/approvals/punch/approve'
-          : '/admin/staff/approvals/punch/reject';
-      await _api.request(endpoint, method: 'POST', data: {'ids': ids});
-    } catch (_) {}
-
-    if (mounted) {
-      SnackBarUtils.showSnackBar(context, 'Attendance successfully ${decision.toLowerCase()} for the selected staff member(s)!');
+  // ── Batch decide: POST /admin/approvals/punch/approve|reject { ids } ──
+  Future<void> _decide(List<String> ids, bool approve) async {
+    if (ids.isEmpty || _submitting) return;
+    if (!approve) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: AppColors.surface,
+          title: const Text('Reject Attendance', style: AppTextStyles.headingMedium),
+          content: Text('Rejecting marks ${ids.length} attendance record(s) as absent. Continue?',
+              style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary))),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.error, foregroundColor: Colors.white, minimumSize: const Size(96, 44)),
+              child: const Text('Reject'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
     }
+    setState(() => _submitting = true);
+    try {
+      final msg = approve ? await _service.approvePunches(ids) : await _service.rejectPunches(ids);
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _selectedIds.removeAll(ids);
+      });
+      SnackBarUtils.showSnackBar(context, msg);
+      _loadData(showLoader: false);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      showApprovalError(context, e, fallback: approve ? 'Failed to approve attendance' : 'Failed to reject attendance');
+    }
+  }
+
+  Future<void> _handleBulkAction(String decision) => _decide(_selectedIds.toList(), decision == 'Approved');
+
+  Widget _selfie(String label, String? url) {
+    return Expanded(
+      child: Column(
+        children: [
+          Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.sectionLabel.copyWith(fontSize: 10, letterSpacing: 0.5)),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(12),
+            child: url == null
+                ? Container(
+                    height: 96,
+                    color: AppColors.background,
+                    alignment: Alignment.center,
+                    child: const Text('No photo', style: AppTextStyles.caption),
+                  )
+                : Image.network(
+                    url,
+                    height: 96,
+                    width: double.infinity,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(
+                      height: 96,
+                      color: AppColors.background,
+                      alignment: Alignment.center,
+                      child: const Icon(Icons.broken_image_outlined, color: AppColors.textCaption),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── Action: Punch Details Modal ──
@@ -227,109 +223,95 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        backgroundColor: AppColors.surface,
         contentPadding: const EdgeInsets.all(20),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.fingerprint_rounded, color: AppColors.brandDark, size: 18),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text('Punch Attendance Details', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text(DateFormat('dd MMMM yyyy').format(_selectedDate), style: const TextStyle(fontSize: 10, color: Color(0xFF94A3B8))),
-                    ],
-                  ),
-                ),
-                IconButton(icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => Navigator.pop(ctx)),
-              ],
-            ),
-            const SizedBox(height: 14),
-
-            // Staff Info
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(10), border: Border.all(color: const Color(0xFFE2E8F0))),
-              child: Row(
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  CircleAvatar(
-                    radius: 14,
-                    backgroundColor: const Color(0xFFEFF6FF),
-                    child: Text(r.initials, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF2563EB))),
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                    child: Icon(Icons.fingerprint_rounded, color: AppColors.primaryText, size: 22),
                   ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(r.staffName, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                      Text('${r.employeeId} • ${r.department}', style: const TextStyle(fontSize: 10, color: Color(0xFF64748B))),
-                    ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Punch Attendance Details', style: AppTextStyles.headingSmall),
+                        const SizedBox(height: 2),
+                        Text(DateFormat('dd MMMM yyyy').format(_selectedDate), style: AppTextStyles.bodySmall),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textSecondary),
+                    tooltip: 'Close',
+                    onPressed: () => Navigator.pop(ctx),
                   ),
                 ],
               ),
-            ),
-            const SizedBox(height: 12),
-
-            _detailRow('SHIFT', r.shiftName),
-            _detailRow('PUNCH IN', '${r.punchInTime} (${r.punchInLocation})'),
-            _detailRow('PUNCH OUT', '${r.punchOutTime} (${r.punchOutLocation})'),
-            _detailRow('STATUS', r.status, isStatus: true),
-            const SizedBox(height: 14),
-
-            if (r.isPendingApproval || r.status == 'Pending')
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
+                child: Row(
+                  children: [
+                    ApprovalAvatar(name: r.staffName, initials: r.initials),
+                    const SizedBox(width: 12),
+                    Expanded(child: Text(r.staffName, style: AppTextStyles.headingSmall)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _detailRow('SHIFT', r.shiftName),
+              _detailRow('PUNCH IN', '${r.punchInTime} (${r.punchInLocation})'),
+              _detailRow('PUNCH OUT', '${r.punchOutTime} (${r.punchOutLocation})'),
+              _detailRow('DAY STATUS', r.status == 'half_day' ? 'Half Day' : 'Present'),
+              _detailRow('APPROVAL', r.isPendingApproval ? 'Pending' : 'Approved', isStatus: true),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  _selfie('PUNCH IN SELFIE', r.punchInPhoto),
+                  const SizedBox(width: 12),
+                  _selfie('PUNCH OUT SELFIE', r.punchOutPhoto),
+                ],
+              ),
+              const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
                     child: OutlinedButton(
-                      onPressed: () async {
+                      onPressed: () {
                         Navigator.pop(ctx);
-                        setState(() => r.status = 'Rejected');
-                        try {
-                          await _api.request('/admin/staff/approvals/punch/reject', method: 'POST', data: {'ids': [r.id]});
-                        } catch (_) {}
-                        if (mounted) SnackBarUtils.showSnackBar(context, 'Punch rejected');
+                        _decide([r.id], false);
                       },
-                      style: OutlinedButton.styleFrom(foregroundColor: const Color(0xFFDC2626), side: const BorderSide(color: Color(0xFFFECACA))),
-                      child: const Text('Reject', style: TextStyle(fontWeight: FontWeight.w700)),
+                      style: approvalRejectStyle(),
+                      child: const Text('Reject'),
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () async {
-                        Navigator.pop(ctx);
-                        setState(() => r.status = 'Approved');
-                        try {
-                          await _api.request('/admin/staff/approvals/punch/approve', method: 'POST', data: {'ids': [r.id]});
-                        } catch (_) {}
-                        if (mounted) SnackBarUtils.showSnackBar(context, 'Punch approved');
-                      },
-                      style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF16A34A), foregroundColor: Colors.white),
-                      child: const Text('Approve', style: TextStyle(fontWeight: FontWeight.w800)),
+                  if (r.isPendingApproval) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          Navigator.pop(ctx);
+                          _decide([r.id], true);
+                        },
+                        style: approvalApproveStyle(),
+                        child: const Text('Approve'),
+                      ),
                     ),
-                  ),
+                  ],
                 ],
-              )
-            else
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                  child: const Text('Close Details', style: TextStyle(fontWeight: FontWeight.w800)),
-                ),
               ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -337,30 +319,16 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
 
   Widget _detailRow(String label, String value, {bool isStatus = false}) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          SizedBox(width: 110, child: Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
+          SizedBox(width: 96, child: Text(label, style: AppTextStyles.bodySmall)),
           const SizedBox(width: 8),
           if (isStatus)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: value == 'Approved' || value == 'present' ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                value,
-                style: TextStyle(
-                  fontSize: 9.5,
-                  fontWeight: FontWeight.w900,
-                  color: value == 'Approved' || value == 'present' ? const Color(0xFF16A34A) : AppColors.brandDark,
-                ),
-              ),
-            )
+            ApprovalStatusPill(status: value, label: value)
           else
-            Expanded(child: Text(value, textAlign: TextAlign.end, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)))),
+            Expanded(child: Text(value, textAlign: TextAlign.end, style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600))),
         ],
       ),
     );
@@ -372,21 +340,16 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
 
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          icon: const Icon(Icons.menu_rounded),
+          tooltip: 'Open menu',
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Attendance Pending for Approval',
-          style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Attendance Pending for Approval'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
       ),
       body: _isLoading
           ? const Center(child: AppTabLoader())
@@ -401,21 +364,25 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                       // Top Control Bar: Search, Date Picker, Today
                       Container(
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14), border: Border.all(color: const Color(0xFFF1F5F9))),
+                        decoration: approvalCardDecoration(),
                         child: Column(
                           children: [
                             // Search
                             Container(
-                              height: 38,
-                              decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+                              height: 44,
+                              decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
                               child: TextField(
                                 onChanged: (v) => setState(() => _searchQuery = v),
+                                style: AppTextStyles.bodyMedium,
                                 decoration: const InputDecoration(
                                   hintText: 'Search staff...',
-                                  hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                                  prefixIcon: Icon(Icons.search_rounded, size: 16, color: Color(0xFF94A3B8)),
+                                  hintStyle: TextStyle(fontSize: 14, color: AppColors.textCaption),
+                                  prefixIcon: Icon(Icons.search_rounded, size: 20, color: AppColors.textCaption),
+                                  filled: false,
                                   border: InputBorder.none,
-                                  contentPadding: EdgeInsets.symmetric(vertical: 9),
+                                  enabledBorder: InputBorder.none,
+                                  focusedBorder: InputBorder.none,
+                                  contentPadding: EdgeInsets.symmetric(vertical: 12),
                                 ),
                               ),
                             ),
@@ -426,6 +393,7 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                                 // Date Picker Button
                                 Expanded(
                                   child: InkWell(
+                                    borderRadius: BorderRadius.circular(12),
                                     onTap: () async {
                                       final picked = await showDatePicker(
                                         context: context,
@@ -439,24 +407,24 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                                       }
                                     },
                                     child: Container(
-                                      height: 36,
-                                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                                      height: 44,
+                                      padding: const EdgeInsets.symmetric(horizontal: 12),
                                       decoration: BoxDecoration(
-                                        color: const Color(0xFFF8FAFC),
-                                        borderRadius: BorderRadius.circular(6),
-                                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                                        color: const Color(0xFFF7F8FA),
+                                        borderRadius: BorderRadius.circular(12),
+                                        border: Border.all(color: const Color(0xFFE2E5EA)),
                                       ),
                                       child: Row(
                                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                         children: [
                                           Row(
                                             children: [
-                                              const Icon(Icons.calendar_today_rounded, size: 13, color: AppColors.brandDark),
-                                              const SizedBox(width: 6),
-                                              Text(DateFormat('dd MMM yyyy').format(_selectedDate), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF0F172A))),
+                                              Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.primaryText),
+                                              const SizedBox(width: 8),
+                                              Text(DateFormat('dd MMM yyyy').format(_selectedDate), style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
                                             ],
                                           ),
-                                          const Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: Color(0xFF64748B)),
+                                          const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: AppColors.textSecondary),
                                         ],
                                       ),
                                     ),
@@ -465,20 +433,17 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                                 const SizedBox(width: 8),
 
                                 // Today Button
-                                ElevatedButton(
+                                OutlinedButton(
                                   onPressed: () {
                                     setState(() => _selectedDate = DateTime.now());
                                     _loadData();
                                   },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: const Color(0xFF475569),
-                                    elevation: 0,
-                                    side: const BorderSide(color: Color(0xFFE2E8F0)),
-                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+                                  style: OutlinedButton.styleFrom(
+                                    minimumSize: const Size(0, 44),
+                                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                                    textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
                                   ),
-                                  child: const Text('Today', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                                  child: const Text('Today'),
                                 ),
                               ],
                             ),
@@ -488,12 +453,16 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                       const SizedBox(height: 16),
 
                       // Shift Sections
-                      if (shiftGroups.isEmpty)
+                      if (_loadError != null)
+                        ApprovalErrorView(message: _loadError!, onRetry: () => _loadData())
+                      else if (shiftGroups.isEmpty)
                         Container(
-                          padding: const EdgeInsets.all(36),
                           alignment: Alignment.center,
-                          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                          child: const Text('No punch approval records for this date', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
+                          decoration: approvalCardDecoration(),
+                          child: const ApprovalEmptyView(
+                            icon: Icons.fingerprint_rounded,
+                            title: 'No punch approval records for this date',
+                          ),
                         )
                       else
                         ...shiftGroups.entries.map((entry) => _buildShiftSection(entry.key, entry.value)),
@@ -505,16 +474,16 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                 // Floating Action Bar for Selected Items
                 if (_selectedIds.isNotEmpty)
                   Positioned(
-                    bottom: 20,
-                    left: 20,
-                    right: 20,
+                    bottom: 16,
+                    left: 16,
+                    right: 16,
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0F172A),
-                        borderRadius: BorderRadius.circular(14),
+                        color: AppColors.ink,
+                        borderRadius: BorderRadius.circular(16),
                         boxShadow: [
-                          BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 10, offset: const Offset(0, 4)),
+                          BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 16, offset: const Offset(0, 4)),
                         ],
                       ),
                       child: Row(
@@ -522,34 +491,33 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                           Expanded(
                             child: Text(
                               'Selected ${_selectedIds.length} staff',
-                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600),
                             ),
                           ),
                           TextButton(
                             onPressed: () => setState(() => _selectedIds.clear()),
-                            child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11)),
+                            child: const Text('Cancel', style: TextStyle(color: AppColors.textCaption, fontSize: 13)),
                           ),
                           const SizedBox(width: 4),
                           ElevatedButton(
-                            onPressed: () => _handleBulkAction('Rejected'),
+                            onPressed: _submitting ? null : () => _handleBulkAction('Rejected'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFDC2626),
+                              backgroundColor: AppColors.error,
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              minimumSize: Size.zero,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              minimumSize: const Size(0, 36),
+                              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                             ),
-                            child: const Text('Reject', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                            child: const Text('Reject'),
                           ),
-                          const SizedBox(width: 6),
+                          const SizedBox(width: 8),
                           ElevatedButton(
-                            onPressed: () => _handleBulkAction('Approved'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFFEFAA1F),
-                              foregroundColor: const Color(0xFF0F172A),
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                              minimumSize: Size.zero,
+                            onPressed: _submitting ? null : () => _handleBulkAction('Approved'),
+                            style: approvalApproveStyle().copyWith(
+                              minimumSize: const WidgetStatePropertyAll(Size(0, 36)),
+                              textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                             ),
-                            child: const Text('Approve', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
+                            child: const Text('Approve'),
                           ),
                         ],
                       ),
@@ -571,12 +539,12 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
           // Shift Header
           Row(
             children: [
-              Text(shiftName, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-              const SizedBox(width: 6),
+              Flexible(child: Text(shiftName, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.headingSmall)),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(10)),
-                child: Text('${list.length}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: AppColors.brandDark)),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999)),
+                child: Text('${list.length}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primaryText)),
               ),
             ],
           ),
@@ -584,20 +552,14 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
 
           // Shift Card Table
           Container(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
-            ),
+            clipBehavior: Clip.antiAlias,
+            decoration: approvalCardDecoration(),
             child: Column(
               children: [
                 // Table header
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  color: AppColors.background,
                   child: Row(
                     children: [
                       SizedBox(
@@ -616,18 +578,16 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                               }
                             });
                           },
-                          activeColor: const Color(0xFFEFAA1F),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                         ),
                       ),
-                      const SizedBox(width: 6),
-                      const Expanded(child: Text('STAFF', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
-                      const Expanded(child: Text('PUNCH IN', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
-                      const Expanded(child: Text('PUNCH OUT', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B)))),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('STAFF', style: AppTextStyles.sectionLabel.copyWith(fontSize: 10, letterSpacing: 0.5))),
+                      Expanded(child: Text('PUNCH IN', style: AppTextStyles.sectionLabel.copyWith(fontSize: 10, letterSpacing: 0.5))),
+                      Expanded(child: Text('PUNCH OUT', style: AppTextStyles.sectionLabel.copyWith(fontSize: 10, letterSpacing: 0.5))),
                     ],
                   ),
                 ),
-                const Divider(height: 1, color: Color(0xFFE2E8F0)),
+                const Divider(height: 1),
 
                 // Table rows
                 ...list.map((r) => _buildPunchRow(r)),
@@ -641,15 +601,16 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
 
   Widget _buildPunchRow(AdminPunchRecord r) {
     final isSelected = _selectedIds.contains(r.id);
-    final isApproved = r.status == 'Approved' || r.status == 'present';
+    final isApproved = !r.isPendingApproval;
+    final st = AppColors.statusStyle(isApproved ? 'approved' : 'pending');
 
     return InkWell(
       onTap: () => _showPunchDetailModal(r),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
         decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFFFFBEB) : Colors.white,
-          border: const Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+          color: isSelected ? AppColors.primary.withValues(alpha: 0.08) : Colors.transparent,
+          border: const Border(bottom: BorderSide(color: kApprovalBorder)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
@@ -669,31 +630,29 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
                     }
                   });
                 },
-                activeColor: const Color(0xFFEFAA1F),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
               ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
 
             // Staff column
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(r.staffName, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 2),
+                  Text(r.staffName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                  const SizedBox(height: 4),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: isApproved ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(3),
+                      color: st.bg,
+                      borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       isApproved ? 'APPROVED' : 'PENDING',
                       style: TextStyle(
-                        fontSize: 7.5,
-                        fontWeight: FontWeight.w900,
-                        color: isApproved ? const Color(0xFF16A34A) : AppColors.brandDark,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: st.fg,
                       ),
                     ),
                   ),
@@ -706,18 +665,18 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
               child: Row(
                 children: [
                   Container(
-                    width: 24,
-                    height: 24,
-                    decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(4)),
-                    child: const Icon(Icons.login_rounded, size: 12, color: Color(0xFF2563EB)),
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(color: AppColors.success.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.login_rounded, size: 14, color: AppColors.success),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(r.punchInTime, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                        Text('● ${r.punchInLocation}', style: const TextStyle(fontSize: 8, color: Color(0xFF64748B)), overflow: TextOverflow.ellipsis),
+                        Text(r.punchInTime, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                        Text('● ${r.punchInLocation}', style: const TextStyle(fontSize: 10, color: AppColors.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ],
                     ),
                   ),
@@ -730,18 +689,18 @@ class _AdminPunchApprovalsScreenState extends State<AdminPunchApprovalsScreen> {
               child: Row(
                 children: [
                   Container(
-                    width: 24,
-                    height: 24,
-                    decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(4)),
-                    child: const Icon(Icons.logout_rounded, size: 12, color: Color(0xFF64748B)),
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(color: AppColors.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.logout_rounded, size: 14, color: AppColors.error),
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(r.punchOutTime, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                        Text('● ${r.punchOutLocation}', style: const TextStyle(fontSize: 8, color: Color(0xFF64748B)), overflow: TextOverflow.ellipsis),
+                        Text(r.punchOutTime, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                        Text('● ${r.punchOutLocation}', style: const TextStyle(fontSize: 10, color: AppColors.textSecondary), maxLines: 1, overflow: TextOverflow.ellipsis),
                       ],
                     ),
                   ),

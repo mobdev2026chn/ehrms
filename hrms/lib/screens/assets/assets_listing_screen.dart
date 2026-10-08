@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/menu_icon_button.dart';
 import '../../widgets/profile_app_bar_actions.dart';
@@ -115,18 +116,29 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
     showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Row(
           children: [
-            Icon(Icons.report_problem_outlined, color: AppColors.primary),
-            const SizedBox(width: 10),
-            const Expanded(child: Text('Report Issue')),
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(Icons.report_problem_outlined,
+                  color: AppColors.primaryText, size: 22),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+                child: Text('Report Issue',
+                    style: AppTextStyles.headingMedium)),
           ],
         ),
         content: Text(
           'Raise an issue for "${asset.name}"? Your IT / admin team will be '
           'notified to follow up.',
+          style: AppTextStyles.bodyMedium
+              .copyWith(color: AppColors.textSecondary, height: 1.45),
         ),
         actions: [
           TextButton(
@@ -134,10 +146,6 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
             child: const Text('Cancel'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-            ),
             onPressed: () {
               Navigator.pop(ctx);
               SnackBarUtils.showSnackBar(
@@ -173,9 +181,8 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
               surfaceTintColor: Colors.transparent,
               title: const Text(
                 'My Assets',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
+                style: AppTextStyles.headingLarge,
               ),
-              elevation: 0,
               actions: const [
                 ProfileAppBarActions(),
               ],
@@ -187,11 +194,11 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
               )
             else
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
                     _buildSummaryRow(),
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 24),
                     _buildSectionHeader('Hardware Assets',
                         onViewAll:
                             _hardware.isEmpty ? null : _openHardwareList),
@@ -203,7 +210,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                       ...List.generate(
                         _hardware.length > 3 ? 3 : _hardware.length,
                         (i) => Padding(
-                          padding: const EdgeInsets.only(bottom: 14),
+                          padding: const EdgeInsets.only(bottom: 12),
                           child: FadeSlideIn(
                             delay: Duration(
                                 milliseconds: (i * 60).clamp(0, 240)),
@@ -211,7 +218,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                           ),
                         ),
                       ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 20),
                     _buildSectionHeader('Software Licenses',
                         onViewAll: _openSoftware),
                     const SizedBox(height: 12),
@@ -225,7 +232,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                           scrollDirection: Axis.horizontal,
                           itemCount: _software.length,
                           separatorBuilder: (_, __) =>
-                              const SizedBox(width: 14),
+                              const SizedBox(width: 12),
                           itemBuilder: (context, i) => FadeSlideIn(
                             delay: Duration(
                                 milliseconds: (i * 60).clamp(0, 240)),
@@ -256,7 +263,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
             onTap: _hardware.isEmpty ? null : _openHardwareList,
           ),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 12),
         Expanded(
           child: _summaryCard(
             filled: false,
@@ -277,20 +284,23 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
     required int count,
     VoidCallback? onTap,
   }) {
-    final fg = filled ? Colors.white : AppColors.textPrimary;
+    final fg = filled ? AppColors.onPrimary : AppColors.textPrimary;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
+      borderRadius: BorderRadius.circular(20),
       child: Container(
-        padding: const EdgeInsets.all(18),
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: filled ? AppColors.primary : AppColors.surface,
-          borderRadius: BorderRadius.circular(18),
+          borderRadius: BorderRadius.circular(20),
+          border: filled
+              ? null
+              : Border.all(color: const Color(0xFFECEEF1)),
           boxShadow: [
             BoxShadow(
               color: filled
-                  ? AppColors.primary.withValues(alpha: 0.3)
-                  : Colors.black.withValues(alpha: 0.05),
+                  ? AppColors.primary.withValues(alpha: 0.12)
+                  : Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, 4),
             ),
@@ -299,28 +309,32 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(icon,
-                color: filled ? Colors.white : AppColors.primary, size: 26),
-            const SizedBox(height: 20),
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: filled
+                    ? AppColors.onPrimary.withValues(alpha: 0.12)
+                    : AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon,
+                  color: filled ? AppColors.onPrimary : AppColors.primaryText,
+                  size: 22),
+            ),
+            const SizedBox(height: 16),
             Text(
               label,
-              style: TextStyle(
+              style: AppTextStyles.sectionLabel.copyWith(
                 color: filled
-                    ? Colors.white.withValues(alpha: 0.9)
+                    ? AppColors.onPrimary.withValues(alpha: 0.8)
                     : AppColors.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
               ),
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 6),
             Text(
               count.toString().padLeft(2, '0'),
-              style: TextStyle(
-                color: fg,
-                fontSize: 28,
-                fontWeight: FontWeight.bold,
-              ),
+              style: AppTextStyles.displayLarge.copyWith(color: fg),
             ),
           ],
         ),
@@ -335,22 +349,22 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
       children: [
         Text(
           title,
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-            color: AppColors.textPrimary,
-          ),
+          style: AppTextStyles.headingMedium,
         ),
         if (onViewAll != null)
           GestureDetector(
             onTap: onViewAll,
-            child: Text(
-              'VIEW ALL',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
-                letterSpacing: 0.5,
+            behavior: HitTestBehavior.opaque,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: Text(
+                'VIEW ALL',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primaryText,
+                  letterSpacing: 0.8,
+                ),
               ),
             ),
           ),
@@ -373,11 +387,12 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Color(0x0F000000),
               blurRadius: 10,
-              offset: const Offset(0, 3),
+              offset: Offset(0, 3),
             ),
           ],
         ),
@@ -386,38 +401,34 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
             Row(
               children: [
                 Container(
-                  width: 46,
-                  height: 46,
+                  width: 48,
+                  height: 48,
                   decoration: BoxDecoration(
-                    color: AppColors.primary.withValues(alpha: 0.1),
+                    color: AppColors.primary.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(_hardwareIcon(asset),
-                      color: AppColors.primary, size: 24),
+                      color: AppColors.primaryText, size: 24),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         asset.name,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: AppColors.textPrimary,
-                        ),
+                        style: AppTextStyles.headingSmall,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 4),
                       Text(
                         (asset.serialNumber != null &&
                                 asset.serialNumber!.isNotEmpty)
                             ? 'S/N: ${asset.serialNumber}'
                             : (asset.type ?? asset.assetCategory ?? '—'),
-                        style: const TextStyle(
-                            fontSize: 12, color: AppColors.textSecondary),
+                        style: AppTextStyles.bodySmall
+                            .copyWith(color: AppColors.textSecondary),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -428,16 +439,16 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
                   const SizedBox(width: 8),
                   Container(
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
+                        horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                       color: badge.bg,
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
                       badge.label,
                       style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                         color: badge.fg,
                       ),
@@ -450,27 +461,28 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
             // Report issue action.
             InkWell(
               onTap: () => _reportIssue(asset),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
               child: Container(
                 width: double.infinity,
+                constraints: const BoxConstraints(minHeight: 44),
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 decoration: BoxDecoration(
                   color: AppColors.primary.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.error_outline,
-                        size: 16, color: AppColors.primaryDark),
-                    const SizedBox(width: 6),
+                    Icon(Icons.error_outline_rounded,
+                        size: 18, color: AppColors.primaryText),
+                    const SizedBox(width: 8),
                     Text(
                       'REPORT ISSUE',
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                        color: AppColors.primaryDark,
+                        letterSpacing: 0.8,
+                        color: AppColors.primaryText,
                       ),
                     ),
                   ],
@@ -497,11 +509,12 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
         decoration: BoxDecoration(
           color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Color(0x0F000000),
               blurRadius: 10,
-              offset: const Offset(0, 3),
+              offset: Offset(0, 3),
             ),
           ],
         ),
@@ -512,29 +525,24 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
               width: 40,
               height: 40,
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
+                color: AppColors.primary.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Icon(Icons.widgets_outlined,
-                  color: AppColors.primary, size: 20),
+                  color: AppColors.primaryText, size: 20),
             ),
             const SizedBox(height: 12),
             Text(
               asset.name,
-              style: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.bold,
-                color: AppColors.textPrimary,
-                height: 1.2,
-              ),
+              style: AppTextStyles.headingSmall.copyWith(height: 1.2),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 4),
             Text(
               asset.type ?? asset.assetCategory ?? 'License',
-              style: const TextStyle(
-                  fontSize: 12, color: AppColors.textSecondary),
+              style: AppTextStyles.caption
+                  .copyWith(color: AppColors.textSecondary),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -542,19 +550,13 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
             const Divider(height: 16),
             Text(
               'RENEWAL',
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
-                color: AppColors.textCaption,
-              ),
+              style: AppTextStyles.sectionLabel.copyWith(fontSize: 10),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: 4),
             Text(
               renewLabel,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.bold,
+              style: AppTextStyles.bodySmall.copyWith(
+                fontWeight: FontWeight.w600,
                 color: AppColors.textPrimary,
               ),
             ),
@@ -571,15 +573,26 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Column(
         children: [
-          Icon(icon, size: 48, color: AppColors.textHint),
-          const SizedBox(height: 10),
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(icon, size: 30, color: AppColors.primaryText),
+          ),
+          const SizedBox(height: 12),
           Text(
             message,
-            style: const TextStyle(
-                fontSize: 14, color: AppColors.textSecondary),
+            textAlign: TextAlign.center,
+            style: AppTextStyles.bodyMedium.copyWith(
+                fontWeight: FontWeight.w500,
+                color: AppColors.textSecondary),
           ),
         ],
       ),
@@ -608,7 +621,7 @@ class _AssetsListingScreenState extends State<AssetsListingScreen> {
       case 'working':
         return (
           label: 'ACTIVE',
-          fg: AppColors.primaryDark,
+          fg: AppColors.primaryText,
           bg: AppColors.primary.withValues(alpha: 0.12),
         );
       case 'under maintenance':

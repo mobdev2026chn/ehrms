@@ -10,6 +10,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/customer_service.dart';
@@ -265,11 +267,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
+          style: _fieldLabelStyle,
         ),
         const SizedBox(height: 8),
         field,
@@ -277,25 +275,15 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     );
   }
 
-  /// Clean white input (no prefix icon), label sits above via [_buildLabeledField].
+  /// Shared style for the bold labels that sit above each field.
+  static final TextStyle _fieldLabelStyle =
+      AppTextStyles.label.copyWith(fontWeight: FontWeight.w600);
+
+  /// Clean input (no prefix icon), label sits above via [_buildLabeledField].
+  /// Borders / fill come from the app-wide InputDecorationTheme.
   InputDecoration _cleanInputDecoration(String hint) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-      filled: true,
-      fillColor: Colors.white,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: AppColors.primary, width: 2),
-      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
   }
@@ -580,17 +568,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text(
-          'New Task',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: const Text('New Task'),
         centerTitle: false,
-        elevation: 0,
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        surfaceTintColor: Colors.transparent,
         actions: const [ProfileAppBarActions()],
       ),
       body: Form(
@@ -609,6 +591,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             children: [
             //  _buildMomentumBanner(),
            //   const SizedBox(height: 20),
+              AppCard(
+                border: Border.all(color: const Color(0xFFECEEF1)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
               _buildLabeledField(
                 'Task Title',
                 TextFormField(
@@ -644,42 +631,32 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               const SizedBox(height: 16),
               // Required fields the admin set up (e.g. Priority Level).
               CustomFieldsForm(key: _customFieldsKey, category: 'task'),
-              const SizedBox(height: 8),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
               // Create Task button scrolls with the form rather than being
               // pinned to the bottom of the screen.
               SizedBox(
                 width: double.infinity,
+                height: 52,
                 child: ElevatedButton.icon(
                   onPressed: _submitting ? null : _submit,
                   icon: _submitting
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 20,
                           height: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color: Colors.white,
+                            color: AppColors.onPrimary,
                           ),
                         )
                       : const Icon(
                           Icons.task_alt_rounded,
-                          color: Colors.white,
-                          size: 22,
+                          size: 20,
                         ),
                   label: Text(
                     _submitting ? 'Creating...' : 'Create Task',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    elevation: 2,
                   ),
                 ),
               ),
@@ -735,11 +712,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       children: [
         Text(
           label,
-          style: TextStyle(
-            fontSize: 14,
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.w700,
-          ),
+          style: _fieldLabelStyle,
         ),
         const SizedBox(height: 8),
         InkWell(
@@ -759,19 +732,13 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           },
           borderRadius: BorderRadius.circular(12),
           child: InputDecorator(
-            decoration: InputDecoration(
+            decoration: const InputDecoration(
               prefixIcon: Icon(
-                Icons.calendar_today_rounded,
+                Icons.calendar_today_outlined,
                 size: 20,
-                color: AppColors.primary,
               ),
               labelText: 'Select date',
-              labelStyle: TextStyle(color: Colors.grey.shade600, fontSize: 13),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: Colors.grey.shade300),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
+              contentPadding: EdgeInsets.symmetric(
                 horizontal: 14,
                 vertical: 12,
               ),
@@ -780,9 +747,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               value == null
                   ? ''
                   : '${value.day.toString().padLeft(2, '0')}/${value.month.toString().padLeft(2, '0')}/${value.year}',
-              style: TextStyle(
-                fontSize: 14,
-                color: value == null ? Colors.grey.shade500 : Colors.black87,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: value == null ? AppColors.textCaption : AppColors.textPrimary,
               ),
             ),
           ),
@@ -853,11 +819,13 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: onTap,
-        child: Container(
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
-            color: selected ? AppColors.primary : Colors.transparent,
+            color: selected ? AppColors.surface : Colors.transparent,
             borderRadius: BorderRadius.circular(10),
+            boxShadow: selected ? kSoftCardShadow : null,
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -865,15 +833,18 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               Icon(
                 icon,
                 size: 18,
-                color: selected ? Colors.white : Colors.grey.shade700,
+                color: selected ? AppColors.primaryText : AppColors.textSecondary,
               ),
               const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: selected ? Colors.white : Colors.grey.shade700,
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.bodySmall.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: selected ? AppColors.textPrimary : AppColors.textSecondary,
+                  ),
                 ),
               ),
             ],
@@ -888,7 +859,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.grey.shade200,
+        color: AppColors.inputFill,
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(children: children),
@@ -906,21 +877,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       prefixIcon: Icon(prefixIcon, size: 20, color: prefixColor),
       suffixIcon: suffix,
       hintText: hint,
-      hintStyle: TextStyle(fontSize: 14, color: Colors.grey.shade500),
-      filled: true,
-      fillColor: Colors.white,
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: Colors.grey.shade300),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: AppColors.primary, width: 2),
-      ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
   }
@@ -931,11 +887,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       children: [
         Text(
           'Source',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
+          style: _fieldLabelStyle,
         ),
         const SizedBox(height: 8),
         _buildSourceModeToggle(),
@@ -977,28 +929,27 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   Widget _buildAutoSourceCard() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
       decoration: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.06),
+        color: AppColors.primary.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          Icon(Icons.gps_fixed_rounded, size: 20, color: AppColors.primary),
+          _iconTile(Icons.gps_fixed_rounded, AppColors.primaryText),
           const SizedBox(width: 12),
           Expanded(
             child: _loadingCurrentLocation
                 ? Text(
                     'Getting your location...',
-                    style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                    style: AppTextStyles.bodySmall,
                   )
                 : Text(
                     _currentLocationAddress.isEmpty
                         ? 'Current location (GPS)'
                         : _currentLocationAddress,
-                    style: TextStyle(
-                      fontSize: 13,
+                    style: AppTextStyles.bodySmall.copyWith(
                       color: AppColors.textPrimary,
                     ),
                     maxLines: 2,
@@ -1011,7 +962,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             icon: Icon(
               Icons.refresh_rounded,
               size: 20,
-              color: AppColors.primary,
+              color: AppColors.primaryText,
             ),
             onPressed: _loadingCurrentLocation
                 ? null
@@ -1029,23 +980,32 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       width: double.infinity,
       child: OutlinedButton.icon(
         onPressed: onPressed,
-        icon: Icon(Icons.map_rounded, size: 18, color: AppColors.primary),
+        icon: Icon(Icons.map_outlined, size: 18, color: AppColors.primaryText),
         label: Text(
           'Pick on map',
-          style: TextStyle(
-            fontSize: 13,
+          style: AppTextStyles.bodySmall.copyWith(
             fontWeight: FontWeight.w600,
-            color: AppColors.primary,
+            color: AppColors.primaryText,
           ),
         ),
         style: OutlinedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          side: BorderSide(color: AppColors.primary.withOpacity(0.5)),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          minimumSize: const Size.fromHeight(44),
+          side: BorderSide(color: AppColors.primary.withValues(alpha: 0.5), width: 1.2),
         ),
       ),
+    );
+  }
+
+  /// 40px tinted icon tile used on the read-only source / destination cards.
+  Widget _iconTile(IconData icon, Color color) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, size: 20, color: color),
     );
   }
 
@@ -1069,7 +1029,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           },
           decoration: _addressInputDecoration(
             prefixIcon: Icons.edit_location_alt_rounded,
-            prefixColor: AppColors.primary,
+            prefixColor: AppColors.primaryText,
             hint: 'Enter source address',
             suffix: IconButton(
               tooltip: 'Use my current location',
@@ -1082,7 +1042,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                   : Icon(
                       Icons.my_location_rounded,
                       size: 20,
-                      color: AppColors.primary,
+                      color: AppColors.primaryText,
                     ),
               onPressed: _loadingCurrentLocation
                   ? null
@@ -1126,11 +1086,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       children: [
         Text(
           'Destination',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
-          ),
+          style: _fieldLabelStyle,
         ),
         const SizedBox(height: 8),
         _buildDestinationModeToggle(),
@@ -1177,23 +1133,22 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     final isPlaceholder = c == null || addr.isEmpty;
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppColors.primary.withOpacity(0.06),
+        color: AppColors.primary.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary.withOpacity(0.3)),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
       ),
       child: Row(
         children: [
-          Icon(Icons.location_on_rounded, size: 20, color: Colors.pink.shade400),
+          _iconTile(Icons.location_on_rounded, AppColors.error),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               isPlaceholder ? placeholder : addr,
-              style: TextStyle(
-                fontSize: 13,
+              style: AppTextStyles.bodySmall.copyWith(
                 color: isPlaceholder
-                    ? Colors.grey.shade600
+                    ? AppColors.textSecondary
                     : AppColors.textPrimary,
               ),
               maxLines: 2,
@@ -1228,14 +1183,14 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           },
           decoration: _addressInputDecoration(
             prefixIcon: Icons.location_on_rounded,
-            prefixColor: Colors.pink.shade400,
+            prefixColor: AppColors.error,
             hint: 'Enter destination address',
             suffix: IconButton(
               tooltip: 'Use customer address',
               icon: Icon(
                 Icons.person_pin_circle_rounded,
                 size: 20,
-                color: AppColors.primary,
+                color: AppColors.primaryText,
               ),
               onPressed: _fillDestinationFromCustomer,
             ),
@@ -1256,11 +1211,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           children: [
             Text(
               'Customer',
-              style: TextStyle(
-                fontSize: 14,
-                color: AppColors.textPrimary,
-                fontWeight: FontWeight.w700,
-              ),
+              style: _fieldLabelStyle,
             ),
             if (_allCustomers.isNotEmpty) ...[
               const SizedBox(width: 8),
@@ -1270,9 +1221,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                   textAlign: TextAlign.end,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.grey.shade600,
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
                   ),
                 ),
               ),
@@ -1284,10 +1234,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           focusNode: _customerFocusNode,
           controller: _customerSearchController,
           decoration: InputDecoration(
-            prefixIcon: Icon(
-              Icons.person_rounded,
-              size: 22,
-              color: AppColors.primary,
+            prefixIcon: const Icon(
+              Icons.person_outline_rounded,
+              size: 20,
             ),
             suffixIcon: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1295,6 +1244,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 if (_customerSearchController.text.isNotEmpty)
                   IconButton(
                     icon: const Icon(Icons.clear_rounded, size: 18),
+                    tooltip: 'Clear',
                     onPressed: () {
                       _customerSearchController.clear();
                       setState(() {
@@ -1310,8 +1260,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                         ? Icons.arrow_drop_up_rounded
                         : Icons.arrow_drop_down_rounded,
                     size: 28,
-                    color: AppColors.primary,
+                    color: AppColors.textSecondary,
                   ),
+                  tooltip: 'Show customers',
                   onPressed: () {
                     setState(() {
                       _showCustomerDropdown = !_showCustomerDropdown;
@@ -1324,21 +1275,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               ],
             ),
             hintText: 'Type custom customer name or select from list',
-            hintStyle: TextStyle(fontSize: 13, color: Colors.grey.shade500),
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: Colors.grey.shade300),
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(12),
-              borderSide: BorderSide(color: AppColors.primary, width: 2),
-            ),
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 14,
               vertical: 14,
@@ -1348,20 +1284,15 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           onChanged: (_) => setState(() => _showCustomerDropdown = true),
         ),
         if (_showCustomerDropdown) ...[
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Container(
             constraints: const BoxConstraints(maxHeight: 220),
+            clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade300),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 8,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              border: Border.all(color: const Color(0xFFE2E5EA)),
+              boxShadow: kSoftCardShadow,
             ),
             child: _loadingCustomers
                 ? const Padding(
@@ -1373,14 +1304,13 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                     padding: const EdgeInsets.all(16),
                     child: Row(
                       children: [
-                        Icon(Icons.info_outline, size: 18, color: Colors.grey.shade600),
+                        const Icon(Icons.info_outline_rounded, size: 18, color: AppColors.textSecondary),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'Will use typed customer name: "${_customerSearchController.text.trim()}"',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700,
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.textSecondary,
                             ),
                           ),
                         ),
@@ -1396,24 +1326,23 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                       return ListTile(
                         dense: true,
                         selected: isSelected,
-                        selectedTileColor: AppColors.primary.withOpacity(0.08),
+                        selectedTileColor: AppColors.primary.withValues(alpha: 0.08),
+                        selectedColor: AppColors.textPrimary,
                         leading: Icon(
-                          isSelected ? Icons.check_circle_rounded : Icons.business_rounded,
-                          color: isSelected ? AppColors.primary : Colors.grey.shade500,
+                          isSelected ? Icons.check_circle_rounded : Icons.business_outlined,
+                          color: isSelected ? AppColors.primaryText : AppColors.textCaption,
                           size: 20,
                         ),
                         title: Text(
                           c.customerName,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
                           ),
                         ),
                         subtitle: Text(
                           [c.address, c.city].where((s) => s.isNotEmpty).join(', '),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey.shade600,
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

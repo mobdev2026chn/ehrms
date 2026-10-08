@@ -224,20 +224,7 @@ class _SalaryStructureDetailScreenState
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        backgroundColor: AppColors.background,
-        surfaceTintColor: Colors.transparent,
-        elevation: 0,
-        centerTitle: false,
-        titleSpacing: 0,
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-        title: const Text(
-          'Salary Structure',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 18,
-            color: AppColors.textPrimary,
-          ),
-        ),
+        title: const Text('Salary Structure'),
         actions: const [ProfileAppBarActions()],
       ),
       body: AnimatedSwitcher(
@@ -252,9 +239,11 @@ class _SalaryStructureDetailScreenState
                 ? const SizedBox.shrink(key: ValueKey('salary-error'))
                 : _salaryStructure == null
                     ? const Center(
-                        child: Text('No salary structure data available'))
+                        child: Text('No salary structure data available',
+                            style: AppTextStyles.bodySmall))
                     : RefreshIndicator(
                         onRefresh: _fetchAndCalculateSalary,
+                        color: AppColors.primary,
                         child: _buildContent(currencyFormat),
                       ),
       ),
@@ -424,17 +413,17 @@ class _SalaryStructureDetailScreenState
         children: [
           // ── Hero: gross monthly salary ──────────────────────────────────
           _buildHeroCard(heroGross, currencyFormat),
-          const SizedBox(height: 22),
+          const SizedBox(height: 24),
 
           // ── Earnings ────────────────────────────────────────────────────
           _sectionHeader('Earnings', trailing: 'COMPONENTS'),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _buildComponentCard(shownEarnings, currencyFormat),
-          const SizedBox(height: 22),
+          const SizedBox(height: 24),
 
           // ── Deductions ──────────────────────────────────────────────────
           _sectionHeader('Deductions'),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           _buildComponentCard(
             shownDeductions,
             currencyFormat,
@@ -442,23 +431,23 @@ class _SalaryStructureDetailScreenState
             totalLabel: 'Total Deductions',
             totalAmount: shownDeductionsTotal,
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 24),
 
           // ── Benefits & Allowances (yearly) ──────────────────────────────
           if (bs == null || shownBenefits.isNotEmpty) ...[
             _sectionHeader('Benefits & Allowances', trailing: 'YEARLY'),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             _buildComponentCard(shownBenefits, currencyFormat),
           ],
-          const SizedBox(height: 22),
+          const SizedBox(height: 24),
 
           // ── Net take home (dark hero) ───────────────────────────────────
           _buildNetSalaryCard(netTakeHome, currencyFormat),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
           // ── Total CTC ───────────────────────────────────────────────────
           _buildCTCCard(totalCtc, currencyFormat),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
 
           // ── Footer note ─────────────────────────────────────────────────
           _buildInfoNote(),
@@ -470,11 +459,13 @@ class _SalaryStructureDetailScreenState
   Widget _buildHeroCard(double gross, NumberFormat format) {
     return AppCard(
       padding: const EdgeInsets.all(20),
+      radius: 20,
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text('GROSS MONTHLY SALARY', style: AppTextStyles.sectionLabel),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
@@ -482,21 +473,22 @@ class _SalaryStructureDetailScreenState
               format.format(gross),
               style: TextStyle(
                 fontSize: 32,
-                fontWeight: FontWeight.bold,
-                color: AppColors.primary,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.5,
+                color: AppColors.textPrimary,
                 height: 1.05,
               ),
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           Row(
             children: [
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: AppColors.successBg,
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -533,7 +525,7 @@ class _SalaryStructureDetailScreenState
 
   Widget _sectionHeader(String title, {String? trailing}) {
     return Padding(
-      padding: const EdgeInsets.only(left: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -541,11 +533,8 @@ class _SalaryStructureDetailScreenState
           if (trailing != null)
             Text(
               trailing,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.6,
-                color: AppColors.primary,
+              style: AppTextStyles.sectionLabel.copyWith(
+                color: AppColors.primaryText,
               ),
             ),
         ],
@@ -562,6 +551,7 @@ class _SalaryStructureDetailScreenState
   }) {
     return AppCard(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Column(
         children: [
           for (int i = 0; i < items.length; i++)
@@ -573,7 +563,10 @@ class _SalaryStructureDetailScreenState
             ),
           if (totalLabel != null && totalAmount != null)
             Container(
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
+              ),
               child: Row(
                 children: [
                   Expanded(
@@ -587,8 +580,8 @@ class _SalaryStructureDetailScreenState
                         ? '−${format.format(totalAmount)}'
                         : format.format(totalAmount),
                     style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
                       color: isDeduction
                           ? AppColors.error
                           : AppColors.textPrimary,
@@ -613,17 +606,17 @@ class _SalaryStructureDetailScreenState
       decoration: BoxDecoration(
         border: isLast
             ? null
-            : Border(
+            : const Border(
                 bottom: BorderSide(
-                  color: AppColors.divider.withValues(alpha: 0.7),
+                  color: Color(0xFFECEEF1),
                 ),
               ),
       ),
       child: Row(
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 40,
+            height: 40,
             decoration: BoxDecoration(
               color: isDeduction
                   ? AppColors.errorBg
@@ -632,11 +625,11 @@ class _SalaryStructureDetailScreenState
             ),
             child: Icon(
               item.icon,
-              size: 22,
-              color: isDeduction ? AppColors.error : AppColors.primaryDark,
+              size: 20,
+              color: isDeduction ? AppColors.error : AppColors.primaryText,
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -676,8 +669,12 @@ class _SalaryStructureDetailScreenState
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: AppColors.surfaceDark,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [AppColors.surfaceDark, AppColors.ink],
+        ),
       ),
       child: Row(
         children: [
@@ -688,21 +685,22 @@ class _SalaryStructureDetailScreenState
                 Text(
                   'NET TAKE HOME',
                   style: TextStyle(
-                    fontSize: 10,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                     color: AppColors.primary,
                     letterSpacing: 1.0,
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 8),
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   alignment: Alignment.centerLeft,
                   child: Text(
                     format.format(monthlyNet),
                     style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 28,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
                       color: Colors.white,
                     ),
                   ),
@@ -711,8 +709,8 @@ class _SalaryStructureDetailScreenState
                 Text(
                   'Payable per month after all deductions',
                   style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white.withValues(alpha: 0.55),
+                    fontSize: 12,
+                    color: Colors.white.withValues(alpha: 0.6),
                   ),
                 ),
               ],
@@ -720,13 +718,13 @@ class _SalaryStructureDetailScreenState
           ),
           const SizedBox(width: 12),
           Container(
-            width: 40,
-            height: 40,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               color: AppColors.primary,
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.check_rounded, color: Colors.white, size: 22),
+            child: Icon(Icons.check_rounded, color: AppColors.onPrimary, size: 22),
           ),
         ],
       ),
@@ -736,7 +734,7 @@ class _SalaryStructureDetailScreenState
   Widget _buildCTCCard(double ctc, NumberFormat format) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.primary.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(16),
@@ -748,13 +746,13 @@ class _SalaryStructureDetailScreenState
             width: 44,
             height: 44,
             decoration: BoxDecoration(
-              color: AppColors.primary.withValues(alpha: 0.18),
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(Icons.savings_outlined,
-                size: 22, color: AppColors.primaryDark),
+                size: 22, color: AppColors.primaryText),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -783,8 +781,8 @@ class _SalaryStructureDetailScreenState
                 format.format(ctc),
                 style: TextStyle(
                   fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  color: AppColors.primaryDark,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.primaryText,
                 ),
               ),
             ),
@@ -797,11 +795,11 @@ class _SalaryStructureDetailScreenState
   Widget _buildInfoNote() {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.divider),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

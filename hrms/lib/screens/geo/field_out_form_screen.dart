@@ -9,6 +9,8 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
+import 'package:hrms/widgets/app_card.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
@@ -202,39 +204,21 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
   InputDecoration _decoration(String hint) => InputDecoration(
         hintText: hint,
         isDense: true,
-        filled: true,
-        fillColor: const Color(0xFFF8FAFC),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: BorderSide(color: AppColors.primary, width: 1.4),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFFDC2626)),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(10),
-          borderSide: const BorderSide(color: Color(0xFFDC2626), width: 1.4),
-        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
       );
 
   String? _required(String? v) => (v == null || v.trim().isEmpty) ? 'Required' : null;
 
   Widget _label(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.only(bottom: 8),
         child: Text.rich(
           TextSpan(
             text: text,
             children: const [
-              TextSpan(text: ' *', style: TextStyle(color: Color(0xFFDC2626))),
+              TextSpan(text: ' *', style: TextStyle(color: AppColors.error)),
             ],
           ),
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
+          style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
         ),
       );
 
@@ -263,6 +247,7 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
         decoration: _decoration('Fetching location...').copyWith(
           suffixIcon: IconButton(
             icon: const Icon(Icons.my_location_rounded, size: 20),
+            tooltip: 'Refresh location',
             onPressed: () => _fillGps(f.name),
           ),
         ),
@@ -290,9 +275,12 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
         height: url != null ? 180 : 110,
         width: double.infinity,
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
+          color: AppColors.background,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: url != null ? AppColors.primary : const Color(0xFFCBD5E1)),
+          border: Border.all(
+            color: url != null ? AppColors.primary : const Color(0xFFE2E5EA),
+            width: 1.2,
+          ),
         ),
         clipBehavior: Clip.antiAlias,
         child: busy
@@ -309,26 +297,34 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
                           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                           decoration: BoxDecoration(
                             color: Colors.black.withValues(alpha: 0.6),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(999),
                           ),
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(Icons.camera_alt_rounded, size: 14, color: Colors.white),
                               SizedBox(width: 4),
-                              Text('Retake', style: TextStyle(color: Colors.white, fontSize: 12)),
+                              Text('Retake', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
                             ],
                           ),
                         ),
                       ),
                     ],
                   )
-                : const Column(
+                : Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.photo_camera_outlined, color: Color(0xFF64748B)),
-                      SizedBox(height: 6),
-                      Text('Tap to take a photo', style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B))),
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(Icons.photo_camera_outlined, size: 20, color: AppColors.primaryText),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text('Tap to take a photo', style: AppTextStyles.bodySmall),
                     ],
                   ),
       ),
@@ -352,7 +348,7 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
                 keyboardType: TextInputType.emailAddress,
                 decoration: _decoration('customer@email.com').copyWith(
                   suffixIcon: verified
-                      ? const Icon(Icons.verified_rounded, color: Color(0xFF16A34A), size: 20)
+                      ? const Icon(Icons.verified_rounded, color: AppColors.success, size: 20)
                       : null,
                 ),
                 onChanged: (_) => setState(() {}),
@@ -361,13 +357,12 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
             ),
             const SizedBox(width: 8),
             SizedBox(
-              height: 46,
+              height: 48,
               child: OutlinedButton(
                 onPressed: (sending || verified) ? null : () => _sendOtp(f),
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.primary,
-                  side: BorderSide(color: AppColors.primary),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  foregroundColor: AppColors.primaryText,
+                  side: BorderSide(color: AppColors.primary, width: 1.2),
                 ),
                 child: sending
                     ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
@@ -393,19 +388,14 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
               ),
               const SizedBox(width: 8),
               SizedBox(
-                height: 46,
+                height: 48,
                 child: ElevatedButton(
                   onPressed: verifying ? null : () => _verifyOtp(f),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  ),
                   child: verifying
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 16,
                           height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
                         )
                       : const Text('Verify'),
                 ),
@@ -452,13 +442,9 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: Text(widget.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: Text(widget.title),
       ),
       body: Form(
         key: _formKey,
@@ -468,17 +454,12 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
             if (widget.subtitle != null && widget.subtitle!.isNotEmpty) ...[
               Text(
                 widget.subtitle!,
-                style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                style: AppTextStyles.bodySmall,
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
             ],
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
+            AppCard(
+              border: Border.all(color: const Color(0xFFECEEF1)),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -493,19 +474,20 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-          child: SizedBox(
-            height: 50,
-            child: ElevatedButton(
-              onPressed: (_submitting || _uploading.isNotEmpty) ? null : _submit,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
+        ),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              height: 52,
+              child: ElevatedButton(
+                onPressed: (_submitting || _uploading.isNotEmpty) ? null : _submit,
+                child: const Text('Submit & Field Out'),
               ),
-              child: const Text('Submit & Field Out', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
             ),
           ),
         ),

@@ -7,8 +7,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import 'package:geolocator/geolocator.dart' as gl;
+import 'package:hrms/services/api_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'location_service.dart';
@@ -17,23 +20,38 @@ enum TrackingIssue {
   gpsOff(
     'GPS is turned off',
     'Turn on Location (GPS) so your route can be tracked.',
+    'Location is turned off. Your route is not being tracked. Please turn on G P S.',
+    critical: true,
   ),
   locationNotAlways(
     'Location is not "Allow all the time"',
     'Set ektaHr location permission to "Allow all the time".',
+    'Location permission is limited. Please allow EktaHR to use location all the time.',
+    critical: true,
   ),
   preciseOff(
     'Precise location is off',
     'Turn on "Use precise location" for ektaHr.',
+    'Precise location is off. Please turn it on for EktaHR.',
+    critical: false,
   ),
   batteryRestricted(
     'Battery saver is limiting ektaHr',
     'Set ektaHr battery usage to "Unrestricted" so tracking keeps running.',
+    'Battery saver is stopping tracking. Please set EktaHR battery usage to unrestricted.',
+    critical: true,
   );
 
-  const TrackingIssue(this.title, this.fix);
+  const TrackingIssue(this.title, this.fix, this.spoken, {required this.critical});
   final String title;
   final String fix;
+
+  /// Short line read aloud (text-to-speech).
+  final String spoken;
+
+  /// High-priority issues (cause location to stop) get voice + strong vibration;
+  /// a minor one gets the notification only.
+  final bool critical;
 }
 
 class TrackingHealthService {
@@ -105,6 +123,11 @@ class TrackingHealthService {
       final due = _lastAlertAt == null || DateTime.now().difference(_lastAlertAt!) >= _realertEvery;
       if (hasNew || due) {
         await _notify(found);
+        // Priority: a critical issue (location actually stopped) also vibrates and speaks;
+        // a minor one gets just the notification.
+        unawaited(_alertVoiceAndVibrate(found));
+        // Tell the admin too (backend throttles to one alert per ~20 min per employee).
+        unawaited(_reportToAdmin(found.first));
         _lastAlerted = found.toSet();
         _lastAlertAt = DateTime.now();
       }
@@ -126,6 +149,55 @@ class TrackingHealthService {
       case TrackingIssue.locationNotAlways:
       case TrackingIssue.preciseOff:
         await openAppSettings();
+    }
+  }
+
+  static FlutterTts? _tts;
+
+  /// On a critical issue: strong vibration + a spoken voice alert, so the employee notices
+  /// even with the phone in a pocket. The notification covers the non-critical case already.
+  static Future<void> _alertVoiceAndVibrate(List<TrackingIssue> found) async {
+    if (kIsWeb) return;
+    final critical = found.firstWhere((i) => i.critical, orElse: () => found.first);
+    if (!critical.critical) return;
+
+    // Vibration: a few strong buzzes (no extra plugin needed).
+    try {
+      for (var i = 0; i < 3; i++) {
+        await HapticFeedback.heavyImpact();
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+    } catch (_) {}
+
+    // Voice: speak the fix once.
+    try {
+      final tts = _tts ??= FlutterTts();
+      await tts.setLanguage('en-US');
+      await tts.setSpeechRate(0.45);
+      await tts.setVolume(1.0);
+      await tts.stop();
+      await tts.speak(critical.spoken);
+    } catch (_) {
+      // TTS not available on this device; the notification + vibration still fired.
+    }
+  }
+
+  /// Notifies the employee's admin that tracking is interrupted. The server records an
+  /// admin notification and throttles repeats, so this is safe to call on every alert.
+  static Future<void> _reportToAdmin(TrackingIssue issue) async {
+    final reason = switch (issue) {
+      TrackingIssue.gpsOff => 'gps_off',
+      TrackingIssue.locationNotAlways => 'permission',
+      TrackingIssue.preciseOff => 'permission',
+      TrackingIssue.batteryRestricted => 'service_stopped',
+    };
+    try {
+      await ApiClient().dio.post<dynamic>(
+        '/staff/geo-task/tracking-alert',
+        data: {'reason': reason},
+      );
+    } catch (_) {
+      // Best-effort: the employee is already warned on their phone.
     }
   }
 
@@ -170,6 +242,10 @@ class TrackingHealthService {
             styleInformation: BigTextStyleInformation(body),
             ongoing: true,
             autoCancel: false,
+            // Priority alert: ring + buzz, not a silent notification.
+            playSound: true,
+            enableVibration: true,
+            enableLights: true,
           ),
           iOS: const DarwinNotificationDetails(presentAlert: true, presentSound: true),
         ),

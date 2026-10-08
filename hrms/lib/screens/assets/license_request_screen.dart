@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import 'license_request_success_screen.dart';
 
 /// Figma "License Request" form. Lets an employee request a new software
@@ -79,15 +81,11 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Text(
-          'License Request',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        centerTitle: true,
+        title: const Text('License Request'),
       ),
       body: Form(
         key: _formKey,
@@ -97,43 +95,30 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildHeaderBanner(),
-              const SizedBox(height: 20),
+              const SizedBox(height: 16),
               _buildFormCard(),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
+                height: 52,
                 child: ElevatedButton(
                   onPressed: _submitting ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                  ),
                   child: _submitting
-                      ? const SizedBox(
+                      ? SizedBox(
                           width: 22,
                           height: 22,
                           child: CircularProgressIndicator(
                             strokeWidth: 2.5,
-                            valueColor:
-                                AlwaysStoppedAnimation<Color>(Colors.white),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                                AppColors.textSecondary),
                           ),
                         )
                       : const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(
-                              'Submit Request',
-                              style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold),
-                            ),
+                            Text('Submit Request'),
                             SizedBox(width: 8),
-                            Icon(Icons.send, size: 18),
+                            Icon(Icons.send_rounded, size: 18),
                           ],
                         ),
                 ),
@@ -155,7 +140,7 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
       ),
       child: Stack(
         children: [
@@ -165,27 +150,24 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
             child: Icon(
               Icons.workspace_premium_outlined,
               size: 80,
-              color: Colors.white.withValues(alpha: 0.18),
+              color: AppColors.onPrimary.withValues(alpha: 0.14),
             ),
           ),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'Empower your\nproductivity.',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+                style: AppTextStyles.headingLarge.copyWith(
+                  color: AppColors.onPrimary,
                   height: 1.2,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
                 'Submit your software needs below.',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.9),
-                  fontSize: 14,
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.onPrimary.withValues(alpha: 0.85),
                 ),
               ),
             ],
@@ -196,19 +178,9 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
   }
 
   Widget _buildFormCard() {
-    return Container(
+    return AppCard(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -222,8 +194,7 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
                 : null,
             decoration: _inputDecoration(
               hint: 'e.g. Adobe Creative Cloud',
-              suffixIcon: Icon(Icons.apps,
-                  color: AppColors.textCaption, size: 20),
+              suffixIcon: const Icon(Icons.apps_rounded, size: 20),
             ),
           ),
           const SizedBox(height: 20),
@@ -232,7 +203,8 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
           DropdownButtonFormField<String>(
             initialValue: _licenseType,
             isExpanded: true,
-            icon: const Icon(Icons.keyboard_arrow_down),
+            icon: const Icon(Icons.keyboard_arrow_down_rounded),
+            borderRadius: BorderRadius.circular(12),
             decoration: _inputDecoration(hint: ''),
             hint: const Text('Select frequency',
                 style: TextStyle(color: AppColors.textCaption)),
@@ -263,11 +235,12 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
             children: [
               Expanded(
                 child: _infoChip(
-                  icon: Icons.info_outline,
+                  icon: Icons.info_outline_rounded,
                   text: 'Requests are reviewed within 48 hours.',
                   bg: AppColors.primary.withValues(alpha: 0.1),
-                  fg: AppColors.primaryDark,
+                  fg: AppColors.primaryText,
                   iconBg: AppColors.primary,
+                  iconFg: AppColors.onPrimary,
                 ),
               ),
               const SizedBox(width: 12),
@@ -289,35 +262,17 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
 
   Widget _label(String text) => Text(
         text,
-        style: const TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 0.5,
-          color: AppColors.textPrimary,
+        style: AppTextStyles.sectionLabel.copyWith(
+          color: AppColors.textSecondary,
         ),
       );
 
+  // Field chrome (fill, radius, borders, focus) comes from the app-wide
+  // InputDecorationTheme.
   InputDecoration _inputDecoration({required String hint, Widget? suffixIcon}) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: const TextStyle(color: AppColors.textCaption, fontSize: 14),
-      filled: true,
-      fillColor: AppColors.inputFill,
       suffixIcon: suffixIcon,
-      contentPadding:
-          const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide.none,
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide.none,
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(10),
-        borderSide: BorderSide(color: AppColors.primary, width: 1.5),
-      ),
     );
   }
 
@@ -327,6 +282,7 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
     required Color bg,
     required Color fg,
     required Color iconBg,
+    Color iconFg = Colors.white,
   }) {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -338,15 +294,16 @@ class _LicenseRequestScreenState extends State<LicenseRequestScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 26,
-            height: 26,
+            width: 28,
+            height: 28,
             decoration: BoxDecoration(shape: BoxShape.circle, color: iconBg),
-            child: Icon(icon, size: 15, color: Colors.white),
+            child: Icon(icon, size: 16, color: iconFg),
           ),
           const SizedBox(height: 8),
           Text(
             text,
-            style: TextStyle(fontSize: 12, color: fg, height: 1.3),
+            style: AppTextStyles.caption
+                .copyWith(color: fg, height: 1.35, fontWeight: FontWeight.w500),
           ),
         ],
       ),

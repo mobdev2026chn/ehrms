@@ -6,6 +6,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/interaction_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
@@ -67,6 +68,7 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: const MenuIconButton(),
@@ -75,13 +77,12 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
             child: TextField(
               controller: _controller,
               decoration: const InputDecoration(
                 hintText: 'Search colleagues',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.search_rounded, size: 20),
               ),
               onChanged: _onQueryChanged,
             ),
@@ -89,6 +90,7 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
           if (_loading) const LinearProgressIndicator(),
           Expanded(
             child: ListView.builder(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               itemCount: _users.length,
               itemBuilder: (context, i) {
                 final u = _users[i];
@@ -97,19 +99,33 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
                 final role = u['role']?.toString() ?? '';
                 final avatar = u['avatar']?.toString();
                 final url = avatar != null && avatar.startsWith('http') ? avatar : null;
-                return ListTile(
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   leading: CircleAvatar(
-                    backgroundColor: AppColors.primary.withOpacity(0.2),
+                    radius: 22,
+                    backgroundColor: AppColors.primary.withValues(alpha: 0.14),
                     backgroundImage: url != null ? CachedNetworkImageProvider(url) : null,
                     child: url == null
                         ? Text(
                             name.isNotEmpty ? name[0].toUpperCase() : '?',
-                            style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold),
+                            style: TextStyle(color: AppColors.primaryText, fontWeight: FontWeight.w600),
                           )
                         : null,
                   ),
-                  title: Text(name),
-                  subtitle: Text(role, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  title: Text(
+                    name,
+                    style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
+                  ),
+                  subtitle: Text(
+                    role,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: AppTextStyles.bodySmall,
+                  ),
+                  trailing: const Icon(Icons.chevron_right_rounded, color: AppColors.textCaption),
                   onTap: id.isEmpty
                       ? null
                       : () {
@@ -127,6 +143,7 @@ class _InteractionNewChatScreenState extends State<InteractionNewChatScreen> {
                             ),
                           );
                         },
+                  ),
                 );
               },
             ),

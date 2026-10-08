@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/animations.dart';
 import '../../services/asset_service.dart';
@@ -191,26 +192,22 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colorScheme.surfaceContainerHighest,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text(
-          widget.title,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22),
-        ),
-        elevation: 0,
-        centerTitle: true,
+        title: Text(widget.title),
         actions: [
           IconButton(
             icon: Icon(
               _showFilterCard ? Icons.filter_alt : Icons.filter_alt_outlined,
-              color:
-                  _showFilterCard ? colorScheme.primary : colorScheme.onSurface,
+              color: _showFilterCard
+                  ? AppColors.primaryText
+                  : AppColors.textPrimary,
             ),
             onPressed: () =>
                 setState(() => _showFilterCard = !_showFilterCard),
@@ -222,9 +219,15 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
         children: [
           // Status filter tabs
           Container(
+            width: double.infinity,
             padding:
-                const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-            color: colorScheme.surface,
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(
+                bottom: BorderSide(color: Color(0xFFECEEF1)),
+              ),
+            ),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -233,17 +236,20 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                   final count = _getStatusCount(status);
                   return GestureDetector(
                     onTap: () => _onStatusChanged(status),
-                    child: Container(
-                      margin: const EdgeInsets.only(right: 24),
-                      padding: const EdgeInsets.symmetric(vertical: 8),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
-                        border: Border(
-                          bottom: BorderSide(
-                            color: isSelected
-                                ? AppColors.primary
-                                : Colors.transparent,
-                            width: 2,
-                          ),
+                        color: isSelected
+                            ? AppColors.primary
+                            : AppColors.surface,
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: isSelected
+                              ? AppColors.primary
+                              : const Color(0xFFE2E5EA),
                         ),
                       ),
                       child: Text(
@@ -252,10 +258,10 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                           fontSize: 13,
                           fontWeight: isSelected
                               ? FontWeight.w600
-                              : FontWeight.normal,
+                              : FontWeight.w500,
                           color: isSelected
-                              ? colorScheme.primary
-                              : colorScheme.onSurface,
+                              ? AppColors.onPrimary
+                              : AppColors.textSecondary,
                         ),
                       ),
                     ),
@@ -264,67 +270,48 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           if (_showFilterCard) ...[
             Container(
-              margin: const EdgeInsets.symmetric(horizontal: 18),
+              margin: const EdgeInsets.symmetric(horizontal: 16),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: colorScheme.surface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: colorScheme.outline),
-                boxShadow: [
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFECEEF1)),
+                boxShadow: const [
                   BoxShadow(
-                    color: colorScheme.shadow.withValues(alpha: 0.08),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+                    color: Color(0x0F000000),
+                    blurRadius: 10,
+                    offset: Offset(0, 3),
                   ),
                 ],
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const SizedBox(height: 4),
                   Row(
                     children: [
                       Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceContainerHighest,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: colorScheme.outline),
-                          ),
-                          child: TextField(
-                            controller: _searchController,
-                            decoration: InputDecoration(
-                              hintText: 'Search by name, type, category...',
-                              hintStyle: TextStyle(
-                                  color: colorScheme.onSurfaceVariant,
-                                  fontSize: 13),
-                              prefixIcon: Icon(Icons.search,
-                                  color: colorScheme.onSurfaceVariant,
-                                  size: 20),
-                              border: InputBorder.none,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  vertical: 8, horizontal: 4),
-                              isDense: true,
-                            ),
+                        child: TextField(
+                          controller: _searchController,
+                          style: AppTextStyles.bodyMedium,
+                          decoration: const InputDecoration(
+                            hintText: 'Search by name, type, category...',
+                            prefixIcon: Icon(Icons.search_rounded, size: 20),
+                            isDense: true,
                           ),
                         ),
                       ),
                       const SizedBox(width: 8),
                       IconButton(
-                        icon: const Icon(Icons.refresh, size: 20),
+                        icon: const Icon(Icons.refresh_rounded, size: 22),
                         onPressed: () {
                           _fetchFilters(forceRefresh: true);
                           _fetchAssets(refresh: true);
                         },
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
                         tooltip: 'Refresh',
-                        color: AppColors.primary,
+                        color: AppColors.primaryText,
                       ),
                     ],
                   ),
@@ -336,9 +323,10 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                           padding:
                               const EdgeInsets.symmetric(horizontal: 12),
                           decoration: BoxDecoration(
+                            color: const Color(0xFFF7F8FA),
                             border:
-                                Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
+                                Border.all(color: const Color(0xFFE2E5EA)),
+                            borderRadius: BorderRadius.circular(12),
                           ),
                           child: DropdownButtonHideUnderline(
                             child: DropdownButton<String>(
@@ -405,15 +393,23 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                                     mainAxisAlignment:
                                         MainAxisAlignment.center,
                                     children: [
-                                      Icon(Icons.inventory_2_outlined,
-                                          size: 64,
-                                          color: AppColors.textSecondary),
+                                      Container(
+                                        width: 64,
+                                        height: 64,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary
+                                              .withValues(alpha: 0.12),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                            Icons.inventory_2_outlined,
+                                            size: 30,
+                                            color: AppColors.primaryText),
+                                      ),
                                       const SizedBox(height: 16),
-                                      Text(
+                                      const Text(
                                         'No assets assigned to you.',
-                                        style: TextStyle(
-                                            fontSize: 16,
-                                            color: AppColors.textSecondary),
+                                        style: AppTextStyles.headingSmall,
                                       ),
                                     ],
                                   ),
@@ -468,41 +464,43 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
   }
 
   Widget _buildAssetCard(Asset asset) {
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: () => _viewAssetDetails(asset),
       borderRadius: BorderRadius.circular(16),
       child: Container(
         decoration: BoxDecoration(
-          color: colorScheme.surface,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
+          border: Border.all(color: const Color(0xFFECEEF1)),
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Color(0x0F000000),
               blurRadius: 10,
-              offset: const Offset(0, 3),
+              offset: Offset(0, 3),
             ),
           ],
         ),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                padding: const EdgeInsets.all(12),
+                width: 48,
+                height: 48,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withValues(alpha: 0.1),
+                  color: AppColors.primary.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   asset.isSoftware
                       ? Icons.apps_outlined
                       : Icons.inventory_2_outlined,
-                  color: AppColors.primary,
-                  size: 32,
+                  color: AppColors.primaryText,
+                  size: 24,
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -513,11 +511,7 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                         Expanded(
                           child: Text(
                             asset.name,
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1A1A1A),
-                            ),
+                            style: AppTextStyles.headingSmall,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -525,16 +519,16 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                         const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
+                              horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
                             color: _getStatusColor(asset.status)
-                                .withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(12),
+                                .withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
                             asset.status,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 12,
                               fontWeight: FontWeight.w600,
                               color: _getStatusColor(asset.status),
                             ),
@@ -552,7 +546,7 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                         asset.serialNumber!.isNotEmpty) ...[
                       const SizedBox(height: 4),
                       _buildCardDetailRow(
-                          Icons.qr_code, 'Serial', asset.serialNumber!),
+                          Icons.qr_code_rounded, 'Serial', asset.serialNumber!),
                     ],
                     if (asset.location != null &&
                         asset.location!.isNotEmpty) ...[
@@ -571,20 +565,21 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
   }
 
   Widget _buildCardDetailRow(IconData icon, String label, String value) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Row(
       children: [
-        Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+        Icon(icon, size: 14, color: AppColors.textCaption),
         const SizedBox(width: 6),
         Expanded(
           child: RichText(
             text: TextSpan(
-              style: TextStyle(
-                  fontSize: 12, color: colorScheme.onSurfaceVariant),
+              style: AppTextStyles.caption
+                  .copyWith(color: AppColors.textSecondary),
               children: [
                 TextSpan(
                   text: '$label: ',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textCaption),
                 ),
                 TextSpan(
                   text: value,
@@ -599,24 +594,25 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
   }
 
   Widget _buildPaginationControls() {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+      margin: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: colorScheme.outline),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           IconButton(
-            icon: const Icon(Icons.chevron_left),
+            icon: const Icon(Icons.chevron_left_rounded),
+            tooltip: 'Previous page',
             onPressed:
                 _page > 1 ? () => _fetchAssets(page: _page - 1) : null,
             color: _page > 1
-                ? colorScheme.primary
-                : colorScheme.onSurfaceVariant,
+                ? AppColors.primaryText
+                : AppColors.textCaption,
           ),
           const SizedBox(width: 8),
           Flexible(
@@ -633,28 +629,29 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
                   onTap: () => _fetchAssets(page: pageNum),
                   child: Container(
                     margin: const EdgeInsets.symmetric(horizontal: 4),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 8),
+                    width: 36,
+                    height: 36,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: isCurrentPage
-                          ? colorScheme.primary
+                          ? AppColors.primary
                           : Colors.transparent,
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(10),
                       border: Border.all(
                         color: isCurrentPage
-                            ? colorScheme.primary
-                            : colorScheme.outline,
+                            ? AppColors.primary
+                            : const Color(0xFFE2E5EA),
                       ),
                     ),
                     child: Text(
                       '$pageNum',
                       style: TextStyle(
                         color: isCurrentPage
-                            ? colorScheme.onPrimary
-                            : colorScheme.onSurface,
+                            ? AppColors.onPrimary
+                            : AppColors.textPrimary,
                         fontWeight: isCurrentPage
-                            ? FontWeight.bold
-                            : FontWeight.normal,
+                            ? FontWeight.w600
+                            : FontWeight.w500,
                         fontSize: 14,
                       ),
                     ),
@@ -667,13 +664,14 @@ class _AssetsAllListScreenState extends State<AssetsAllListScreen> {
           ),
           const SizedBox(width: 8),
           IconButton(
-            icon: const Icon(Icons.chevron_right),
+            icon: const Icon(Icons.chevron_right_rounded),
+            tooltip: 'Next page',
             onPressed: _page < _totalPages
                 ? () => _fetchAssets(page: _page + 1)
                 : null,
             color: _page < _totalPages
-                ? colorScheme.primary
-                : colorScheme.onSurfaceVariant,
+                ? AppColors.primaryText
+                : AppColors.textCaption,
           ),
         ],
       ),

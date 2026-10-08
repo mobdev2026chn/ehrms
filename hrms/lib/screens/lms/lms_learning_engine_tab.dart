@@ -13,6 +13,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/lms_service.dart';
 import '../../widgets/app_tab_loader.dart';
 
@@ -113,11 +114,11 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Material(
                   color: AppColors.brandLight,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
-                      vertical: 10,
+                      vertical: 12,
                     ),
                     child: Row(
                       children: [
@@ -143,26 +144,26 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
               ),
             const Text(
               'Learning Engine',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              style: AppTextStyles.headingLarge,
             ),
             const SizedBox(height: 4),
             Text(
               'Track progress and stay consistent.',
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              style: AppTextStyles.bodySmall.copyWith(fontSize: 14),
             ),
             // Top 3 cards from GET /lms/analytics/my-scores → data.summary
-            const SizedBox(height: 24),
+            const SizedBox(height: 20),
             Row(
               children: [
                 Expanded(
                   child: _StatCard(
                     title: 'MY COMPLETION',
                     value: _scoresLoading ? '—' : '$myCompletion%',
-                    icon: Icons.check_circle_outline,
-                    color: Colors.green,
+                    icon: Icons.check_circle_outline_rounded,
+                    color: AppColors.success,
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Expanded(
                   child: _StatCard(
                     title: 'COURSES COMPLETED',
@@ -170,26 +171,23 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         ? '—'
                         : '$completedCourses/$totalCourses',
                     icon: Icons.menu_book_outlined,
-                    color: Colors.blue,
+                    color: AppColors.info,
                   ),
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 8),
                 Expanded(
                   child: _StatCard(
                     title: 'AVG ASSESSMENT SCORE',
                     value: _scoresLoading ? '—' : '$overallScore%',
                     icon: Icons.emoji_events_outlined,
-                    color: AppColors.brand,
+                    color: AppColors.brandDark,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              margin: EdgeInsets.zero,
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -197,29 +195,22 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                   children: [
                     Row(
                       children: [
-                        Icon(
-                          Icons.calendar_today,
-                          size: 20,
-                          color: Colors.grey[600],
-                        ),
-                        const SizedBox(width: 8),
+                        _sectionIcon(Icons.calendar_today_outlined, AppColors.success),
+                        const SizedBox(width: 12),
                         const Expanded(
                           child: Text(
                             'Learning consistency',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 16,
-                            ),
+                            style: AppTextStyles.headingSmall,
                           ),
                         ),
                         const SizedBox(width: 8),
-                        Text(
+                        const Text(
                           'Last 12 months',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey[500],
+                            color: AppColors.textSecondary,
                           ),
                         ),
                       ],
@@ -238,7 +229,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         child: Center(
                           child: Text(
                             'No learning activity yet',
-                            style: TextStyle(color: Colors.grey[600]),
+                            style: AppTextStyles.bodySmall,
                           ),
                         ),
                       )
@@ -250,9 +241,9 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                       children: [
                         Text(
                           'Less',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
-                            color: Colors.grey[600],
+                            color: AppColors.textSecondary,
                           ),
                         ),
                         ..._heatColors.asMap().entries.map(
@@ -271,9 +262,9 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         const SizedBox(width: 3),
                         Text(
                           'More',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 11,
-                            color: Colors.grey[600],
+                            color: AppColors.textSecondary,
                           ),
                         ),
                       ],
@@ -282,28 +273,29 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                 ),
               ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             _buildQuizPerformanceCard(),
             const SizedBox(height: 24),
             Row(
               children: [
-                Icon(Icons.show_chart, size: 20, color: Colors.grey[600]),
-                const SizedBox(width: 8),
+                _sectionIcon(Icons.show_chart_rounded, AppColors.info),
+                const SizedBox(width: 12),
                 const Text(
                   'Recent progress',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                  style: AppTextStyles.headingSmall,
                 ),
               ],
             ),
             const SizedBox(height: 12),
             if (courses.isEmpty)
               Card(
+                margin: EdgeInsets.zero,
                 child: Padding(
                   padding: const EdgeInsets.all(24),
                   child: Center(
                     child: Text(
                       'No courses assigned yet',
-                      style: TextStyle(color: Colors.grey[600]),
+                      style: AppTextStyles.bodySmall,
                     ),
                   ),
                 ),
@@ -323,6 +315,19 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Tinted 36px icon tile used beside section titles.
+  Widget _sectionIcon(IconData icon, Color color) {
+    return Container(
+      width: 36,
+      height: 36,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, size: 20, color: color),
     );
   }
 
@@ -363,6 +368,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
         : <String, dynamic>{};
     if (_scoresLoading) {
       return Card(
+        margin: EdgeInsets.zero,
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: const Center(
@@ -386,19 +392,28 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
 
     if (totalAssigned == 0) {
       return Card(
+        margin: EdgeInsets.zero,
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
           child: Column(
             children: [
-              Icon(
-                Icons.emoji_events_outlined,
-                size: 48,
-                color: Colors.grey[400],
+              Container(
+                width: 64,
+                height: 64,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.emoji_events_outlined,
+                  size: 28,
+                  color: AppColors.primaryText,
+                ),
               ),
-              const SizedBox(height: 12),
-              Text(
+              const SizedBox(height: 16),
+              const Text(
                 'No quizzes assigned yet. Complete lessons in your courses to unlock practice quizzes.',
-                style: TextStyle(color: Colors.grey[600]),
+                style: AppTextStyles.bodySmall,
                 textAlign: TextAlign.center,
               ),
             ],
@@ -408,8 +423,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
     }
 
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -417,15 +431,11 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.emoji_events_outlined,
-                  color: AppColors.brandDark,
-                  size: 22,
-                ),
-                const SizedBox(width: 8),
+                _sectionIcon(Icons.emoji_events_outlined, AppColors.brandDark),
+                const SizedBox(width: 12),
                 const Text(
                   'Quiz performance',
-                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                  style: AppTextStyles.headingSmall,
                 ),
               ],
             ),
@@ -444,10 +454,11 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         height: 100,
                         child: CircularProgressIndicator(
                           value: completionPercent / 100,
-                          strokeWidth: 6,
-                          backgroundColor: const Color(0xFFe5e7eb),
+                          strokeWidth: 8,
+                          strokeCap: StrokeCap.round,
+                          backgroundColor: const Color(0xFFECEEF1),
                           valueColor: const AlwaysStoppedAnimation<Color>(
-                            Color(0xFF22c55e),
+                            AppColors.success,
                           ),
                         ),
                       ),
@@ -457,18 +468,17 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                         children: [
                           Text(
                             '$totalCompleted',
-                            style: const TextStyle(
+                            style: AppTextStyles.displayLarge.copyWith(
                               fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1f2937),
+                              height: 1.1,
                             ),
                           ),
                           Text(
                             'of $totalAssigned\ncompleted',
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               fontSize: 11,
-                              color: Colors.grey[600],
+                              color: AppColors.textSecondary,
                               height: 1.2,
                             ),
                           ),
@@ -545,23 +555,24 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
       children: [
         Row(
           children: [
-            Icon(Icons.schedule, size: 20, color: Colors.grey[600]),
-            const SizedBox(width: 8),
+            _sectionIcon(Icons.schedule_rounded, AppColors.brandDark),
+            const SizedBox(width: 12),
             const Text(
               'Upcoming deadlines',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+              style: AppTextStyles.headingSmall,
             ),
           ],
         ),
         const SizedBox(height: 12),
         if (top5.isEmpty)
           Card(
+            margin: EdgeInsets.zero,
             child: Padding(
               padding: const EdgeInsets.all(24),
               child: Center(
                 child: Text(
                   'No upcoming deadlines',
-                  style: TextStyle(color: Colors.grey[600]),
+                  style: AppTextStyles.bodySmall,
                 ),
               ),
             ),
@@ -571,13 +582,13 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
             final days = c['daysRemaining'] ?? 0;
             final urgency = days < 0 ? 'overdue' : (days <= 7 ? 'soon' : 'ok');
             final bg = urgency == 'overdue'
-                ? Colors.red.withOpacity(0.1)
+                ? AppColors.error.withValues(alpha: 0.06)
                 : (urgency == 'soon'
-                      ? AppColors.brand.withOpacity(0.1)
-                      : Colors.green.withOpacity(0.1));
+                      ? AppColors.brand.withValues(alpha: 0.08)
+                      : AppColors.surface);
             final border = urgency == 'overdue'
-                ? Colors.red
-                : (urgency == 'soon' ? AppColors.brand : Colors.green);
+                ? AppColors.error
+                : (urgency == 'soon' ? AppColors.brand : AppColors.success);
 
             final daysText = days < 0
                 ? '${-days}d overdue'
@@ -589,18 +600,22 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
             return Card(
               margin: const EdgeInsets.only(bottom: 8),
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-                side: BorderSide(color: border.withOpacity(0.5)),
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: border.withValues(alpha: 0.35)),
               ),
               color: bg,
               child: Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                 child: Row(
                   children: [
                     Expanded(
                       child: Text(
                         c['title'] ?? 'Course',
-                        style: const TextStyle(fontWeight: FontWeight.w500),
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.textPrimary,
+                        ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -608,19 +623,19 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                     if (c['dueDate'] != null)
                       Text(
                         _formatDate(c['dueDate']),
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                       ),
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
+                        horizontal: 10,
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
                         color: isSoon
-                            ? AppColors.brand.withOpacity(0.2)
-                            : border.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(6),
+                            ? AppColors.brand.withValues(alpha: 0.2)
+                            : border.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         daysText,
@@ -756,7 +771,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                               DateFormat('MMM').format(firstDayOfWeek),
                               style: TextStyle(
                                 fontSize: 10,
-                                color: Colors.grey[600],
+                                color: AppColors.textSecondary,
                                 fontWeight: FontWeight.w500,
                               ),
                             )
@@ -789,7 +804,7 @@ class _LmsLearningEngineTabState extends State<LmsLearningEngineTab> {
                               label,
                               style: TextStyle(
                                 fontSize: 9,
-                                color: Colors.grey[500],
+                                color: AppColors.textSecondary,
                               ),
                             ),
                           ),
@@ -1144,48 +1159,45 @@ class _StatCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(icon, color: color, size: 18),
+            ),
+            const SizedBox(height: 10),
             Text(
-              title,
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-                color: Colors.grey[600],
-                letterSpacing: 0.3,
+              value,
+              style: const TextStyle(
+                fontSize: 18,
+                height: 1.1,
+                fontWeight: FontWeight.w700,
+                color: AppColors.textPrimary,
               ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    value,
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.all(5),
-                  decoration: BoxDecoration(
-                    color: color.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Icon(icon, color: color, size: 16),
-                ),
-              ],
+            const SizedBox(height: 4),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w600,
+                color: AppColors.textSecondary,
+                letterSpacing: 0.4,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ),
@@ -1230,7 +1242,7 @@ class _QuizDifficultyRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: borderColor),
       ),
       child: Row(
@@ -1256,7 +1268,7 @@ class _QuizDifficultyRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             decoration: BoxDecoration(
               color: percentBg,
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(999),
             ),
             child: Text(
               '$percent%',
@@ -1289,24 +1301,33 @@ class _RecentProgressItem extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         child: Row(
           children: [
             Expanded(
               child: Text(
                 title,
-                style: const TextStyle(fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.textPrimary,
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+            const SizedBox(width: 8),
             SizedBox(
-              width: 80,
-              child: LinearProgressIndicator(
-                value: progress / 100,
-                backgroundColor: Colors.grey[200],
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  status == 'Completed' ? Colors.green : AppColors.primary,
+              width: 72,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(999),
+                child: LinearProgressIndicator(
+                  value: progress / 100,
+                  minHeight: 6,
+                  backgroundColor: const Color(0xFFECEEF1),
+                  valueColor: AlwaysStoppedAnimation<Color>(
+                    status == 'Completed' ? AppColors.success : AppColors.primary,
+                  ),
                 ),
               ),
             ),
@@ -1315,7 +1336,7 @@ class _RecentProgressItem extends StatelessWidget {
               width: 88,
               child: Text(
                 status,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: AppColors.textSecondary),
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.right,
               ),

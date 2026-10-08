@@ -4,6 +4,7 @@
 import 'package:flutter/material.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../models/loan_models.dart';
 import 'loan_detail_screen.dart';
 import 'loan_request_detail_screen.dart';
@@ -48,32 +49,18 @@ class LoanHistoryScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('Loan History', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-        backgroundColor: Colors.white,
-        foregroundColor: AppColors.textPrimary,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
+        title: const Text('Loan History'),
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: rows.isEmpty
             ? [
-                LoanCard(
-                  padding: const EdgeInsets.symmetric(vertical: 32),
-                  child: Center(
-                    child: Column(children: [
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: AppColors.brandLight, borderRadius: BorderRadius.circular(14)),
-                        child: const Icon(Icons.history_rounded, color: AppColors.brandDark),
-                      ),
-                      const SizedBox(height: 10),
-                      const Text('No loan history yet', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-                    ]),
-                  ),
+                const LoanCard(
+                  padding: EdgeInsets.symmetric(vertical: 16, horizontal: 16),
+                  child: LoanEmptyState(Icons.history_rounded, 'No loan history yet'),
                 ),
               ]
-            : [for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 10), child: r.$2)],
+            : [for (final r in rows) Padding(padding: const EdgeInsets.only(bottom: 12), child: r.$2)],
       ),
     );
   }
@@ -85,13 +72,16 @@ class LoanHistoryScreen extends StatelessWidget {
         child: Row(children: [
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 2),
-              Text(sub, style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary)),
+              Text(title,
+                  maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text(sub, style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
             ]),
           ),
+          const SizedBox(width: 8),
           LoanStatusChip(status),
-          const Icon(Icons.chevron_right_rounded, color: AppColors.textSecondary),
+          const SizedBox(width: 4),
+          const Icon(Icons.chevron_right_rounded, color: AppColors.textCaption),
         ]),
       );
 }

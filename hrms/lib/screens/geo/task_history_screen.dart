@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'package:hrms/models/task.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
@@ -78,11 +79,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
         _displayTask.completedDate != null;
 
     return Scaffold(
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('Full Ride History'),
-        centerTitle: true,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -101,9 +103,8 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: Text(
                           'Using cached data. $_error',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: AppColors.brandDark,
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.warning,
                           ),
                         ),
                       ),
@@ -112,12 +113,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'Started',
                           Icons.play_circle_filled_rounded,
-                          Colors.green,
+                          AppColors.success,
                         ),
                         const SizedBox(height: 8),
                         _timelineTile(
                           icon: Icons.play_circle_filled_rounded,
-                          color: Colors.green,
+                          color: AppColors.success,
                           label: 'Task started',
                           time: _displayTask.startTime!,
                           address:
@@ -133,12 +134,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'Arrived',
                           Icons.location_on_rounded,
-                          Colors.pink,
+                          AppColors.error,
                         ),
                         const SizedBox(height: 8),
                         _timelineTile(
                           icon: Icons.location_on_rounded,
-                          color: Colors.pink,
+                          color: AppColors.error,
                           label: 'Arrived at destination',
                           time: _displayTask.arrivalTime!,
                           address: null,
@@ -164,7 +165,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'Resumed (Restarted)',
                           Icons.replay_rounded,
-                          Colors.green,
+                          AppColors.success,
                         ),
                         const SizedBox(height: 8),
                         ...restarts.asMap().entries.map(
@@ -207,12 +208,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'OTP Verified',
                           Icons.pin_rounded,
-                          Colors.indigo,
+                          AppColors.indigo,
                         ),
                         const SizedBox(height: 8),
                         _timelineTile(
                           icon: Icons.pin_rounded,
-                          color: Colors.indigo,
+                          color: AppColors.indigo,
                           label: 'OTP verified',
                           time: _displayTask.otpVerifiedAt!,
                           address: _displayTask.otpVerifiedAddress,
@@ -227,7 +228,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'Destination Changes',
                           Icons.edit_location_rounded,
-                          AppColors.primary,
+                          AppColors.primaryText,
                         ),
                         const SizedBox(height: 8),
                         ...destinations
@@ -241,12 +242,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         _sectionTitle(
                           'Completed',
                           Icons.check_circle_rounded,
-                          AppColors.primary,
+                          AppColors.success,
                         ),
                         const SizedBox(height: 8),
                         _timelineTile(
                           icon: Icons.check_circle_rounded,
-                          color: AppColors.primary,
+                          color: AppColors.success,
                           label: 'Task completed',
                           time: _displayTask.completedDate!,
                           address: null,
@@ -262,27 +263,29 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                           child: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
-                              Icon(
-                                Icons.history_rounded,
-                                size: 64,
-                                color: Colors.grey.shade400,
+                              Container(
+                                width: 64,
+                                height: 64,
+                                decoration: BoxDecoration(
+                                  color: AppColors.primary.withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.history_rounded,
+                                  size: 28,
+                                  color: AppColors.primaryText,
+                                ),
                               ),
                               const SizedBox(height: 16),
-                              Text(
+                              const Text(
                                 'No history yet',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.grey.shade600,
-                                ),
+                                style: AppTextStyles.headingSmall,
                               ),
-                              const SizedBox(height: 8),
-                              Text(
+                              const SizedBox(height: 4),
+                              const Text(
                                 'Exits, restarts, arrival, photo proof, OTP verification, and destination changes will appear here.',
                                 textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: Colors.grey.shade500,
-                                ),
+                                style: AppTextStyles.bodySmall,
                               ),
                             ],
                           ),
@@ -298,15 +301,19 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
   Widget _sectionTitle(String title, IconData icon, Color color) {
     return Row(
       children: [
-        Icon(icon, size: 22, color: color),
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 16, color: color),
+        ),
         const SizedBox(width: 8),
         Text(
           title,
-          style: TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.bold,
-            color: color,
-          ),
+          style: AppTextStyles.headingSmall,
         ),
       ],
     );
@@ -320,11 +327,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.06),
+              color: Colors.black.withValues(alpha: 0.06),
               blurRadius: 12,
               offset: const Offset(0, 2),
             ),
@@ -337,12 +344,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
               width: 48,
               height: 48,
               decoration: BoxDecoration(
-                color: Colors.teal.withOpacity(0.2),
+                color: Colors.teal.withValues(alpha: 0.12),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: const Icon(
                 Icons.description_rounded,
-                size: 26,
+                size: 22,
                 color: Colors.teal,
               ),
             ),
@@ -356,13 +363,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.bold,
-                      color: Colors.black,
+                      color: AppColors.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     DateDisplayUtil.formatTimeline(time),
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                   ),
                   const SizedBox(height: 6),
                   Text(
@@ -378,7 +385,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             ),
             Icon(
               Icons.chevron_right_rounded,
-              color: Colors.grey.shade400,
+              color: AppColors.textCaption,
               size: 24,
             ),
           ],
@@ -420,11 +427,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 2),
           ),
@@ -437,12 +444,12 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: Colors.purple.withOpacity(0.2),
+              color: Colors.purple.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Icon(
               Icons.photo_camera_rounded,
-              size: 26,
+              size: 22,
               color: Colors.purple,
             ),
           ),
@@ -456,13 +463,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   DateDisplayUtil.formatTimeline(time),
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 if (batteryPercent != null) ...[
                   const SizedBox(height: 4),
@@ -488,7 +495,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   const SizedBox(height: 4),
                   Text(
                     address,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -504,7 +511,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                         vertical: 10,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.purple.withOpacity(0.08),
+                        color: Colors.purple.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: Row(
@@ -557,11 +564,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 2),
           ),
@@ -574,10 +581,10 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: color.withOpacity(0.2),
+              color: color.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 26, color: color),
+            child: Icon(icon, size: 22, color: color),
           ),
           const SizedBox(width: 14),
           Expanded(
@@ -589,13 +596,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   style: const TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   DateDisplayUtil.formatTimeline(time),
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                 ),
                 if (batteryPercent != null) ...[
                   const SizedBox(height: 4),
@@ -621,7 +628,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   const SizedBox(height: 4),
                   Text(
                     address,
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                    style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -629,7 +636,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                 if (lat != null && lng != null)
                   Text(
                     '${lat.toStringAsFixed(5)}, ${lng.toStringAsFixed(5)}',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade500),
+                    style: TextStyle(fontSize: 11, color: AppColors.textCaption),
                   ),
               ],
             ),
@@ -641,7 +648,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
 
   /// Blue if battery >= 10 or null; red if battery < 10.
   Color _batteryColor(int? percent) =>
-      (percent != null && percent < 10) ? Colors.red : Colors.blue;
+      (percent != null && percent < 10) ? AppColors.error : AppColors.info;
 
   Widget _detailRow(String label, String value, {Color? valueColor}) {
     return Padding(
@@ -656,14 +663,14 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
-                color: Colors.grey.shade700,
+                color: AppColors.textSecondary,
               ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: TextStyle(fontSize: 13, color: valueColor ?? Colors.black),
+              style: TextStyle(fontSize: 13, color: valueColor ?? AppColors.textPrimary),
             ),
           ),
         ],
@@ -676,11 +683,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 2),
           ),
@@ -698,7 +705,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             ),
             child: Icon(
               Icons.exit_to_app_rounded,
-              size: 26,
+              size: 22,
               color: AppColors.brandDark,
             ),
           ),
@@ -712,7 +719,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -753,11 +760,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 2),
           ),
@@ -770,13 +777,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: Colors.green.shade50,
+              color: AppColors.successBg,
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               Icons.replay_rounded,
-              size: 26,
-              color: Colors.green.shade700,
+              size: 22,
+              color: AppColors.success,
             ),
           ),
           const SizedBox(width: 14),
@@ -789,7 +796,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -826,11 +833,11 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 2),
           ),
@@ -843,13 +850,13 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
             width: 48,
             height: 48,
             decoration: BoxDecoration(
-              color: AppColors.primary.withOpacity(0.15),
+              color: AppColors.primary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               Icons.edit_location_rounded,
-              size: 26,
-              color: AppColors.primary,
+              size: 22,
+              color: AppColors.primaryText,
             ),
           ),
           const SizedBox(width: 14),
@@ -862,7 +869,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   style: const TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
-                    color: Colors.black,
+                    color: AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -911,7 +918,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                     errorBuilder: (_, __, ___) => Container(
                       padding: const EdgeInsets.all(24),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: AppColors.surface,
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: Column(
@@ -920,14 +927,14 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                           Icon(
                             Icons.broken_image_outlined,
                             size: 40,
-                            color: Colors.grey.shade600,
+                            color: AppColors.textSecondary,
                           ),
                           const SizedBox(height: 8),
                           Text(
                             'Unable to load image',
                             style: TextStyle(
                               fontSize: 14,
-                              color: Colors.grey.shade700,
+                              color: AppColors.textSecondary,
                               fontWeight: FontWeight.w500,
                             ),
                           ),
@@ -1013,7 +1020,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
               height: 4,
               margin: const EdgeInsets.only(top: 12, bottom: 8),
               decoration: BoxDecoration(
-                color: Colors.grey.shade300,
+                color: AppColors.divider,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -1036,14 +1043,14 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
-                            color: Colors.black,
+                            color: AppColors.textPrimary,
                           ),
                         ),
                         Text(
                           widget.taskTitle,
                           style: TextStyle(
                             fontSize: 13,
-                            color: Colors.grey.shade600,
+                            color: AppColors.textSecondary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1053,6 +1060,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.close_rounded),
+                    tooltip: 'Close',
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -1072,7 +1080,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                             Icon(
                               Icons.error_outline_rounded,
                               size: 48,
-                              color: Colors.grey.shade400,
+                              color: AppColors.textCaption,
                             ),
                             const SizedBox(height: 12),
                             Text(
@@ -1080,7 +1088,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 14,
-                                color: Colors.grey.shade700,
+                                color: AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -1089,12 +1097,28 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
                     )
                   : _forms.isEmpty
                   ? Center(
-                      child: Text(
-                        'No form data found',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey.shade600,
-                        ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 64,
+                            height: 64,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                              Icons.description_outlined,
+                              size: 28,
+                              color: AppColors.primaryText,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          const Text(
+                            'No form data found',
+                            style: AppTextStyles.bodySmall,
+                          ),
+                        ],
                       ),
                     )
                   : RefreshIndicator(
@@ -1121,11 +1145,11 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.06),
+            color: Colors.black.withValues(alpha: 0.06),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),
@@ -1136,10 +1160,8 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
         children: [
           Text(
             templateName,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: FontWeight.bold,
-              color: AppColors.primary,
+            style: AppTextStyles.headingSmall.copyWith(
+              color: AppColors.primaryText,
             ),
           ),
           const SizedBox(height: 12),
@@ -1196,7 +1218,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: Colors.grey.shade800,
+                color: AppColors.textPrimary,
               ),
             ),
           ),
@@ -1205,7 +1227,7 @@ class _FormDetailsSheetState extends State<_FormDetailsSheet> {
             Expanded(
               child: Text(
                 value,
-                style: const TextStyle(fontSize: 13, color: Colors.black),
+                style: const TextStyle(fontSize: 13, color: AppColors.textPrimary),
               ),
             ),
           ],

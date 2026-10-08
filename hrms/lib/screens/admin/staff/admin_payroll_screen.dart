@@ -1,15 +1,34 @@
 // lib/screens/admin/staff/admin_payroll_screen.dart
+// Admin Payroll Management - mirrors the web Payroll page
+// (HRMSfrontend features/admin/staff/salary/payroll): month list, single + bulk generate
+// (overview detail -> generate), approve (mark paid), and the server's payslip statement.
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:pdfx/pdfx.dart';
+import 'package:share_plus/share_plus.dart';
+
 import '../../../config/app_colors.dart';
-import '../../../services/admin_staff_service.dart';
-import '../../../services/api_client.dart';
+import '../../../config/app_text_styles.dart';
+import '../../../services/admin_payroll_service.dart';
 import '../../../utils/snackbar_utils.dart';
+import '../../../widgets/app_card.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/app_tab_loader.dart';
 
+const List<String> _kMonths = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'
+];
+
+final NumberFormat _inr = NumberFormat('#,##,##0.00', 'en_IN');
+String _money(double v) => '₹ ${_inr.format(v)}';
+
 class AdminPayrollRecord {
   final String id;
+  final String staffId;
   final String employeeId;
   final String name;
   final String department;
@@ -17,11 +36,12 @@ class AdminPayrollRecord {
   final double gross;
   final double deductions;
   final double netPay;
-  String status; // 'Pending' | 'Processed'
+  final String status; // 'Pending' | 'Processed'
   final String monthYear;
 
   AdminPayrollRecord({
     required this.id,
+    required this.staffId,
     required this.employeeId,
     required this.name,
     required this.department,
@@ -33,33 +53,83 @@ class AdminPayrollRecord {
     required this.monthYear,
   });
 
+  bool get isProcessed => status == 'Processed';
+
   String get initials {
-    final parts = name.trim().split(' ');
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.length > 1) return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-    return name.isNotEmpty ? name[0].toUpperCase() : 'U';
+    return parts.isNotEmpty ? parts[0][0].toUpperCase() : 'U';
   }
 
-  factory AdminPayrollRecord.fromJson(Map<String, dynamic> json) {
-    final staffObj = json['staffId'] is Map ? json['staffId'] : json;
-    final grossVal = (json['gross'] ?? json['grossSalary'] ?? 0.0);
-    final dedVal = (json['deductions'] ?? json['totalDeductions'] ?? 0.0);
-    final netVal = (json['netPay'] ?? json['netSalary'] ?? 0.0);
+  static double _num(dynamic v) => v is num ? v.toDouble() : double.tryParse('${v ?? ''}') ?? 0.0;
 
+  /// Row shape of `GET /admin/staff/payroll` (payRollController.getPayRollList).
+  factory AdminPayrollRecord.fromJson(Map<String, dynamic> json, String monthYear) {
+    final staff = json['staffId'];
     return AdminPayrollRecord(
-      id: (json['_id'] ?? json['id'] ?? '').toString(),
-      employeeId: (staffObj['employeeId'] ?? json['employeeId'] ?? 'EMP-001').toString(),
-      name: (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString().isNotEmpty
-          ? (staffObj['name'] ?? '${staffObj['firstName'] ?? ''} ${staffObj['lastName'] ?? ''}'.trim()).toString()
-          : (json['name'] ?? 'Employee').toString(),
-      department: (staffObj['department'] is Map ? staffObj['department']['name'] : (staffObj['department'] ?? json['department'] ?? 'IT')).toString(),
-      designation: (staffObj['designation'] is Map ? staffObj['designation']['name'] : (staffObj['designation'] ?? json['designation'] ?? 'Staff')).toString(),
-      gross: double.tryParse(grossVal.toString()) ?? 0.0,
-      deductions: double.tryParse(dedVal.toString()) ?? 0.0,
-      netPay: double.tryParse(netVal.toString()) ?? 0.0,
-      status: (json['status'] ?? 'Processed').toString(),
-      monthYear: (json['month'] ?? 'August 2026').toString(),
+      id: (json['id'] ?? json['_id'] ?? '').toString(),
+      staffId: (staff is Map ? (staff['_id'] ?? '') : (staff ?? '')).toString(),
+      employeeId: (json['employeeId'] ?? '').toString(),
+      name: (json['name'] ?? '').toString(),
+      department: (json['department'] ?? '').toString(),
+      designation: (json['designation'] ?? '').toString(),
+      gross: _num(json['gross']),
+      deductions: _num(json['deductions']),
+      netPay: _num(json['netPay']),
+      status: (json['status'] ?? 'Pending').toString(),
+      monthYear: monthYear,
     );
   }
+}
+
+/// A staff member as the generate dialogs need them.
+class _PayrollEmployee {
+  final String id;
+  final String employeeId;
+  final String name;
+  final DateTime? joiningDate;
+  final bool isActive;
+
+  _PayrollEmployee({
+    required this.id,
+    required this.employeeId,
+    required this.name,
+    required this.joiningDate,
+    required this.isActive,
+  });
+
+  factory _PayrollEmployee.fromStaff(Map<String, dynamic> s) {
+    final id = (s['_id'] ?? s['id'] ?? '').toString();
+    final name = '${s['firstName'] ?? ''} ${s['lastName'] ?? ''}'.trim();
+    final status = (s['status'] ?? 'Active').toString().trim().toLowerCase();
+    DateTime? joining;
+    final raw = s['joiningDate'];
+    if (raw != null && raw.toString().isNotEmpty) joining = DateTime.tryParse(raw.toString())?.toLocal();
+    return _PayrollEmployee(
+      id: id,
+      employeeId: (s['employeeId'] ?? (id.length > 18 ? 'EMP-${id.substring(18)}' : id)).toString(),
+      name: name.isNotEmpty ? name : (s['name'] ?? s['employeeId'] ?? 'Employee').toString(),
+      joiningDate: joining,
+      isActive: status == 'active',
+    );
+  }
+}
+
+/// Payroll periods an employee can have: the joining month through the current month,
+/// newest first (web `monthLabelsFrom`). No joining date -> only the current month.
+List<({String month, String year})> _periodsFor(DateTime? joiningDate) {
+  final now = DateTime.now();
+  final current = DateTime(now.year, now.month);
+  if (joiningDate == null) {
+    return [(month: _kMonths[now.month - 1], year: '${now.year}')];
+  }
+  var cursor = DateTime(joiningDate.year, joiningDate.month);
+  final out = <({String month, String year})>[];
+  while (!cursor.isAfter(current)) {
+    out.add((month: _kMonths[cursor.month - 1], year: '${cursor.year}'));
+    cursor = DateTime(cursor.year, cursor.month + 1);
+  }
+  return out.reversed.toList();
 }
 
 class AdminPayrollScreen extends StatefulWidget {
@@ -71,560 +141,461 @@ class AdminPayrollScreen extends StatefulWidget {
 
 class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final AdminStaffService _staffService = AdminStaffService();
-  final ApiClient _api = ApiClient();
+  final AdminPayrollService _service = AdminPayrollService();
 
   bool _isLoading = true;
+  String? _error;
   String _searchQuery = '';
-  String _selectedMonth = 'August';
-  String _selectedYear = '2026';
+  late String _selectedMonth;
+  late String _selectedYear;
   String _selectedStatus = 'All'; // 'All' | 'Pending' | 'Processed'
   String _selectedDepartment = 'All';
 
   List<AdminPayrollRecord> _records = [];
-  List<Map<String, dynamic>> _staffList = [];
-  List<String> _departments = ['All', 'IT', 'Engineering', 'Design', 'Human Resources'];
-  final List<String> _months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
-  final List<String> _years = ['2024', '2025', '2026', '2027'];
+  List<_PayrollEmployee>? _employees;
+  final Set<String> _busyIds = {};
+  late final List<String> _years;
 
   @override
   void initState() {
     super.initState();
+    final now = DateTime.now();
+    _selectedMonth = _kMonths[now.month - 1];
+    _selectedYear = '${now.year}';
+    _years = [for (var y = 2024; y <= now.year + 1; y++) '$y'];
     _loadData();
   }
 
-  // Dynamic statistics matching Screenshot 1
+  String get _monthStr => '$_selectedMonth $_selectedYear';
+
   double get _grossSalaryTotal => _records.fold(0.0, (sum, r) => sum + r.gross);
   double get _deductionsTotal => _records.fold(0.0, (sum, r) => sum + r.deductions);
   double get _netPayableTotal => _records.fold(0.0, (sum, r) => sum + r.netPay);
-  int get _processedCount => _records.where((r) => r.status == 'Processed').length;
-  int get _totalCount => _records.length;
+  int get _processedCount => _records.where((r) => r.isProcessed).length;
 
-  Future<void> _loadData({bool showLoader = true}) async {
-    if (showLoader && mounted) setState(() => _isLoading = true);
-
-    try {
-      final staffRes = await _staffService.getStaffList();
-      if (staffRes['success'] == true && staffRes['data'] != null) {
-        _staffList = (staffRes['data']['staff'] as List? ?? [])
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
-
-        final depts = <String>{'All'};
-        for (final s in _staffList) {
-          if (s['department'] != null) depts.add(s['department'].toString());
-        }
-        _departments = depts.toList();
-      }
-
-      final monthQuery = '$_selectedMonth $_selectedYear';
-      final res = await _api.request(
-        '/admin/staff/payroll',
-        queryParameters: {'month': monthQuery},
-      );
-
-      if (res.data is Map && res.data['success'] == true) {
-        final list = (res.data['data'] as List?) ?? [];
-        if (list.isNotEmpty && mounted) {
-          setState(() {
-            _records = list.map((e) => AdminPayrollRecord.fromJson(Map<String, dynamic>.from(e as Map))).toList();
-          });
-        } else {
-          _setMockRecords();
-        }
-      } else {
-        _setMockRecords();
-      }
-    } catch (_) {
-      _setMockRecords();
+  List<String> get _departments {
+    final set = <String>{};
+    for (final r in _records) {
+      if (r.department.isNotEmpty) set.add(r.department);
     }
-
-    if (showLoader && mounted) setState(() => _isLoading = false);
+    return ['All', ...set];
   }
 
-  void _setMockRecords() {
-    _records = [
-      AdminPayrollRecord(
-        id: 'PAY-001',
-        employeeId: 'EMP-006',
-        name: 'hp hai th',
-        department: 'IT',
-        designation: 'Manager',
-        gross: 45977.98,
-        deductions: 3888.63,
-        netPay: 42089.35,
-        status: 'Processed',
-        monthYear: 'August 2026',
-      ),
-      AdminPayrollRecord(
-        id: 'PAY-002',
-        employeeId: 'EMP-002',
-        name: 'james fernado',
-        department: 'IT',
-        designation: 'Junior',
-        gross: 11089.58,
-        deductions: 1933.19,
-        netPay: 9156.39,
-        status: 'Processed',
-        monthYear: 'August 2026',
-      ),
-      AdminPayrollRecord(
-        id: 'PAY-003',
-        employeeId: 'EMP-008',
-        name: 'saranya V',
-        department: 'Engineering',
-        designation: 'Team Lead',
-        gross: 17850.00,
-        deductions: 1035.83,
-        netPay: 16814.17,
-        status: 'Processed',
-        monthYear: 'August 2026',
-      ),
-    ];
+  void _showError(Object e) {
+    if (!mounted) return;
+    SnackBarUtils.showSnackBar(context, e.toString(), isError: true);
+  }
+
+  Future<void> _loadData({bool showLoader = true}) async {
+    if (showLoader && mounted) {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+    }
+    final month = _monthStr;
+    try {
+      final list = await _service.getPayrollList(month);
+      if (!mounted || month != _monthStr) return;
+      setState(() {
+        _records = list.map((e) => AdminPayrollRecord.fromJson(e, month)).toList();
+        _error = null;
+        if (!_departments.contains(_selectedDepartment)) _selectedDepartment = 'All';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      if (showLoader || _records.isEmpty) {
+        setState(() => _error = e.toString());
+      } else {
+        _showError(e);
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<List<_PayrollEmployee>?> _ensureEmployees() async {
+    if (_employees != null) return _employees;
+    try {
+      final staff = await _service.getStaff();
+      _employees = staff.map(_PayrollEmployee.fromStaff).where((e) => e.id.isNotEmpty).toList();
+      return _employees;
+    } catch (e) {
+      _showError(e);
+      return null;
+    }
   }
 
   List<AdminPayrollRecord> get _filteredRecords {
+    final q = _searchQuery.toLowerCase();
     return _records.where((r) {
-      final matchesSearch = _searchQuery.isEmpty ||
-          r.name.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.employeeId.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.designation.toLowerCase().contains(_searchQuery.toLowerCase()) ||
-          r.department.toLowerCase().contains(_searchQuery.toLowerCase());
-
-      final matchesStatus = _selectedStatus == 'All' || r.status.toLowerCase() == _selectedStatus.toLowerCase();
-      final matchesDept = _selectedDepartment == 'All' || r.department.toLowerCase() == _selectedDepartment.toLowerCase();
-
+      final matchesSearch = q.isEmpty ||
+          r.name.toLowerCase().contains(q) ||
+          r.employeeId.toLowerCase().contains(q) ||
+          r.designation.toLowerCase().contains(q);
+      final matchesStatus = _selectedStatus == 'All' || r.status == _selectedStatus;
+      final matchesDept = _selectedDepartment == 'All' || r.department == _selectedDepartment;
       return matchesSearch && matchesStatus && matchesDept;
     }).toList();
   }
 
-  // ── Action: Generate Payroll Modal (Screenshots 2 & 3) ──
-  void _showGeneratePayrollModal() {
-    String selectedEmpId = _staffList.isNotEmpty ? (_staffList.first['employeeId'] ?? 'EMP-016') : 'EMP-016';
-    String genMonth = _selectedMonth;
-    String genYear = _selectedYear;
+  // ── Generate (single) ──
 
-    showDialog(
+  Future<void> _showGeneratePayrollModal() async {
+    final employees = await _ensureEmployees();
+    if (employees == null || !mounted) return;
+    if (employees.isEmpty) {
+      SnackBarUtils.showSnackBar(context, 'No staff found to generate payroll for.', isError: true);
+      return;
+    }
+
+    final result = await showDialog<({_PayrollEmployee emp, String month, String year})>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) {
-          return AlertDialog(
-            backgroundColor: Colors.white,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            title: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
-                    Text('Generate Payroll', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                    SizedBox(height: 2),
-                    Text('Generate payroll for an employee based on salary structure\nand attendance', style: TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
-                  ],
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF94A3B8)),
-                  onPressed: () => Navigator.pop(ctx),
-                ),
-              ],
-            ),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Employee', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF334155))),
-                  const SizedBox(height: 6),
-                  Container(
-                    height: 42,
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFEFAA1F)),
-                    ),
-                    child: DropdownButtonHideUnderline(
-                      child: DropdownButton<String>(
-                        value: _staffList.any((s) => s['employeeId'] == selectedEmpId) ? selectedEmpId : (_staffList.isNotEmpty ? _staffList.first['employeeId'] : null),
-                        isExpanded: true,
-                        items: _staffList.map((s) {
-                          final id = (s['employeeId'] ?? '').toString();
-                          final name = (s['name'] ?? '${s['firstName'] ?? ''} ${s['lastName'] ?? ''}').toString();
-                          return DropdownMenuItem(
-                            value: id,
-                            child: Text('$name ($id)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                          );
-                        }).toList(),
-                        onChanged: (v) {
-                          if (v != null) setModalState(() => selectedEmpId = v);
-                        },
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
+      builder: (ctx) => _GeneratePayrollDialog(employees: employees, service: _service),
+    );
+    if (result == null || !mounted) return;
 
-                  Row(
-                    children: [
-                      // Month
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Month', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF334155))),
-                            const SizedBox(height: 6),
-                            Container(
-                              height: 40,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: genMonth,
-                                  isExpanded: true,
-                                  items: _months.map((m) => DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 11.5)))).toList(),
-                                  onChanged: (v) {
-                                    if (v != null) setModalState(() => genMonth = v);
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 10),
+    final monthStr = '${result.month} ${result.year}';
+    SnackBarUtils.showSnackBar(context, 'Generating payroll for ${result.emp.name}...');
+    try {
+      await _service.generatePayrollForStaff(result.emp.id, monthStr);
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, 'Payroll generated for ${result.emp.name} ($monthStr)');
+      if (monthStr != _monthStr) {
+        setState(() {
+          _selectedMonth = result.month;
+          _selectedYear = result.year;
+        });
+      }
+      await _loadData(showLoader: false);
+    } catch (e) {
+      _showError('Failed to generate: $e');
+    }
+  }
 
-                      // Year
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text('Year', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF334155))),
-                            const SizedBox(height: 6),
-                            Container(
-                              height: 40,
-                              padding: const EdgeInsets.symmetric(horizontal: 10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
-                              ),
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: genYear,
-                                  isExpanded: true,
-                                  items: _years.map((y) => DropdownMenuItem(value: y, child: Text(y, style: const TextStyle(fontSize: 11.5)))).toList(),
-                                  onChanged: (v) {
-                                    if (v != null) setModalState(() => genYear = v);
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B), fontWeight: FontWeight.w700)),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  final emp = _staffList.firstWhere((s) => s['employeeId'] == selectedEmpId, orElse: () => {'name': selectedEmpId, 'department': 'Engineering', 'designation': 'Developer'});
-                  final name = (emp['name'] ?? '${emp['firstName'] ?? ''} ${emp['lastName'] ?? ''}').toString();
-                  final dept = (emp['department'] ?? 'IT').toString();
-                  final desig = (emp['designation'] ?? 'Developer').toString();
+  // ── Generate (bulk) ──
 
-                  final newRec = AdminPayrollRecord(
-                    id: 'PAY-${DateTime.now().millisecondsSinceEpoch}',
-                    employeeId: selectedEmpId,
-                    name: name,
-                    department: dept,
-                    designation: desig,
-                    gross: 35000.0,
-                    deductions: 2500.0,
-                    netPay: 32500.0,
-                    status: 'Processed',
-                    monthYear: '$genMonth $genYear',
-                  );
+  Future<void> _showBulkGenerateModal() async {
+    final employees = await _ensureEmployees();
+    if (employees == null || !mounted) return;
 
-                  setState(() => _records.insert(0, newRec));
-                  try {
-                    await _api.request('/admin/staff/payroll/generate', method: 'POST', data: {
-                      'staffId': selectedEmpId,
-                      'month': '$genMonth $genYear',
-                    });
-                  } catch (_) {}
-                  if (mounted) SnackBarUtils.showSnackBar(context, 'Payroll generated for $name ($genMonth $genYear)');
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
-                child: const Text('Generate', style: TextStyle(fontWeight: FontWeight.w800)),
-              ),
-            ],
-          );
-        },
-      ),
+    final result = await showDialog<({String month, String year, int generated, int alreadyPaid, List<String> failed})>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _BulkGenerateDialog(employees: employees, service: _service),
+    );
+    if (result == null || !mounted) return;
+
+    setState(() {
+      _selectedMonth = result.month;
+      _selectedYear = result.year;
+    });
+    await _loadData(showLoader: false);
+    if (!mounted) return;
+
+    final monthStr = '${result.month} ${result.year}';
+    final parts = <String>[
+      'Payroll generated for ${result.generated} employee${result.generated == 1 ? '' : 's'} ($monthStr)',
+      if (result.alreadyPaid > 0) '${result.alreadyPaid} already paid',
+      if (result.failed.isNotEmpty) 'not generated: ${result.failed.join(', ')} - check their salary structure',
+    ];
+    SnackBarUtils.showSnackBar(
+      context,
+      '${parts.join('. ')}.',
+      isError: result.failed.isNotEmpty && result.generated == 0,
+      duration: const Duration(seconds: 5),
     );
   }
 
-  // ── Action: View Statement Modal (Screenshot 5) ──
-  void _showStatementModal(AdminPayrollRecord r) {
-    showDialog(
+  // ── Approve (mark paid) ──
+
+  Future<void> _confirmApprove(AdminPayrollRecord r) async {
+    final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
           children: [
-            const Icon(Icons.receipt_long_rounded, color: Color(0xFF2563EB), size: 22),
-            const SizedBox(width: 8),
-            Text('${r.name} - Statement', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+            Icon(Icons.check_circle_outline_rounded, color: AppColors.success, size: 22),
+            SizedBox(width: 8),
+            Text('Approve Payroll', style: AppTextStyles.headingSmall),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('${r.employeeId} • ${r.designation} (${r.department})', style: const TextStyle(fontSize: 11, color: Color(0xFF64748B))),
-            Text('Period: ${r.monthYear}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
-            const Divider(height: 20),
-            _statementRow('Gross Earnings', '₹${r.gross.toStringAsFixed(2)}', const Color(0xFF1E293B), true),
-            const SizedBox(height: 6),
-            _statementRow('PF / ESI / Tax Deductions', '- ₹${r.deductions.toStringAsFixed(2)}', const Color(0xFFDC2626), false),
-            const Divider(height: 20),
-            _statementRow('Net Disbursable Salary', '₹${r.netPay.toStringAsFixed(2)}', const Color(0xFF16A34A), true),
-          ],
+        content: Text(
+          'Mark ${_money(r.netPay)} as paid to ${r.name} for ${r.monthYear}? '
+          'Payslips are issued to the employees, and a paid payroll is locked - it cannot be '
+          'regenerated or moved back to pending.',
+          style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close', style: TextStyle(color: Color(0xFF64748B))),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
           ),
-          ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pop(ctx);
-              SnackBarUtils.showSnackBar(context, 'Downloading payslip PDF for ${r.name}...');
-            },
-            icon: const Icon(Icons.download_rounded, size: 16),
-            label: const Text('Download Payslip', style: TextStyle(fontWeight: FontWeight.w800)),
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEFAA1F), foregroundColor: const Color(0xFF0F172A)),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.success, foregroundColor: Colors.white, elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            child: const Text('Yes, Mark as Paid'),
           ),
         ],
       ),
     );
+    if (ok != true || !mounted) return;
+
+    setState(() => _busyIds.add(r.id));
+    try {
+      await _service.updatePayrollStatus(r.id, status: 'Processed');
+      if (!mounted) return;
+      SnackBarUtils.showSnackBar(context, 'Payroll processed successfully for ${r.name}!');
+      await _loadData(showLoader: false);
+    } catch (e) {
+      _showError('Failed to process: $e');
+    } finally {
+      if (mounted) setState(() => _busyIds.remove(r.id));
+    }
   }
 
-  Widget _statementRow(String title, String value, Color color, bool isBold) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(title, style: TextStyle(fontSize: 11.5, color: const Color(0xFF64748B), fontWeight: isBold ? FontWeight.w700 : FontWeight.normal)),
-        Text(value, style: TextStyle(fontSize: 12.5, fontWeight: isBold ? FontWeight.w900 : FontWeight.w700, color: color)),
-      ],
-    );
+  // ── Statement / payslip ──
+
+  Future<void> _viewStatement(AdminPayrollRecord r) async {
+    if (_busyIds.contains(r.id)) return;
+    setState(() => _busyIds.add(r.id));
+    try {
+      final file = await _service.downloadPayslipPdf(
+        r.id,
+        fileStem: '${r.employeeId}-${r.monthYear}',
+      );
+      if (!mounted) return;
+      await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => _PayrollStatementViewer(record: r, file: file),
+      ));
+    } catch (e) {
+      _showError(e);
+    } finally {
+      if (mounted) setState(() => _busyIds.remove(r.id));
+    }
+  }
+
+  Future<void> _downloadPayslip(AdminPayrollRecord r) async {
+    if (_busyIds.contains(r.id)) return;
+    setState(() => _busyIds.add(r.id));
+    SnackBarUtils.showSnackBar(context, "Preparing ${r.name}'s payslip PDF...");
+    try {
+      final file = await _service.downloadPayslipPdf(
+        r.id,
+        fileStem: '${r.employeeId}-${r.monthYear}',
+        keep: true,
+      );
+      final result = await OpenFilex.open(file.path);
+      if (!mounted) return;
+      if (result.type != ResultType.done) {
+        SnackBarUtils.showSnackBar(context, 'Payslip saved to: ${file.path}');
+      }
+    } catch (e) {
+      _showError(e);
+    } finally {
+      if (mounted) setState(() => _busyIds.remove(r.id));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.menu_rounded, color: Color(0xFF0F172A)),
+          tooltip: 'Open menu',
+          icon: const Icon(Icons.menu_rounded),
           onPressed: () => _scaffoldKey.currentState?.openDrawer(),
         ),
-        title: const Text(
-          'Payroll Management',
-          style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
+        title: const Text('Payroll Management'),
         centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF64748B), size: 22),
+            icon: const Icon(Icons.refresh_rounded, size: 24),
             onPressed: () => _loadData(),
             tooltip: 'Refresh',
           ),
           const SizedBox(width: 4),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: AppTabLoader())
-          : RefreshIndicator(
-              onRefresh: () => _loadData(showLoader: false),
-              color: AppColors.primary,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
+      body: RefreshIndicator(
+        onRefresh: () => _loadData(showLoader: false),
+        color: AppColors.primary,
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            // Actions (Bulk Generate, Generate) - as on the web page
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _showBulkGenerateModal,
+                    icon: Icon(Icons.groups_rounded, size: 18, color: AppColors.primaryText),
+                    label: Text('Bulk Generate', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.primaryText)),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: AppColors.primary, width: 1.2),
+                      backgroundColor: AppColors.primary.withValues(alpha: 0.08),
+                      minimumSize: const Size(0, 48),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _showGeneratePayrollModal,
+                    icon: const Icon(Icons.add_rounded, size: 20),
+                    label: const Text('Generate'),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // ── Filters Bar (Month, Year, Status, Department, Search) ──
+            AppCard(
+              border: Border.all(color: const Color(0xFFECEEF1)),
+              child: Column(
                 children: [
-                  // Top Banner Actions (Export, Bulk Generate, + Generate)
                   Row(
                     children: [
                       Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => SnackBarUtils.showSnackBar(context, 'Exporting payroll register as CSV...'),
-                          icon: const Icon(Icons.file_download_outlined, size: 14),
-                          label: const Text('Export', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF475569),
-                            side: const BorderSide(color: Color(0xFFE2E8F0)),
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
+                        child: _filterDropdown('MONTH', _selectedMonth, _kMonths, (v) {
+                          setState(() => _selectedMonth = v);
+                          _loadData();
+                        }),
                       ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          onPressed: () => SnackBarUtils.showSnackBar(context, 'Bulk payroll generation completed successfully!'),
-                          icon: const Icon(Icons.bolt_rounded, size: 14, color: AppColors.brandDark),
-                          label: const Text('Bulk Generate', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: Color(0xFFFDE68A)),
-                            backgroundColor: const Color(0xFFFFFBEB),
-                            padding: const EdgeInsets.symmetric(vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      ElevatedButton.icon(
-                        onPressed: _showGeneratePayrollModal,
-                        icon: const Icon(Icons.add_rounded, size: 14),
-                        label: const Text('+ Generate', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800)),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFEFAA1F),
-                          foregroundColor: const Color(0xFF0F172A),
-                          elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-
-                  // ── Filters Bar (Month, Year, Status, Department, Search) ──
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFF1F5F9)),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            // Month Dropdown
-                            Expanded(
-                              child: _filterDropdown('MONTH', _selectedMonth, _months, (v) {
-                                setState(() => _selectedMonth = v);
-                                _loadData();
-                              }),
-                            ),
-                            const SizedBox(width: 8),
-
-                            // Year Dropdown
-                            Expanded(
-                              child: _filterDropdown('YEAR', _selectedYear, _years, (v) {
-                                setState(() => _selectedYear = v);
-                                _loadData();
-                              }),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-
-                        Row(
-                          children: [
-                            // Status Dropdown
-                            Expanded(
-                              child: _filterDropdown('STATUS', _selectedStatus, ['All', 'Pending', 'Processed'], (v) {
-                                setState(() => _selectedStatus = v);
-                              }),
-                            ),
-                            const SizedBox(width: 8),
-
-                            // Department Dropdown
-                            Expanded(
-                              child: _filterDropdown('DEPARTMENT', _selectedDepartment, _departments, (v) {
-                                setState(() => _selectedDepartment = v);
-                              }),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-
-                        // Search Field
-                        Container(
-                          height: 38,
-                          decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
-                          child: TextField(
-                            onChanged: (v) => setState(() => _searchQuery = v),
-                            decoration: const InputDecoration(
-                              hintText: 'Search by employee...',
-                              hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                              prefixIcon: Icon(Icons.search_rounded, size: 16, color: Color(0xFF94A3B8)),
-                              border: InputBorder.none,
-                              contentPadding: EdgeInsets.symmetric(vertical: 9),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  // ── 4 Statistics Cards (Screenshot 1 & 4) ──
-                  Row(
-                    children: [
-                      Expanded(child: _payrollStatCard('GROSS SALARY', '₹${_grossSalaryTotal.toStringAsFixed(2)}', 'This month', Icons.currency_rupee_rounded, AppColors.brandDark, const Color(0xFFFFFBEB))),
                       const SizedBox(width: 8),
-                      Expanded(child: _payrollStatCard('DEDUCTIONS', '₹${_deductionsTotal.toStringAsFixed(2)}', 'PF, ESI, Tax', Icons.currency_rupee_rounded, AppColors.brandDark, const Color(0xFFFFFBEB))),
+                      Expanded(
+                        child: _filterDropdown('YEAR', _selectedYear, _years, (v) {
+                          setState(() => _selectedYear = v);
+                          _loadData();
+                        }),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(child: _payrollStatCard('NET PAYABLE', '₹${_netPayableTotal.toStringAsFixed(2)}', 'Ready to disburse', Icons.check_circle_outline_rounded, const Color(0xFF16A34A), const Color(0xFFDCFCE7))),
+                      Expanded(
+                        child: _filterDropdown('STATUS', _selectedStatus, const ['All', 'Pending', 'Processed'], (v) {
+                          setState(() => _selectedStatus = v);
+                        }),
+                      ),
                       const SizedBox(width: 8),
-                      Expanded(child: _payrollStatCard('PROCESSED', '$_processedCount', 'Out of $_totalCount', Icons.schedule_rounded, const Color(0xFF2563EB), const Color(0xFFEFF6FF))),
+                      Expanded(
+                        child: _filterDropdown('DEPARTMENT', _selectedDepartment, _departments, (v) {
+                          setState(() => _selectedDepartment = v);
+                        }),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-
-                  // Header
-                  const Text('Employee Payroll Details', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                  const SizedBox(height: 10),
-
-                  // ── Payroll Record Cards List ──
-                  if (_filteredRecords.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(36),
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-                      child: const Text('No payroll records found for this period', style: TextStyle(fontSize: 13, color: Color(0xFF94A3B8))),
-                    )
-                  else
-                    ..._filteredRecords.map((r) => _buildPayrollCard(r)),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    height: 48,
+                    child: TextField(
+                      onChanged: (v) => setState(() => _searchQuery = v),
+                      style: const TextStyle(fontSize: 14),
+                      decoration: const InputDecoration(
+                        hintText: 'Search by employee name or ID...',
+                        prefixIcon: Icon(Icons.search_rounded, size: 20),
+                        contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
+            const SizedBox(height: 16),
+
+            if (_isLoading)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 60),
+                child: Center(child: AppTabLoader()),
+              )
+            else if (_error != null)
+              _errorState()
+            else ...[
+              // ── 4 Statistics Cards ──
+              Row(
+                children: [
+                  Expanded(child: _payrollStatCard('GROSS SALARY', _money(_grossSalaryTotal), 'This month', Icons.currency_rupee_rounded, AppColors.warning, AppColors.warningBg)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _payrollStatCard('DEDUCTIONS', _money(_deductionsTotal), 'PF, ESI, Tax', Icons.currency_rupee_rounded, AppColors.error, AppColors.errorBg)),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(child: _payrollStatCard('NET PAYABLE', _money(_netPayableTotal), 'Ready to disburse', Icons.check_circle_outline_rounded, AppColors.success, AppColors.successBg)),
+                  const SizedBox(width: 12),
+                  Expanded(child: _payrollStatCard('PROCESSED', '$_processedCount', 'Out of ${_records.length}', Icons.schedule_rounded, AppColors.info, AppColors.infoBg)),
+                ],
+              ),
+              const SizedBox(height: 24),
+
+              const Text('Employee Payroll Details', style: AppTextStyles.headingSmall),
+              const SizedBox(height: 12),
+
+              if (_filteredRecords.isEmpty)
+                AppCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                  border: Border.all(color: const Color(0xFFECEEF1)),
+                  child: Center(
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(color: AppColors.primary.withValues(alpha: 0.12), shape: BoxShape.circle),
+                          child: Icon(Icons.receipt_long_outlined, size: 30, color: AppColors.primaryText),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          _records.isEmpty
+                              ? 'No payroll generated for $_monthStr'
+                              : 'No payroll entries match the active search and filter settings.',
+                          textAlign: TextAlign.center,
+                          style: AppTextStyles.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              else
+                ..._filteredRecords.map(_buildPayrollCard),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _errorState() {
+    return AppCard(
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: Column(
+        children: [
+          Container(
+            width: 64,
+            height: 64,
+            decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+            child: const Icon(Icons.cloud_off_rounded, size: 30, color: AppColors.error),
+          ),
+          const SizedBox(height: 16),
+          Text(_error ?? 'Could not load payroll.', textAlign: TextAlign.center, style: AppTextStyles.bodySmall),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: () => _loadData(),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Retry'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -632,17 +603,18 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-        const SizedBox(height: 3),
+        Text(label, style: AppTextStyles.sectionLabel.copyWith(fontSize: 10.5, color: AppColors.textSecondary)),
+        const SizedBox(height: 6),
         Container(
-          height: 36,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFE2E8F0))),
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(color: const Color(0xFFF7F8FA), borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E5EA))),
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: items.contains(value) ? value : items.first,
               isExpanded: true,
-              items: items.map((item) => DropdownMenuItem(value: item, child: Text(item, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)))).toList(),
+              icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
+              items: items.map((item) => DropdownMenuItem(value: item, child: Text(item, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: AppColors.textPrimary)))).toList(),
               onChanged: (v) {
                 if (v != null) onChanged(v);
               },
@@ -654,120 +626,123 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
   }
 
   Widget _payrollStatCard(String title, String amount, String subtitle, IconData icon, Color color, Color bg) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [BoxShadow(color: Color(0x04000000), blurRadius: 6, offset: Offset(0, 2))],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return AppCard(
+      border: Border.all(color: const Color(0xFFECEEF1)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                const SizedBox(height: 4),
-                Text(amount, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)), overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 2),
-                Text(subtitle, style: const TextStyle(fontSize: 9, color: Color(0xFF94A3B8))),
-              ],
-            ),
-          ),
           Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-            child: Icon(icon, size: 15, color: color),
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+            child: Icon(icon, size: 20, color: color),
           ),
+          const SizedBox(height: 12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(amount, maxLines: 1, style: AppTextStyles.displayLarge.copyWith(fontSize: 22)),
+          ),
+          const SizedBox(height: 4),
+          Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, letterSpacing: 0.5, color: AppColors.textSecondary)),
+          const SizedBox(height: 2),
+          Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.caption.copyWith(color: AppColors.textCaption)),
         ],
       ),
     );
   }
 
   Widget _buildPayrollCard(AdminPayrollRecord r) {
-    final isProcessed = r.status.toLowerCase() == 'processed';
+    final isProcessed = r.isProcessed;
+    final busy = _busyIds.contains(r.id);
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-      ),
+    return AppCard(
+      margin: const EdgeInsets.only(bottom: 12),
+      border: Border.all(color: const Color(0xFFECEEF1)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               CircleAvatar(
-                radius: 16,
-                backgroundColor: const Color(0xFFF1F5F9),
-                child: Text(r.initials, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
+                radius: 22,
+                backgroundColor: AppColors.primary.withValues(alpha: 0.12),
+                child: Text(r.initials, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.primaryText)),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(r.name, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-                    Text('${r.employeeId} • ${r.designation} (${r.department})', style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B))),
+                    Text(r.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.headingSmall),
+                    const SizedBox(height: 2),
+                    Text('${r.employeeId} • ${r.designation} (${r.department})',
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: AppTextStyles.bodySmall),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: isProcessed ? const Color(0xFFDCFCE7) : const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(4),
+                  color: isProcessed ? AppColors.successBg : AppColors.warningBg,
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   r.status.toUpperCase(),
                   style: TextStyle(
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w900,
-                    color: isProcessed ? const Color(0xFF16A34A) : AppColors.brandDark,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.3,
+                    color: isProcessed ? AppColors.success : AppColors.warning,
                   ),
                 ),
               ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.more_vert_rounded, size: 18, color: Color(0xFF64748B)),
-                onSelected: (val) {
-                  if (val == 'statement') {
-                    _showStatementModal(r);
-                  } else if (val == 'download') {
-                    SnackBarUtils.showSnackBar(context, 'Downloading payslip PDF for ${r.name}...');
-                  } else if (val == 'approve') {
-                    setState(() => r.status = 'Processed');
-                    SnackBarUtils.showSnackBar(context, 'Payroll approved for ${r.name}');
-                  }
-                },
-                itemBuilder: (ctx) => [
-                  const PopupMenuItem(value: 'statement', child: Row(children: [Icon(Icons.receipt_long_rounded, size: 16, color: Color(0xFF2563EB)), SizedBox(width: 8), Text('View Statement', style: TextStyle(fontSize: 11.5))])),
-                  const PopupMenuItem(value: 'download', child: Row(children: [Icon(Icons.download_rounded, size: 16, color: AppColors.brandDark), SizedBox(width: 8), Text('Download Payslip', style: TextStyle(fontSize: 11.5))])),
-                  if (!isProcessed)
-                    const PopupMenuItem(value: 'approve', child: Row(children: [Icon(Icons.check_circle_outline_rounded, size: 16, color: Color(0xFF16A34A)), SizedBox(width: 8), Text('Approve', style: TextStyle(fontSize: 11.5))])),
-                ],
-              ),
+              if (busy)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                )
+              else
+                PopupMenuButton<String>(
+                  tooltip: 'More actions',
+                  icon: const Icon(Icons.more_vert_rounded, size: 20, color: AppColors.textSecondary),
+                  onSelected: (val) {
+                    if (val == 'statement') {
+                      _viewStatement(r);
+                    } else if (val == 'download') {
+                      _downloadPayslip(r);
+                    } else if (val == 'approve') {
+                      _confirmApprove(r);
+                    }
+                  },
+                  itemBuilder: (ctx) => [
+                    const PopupMenuItem(value: 'statement', child: Row(children: [Icon(Icons.receipt_long_rounded, size: 20, color: AppColors.info), SizedBox(width: 12), Text('View Statement', style: TextStyle(fontSize: 14))])),
+                    const PopupMenuItem(value: 'download', child: Row(children: [Icon(Icons.download_rounded, size: 20, color: AppColors.brandDark), SizedBox(width: 12), Text('Download Payslip', style: TextStyle(fontSize: 14))])),
+                    if (!isProcessed)
+                      const PopupMenuItem(value: 'approve', child: Row(children: [Icon(Icons.check_circle_outline_rounded, size: 20, color: AppColors.success), SizedBox(width: 12), Text('Approve', style: TextStyle(fontSize: 14))]))
+                    else
+                      const PopupMenuItem(enabled: false, child: Row(children: [Icon(Icons.check_rounded, size: 20, color: AppColors.success), SizedBox(width: 12), Text('Approved', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.success))])),
+                  ],
+                ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
 
-          // Financial Metrics Row (Gross, Deductions, Net Pay)
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFE2E8F0))),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Expanded(child: _metricItem('GROSS', '₹${r.gross.toStringAsFixed(2)}', const Color(0xFF1E293B))),
+                Expanded(child: _metricItem('GROSS', _money(r.gross), AppColors.textPrimary)),
                 const SizedBox(width: 6),
-                Expanded(child: _metricItem('DEDUCTIONS', '₹${r.deductions.toStringAsFixed(2)}', const Color(0xFFDC2626))),
+                Expanded(child: _metricItem('DEDUCTIONS', _money(r.deductions), AppColors.error)),
                 const SizedBox(width: 6),
-                Expanded(child: _metricItem('NET PAY', '₹${r.netPay.toStringAsFixed(2)}', const Color(0xFF16A34A))),
+                Expanded(child: _metricItem('NET PAY', _money(r.netPay), AppColors.success)),
               ],
             ),
           ),
@@ -780,12 +755,551 @@ class _AdminPayrollScreenState extends State<AdminPayrollScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8))),
+        Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.4, color: AppColors.textSecondary)),
+        const SizedBox(height: 4),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(value, maxLines: 1, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color)),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Generate Payroll dialog (web generateModal.tsx)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GeneratePayrollDialog extends StatefulWidget {
+  final List<_PayrollEmployee> employees;
+  final AdminPayrollService service;
+
+  const _GeneratePayrollDialog({required this.employees, required this.service});
+
+  @override
+  State<_GeneratePayrollDialog> createState() => _GeneratePayrollDialogState();
+}
+
+class _GeneratePayrollDialogState extends State<_GeneratePayrollDialog> {
+  late _PayrollEmployee _emp;
+  late String _month;
+  late String _year;
+  // staffId -> 'Pending' | 'Processed' for the chosen month
+  final Map<String, Map<String, String>> _statusByMonth = {};
+  bool _loadingStatus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _emp = widget.employees.first;
+    final now = DateTime.now();
+    _month = _kMonths[now.month - 1];
+    _year = '${now.year}';
+    _syncPeriod();
+    _loadExisting();
+  }
+
+  List<({String month, String year})> get _periods => _periodsFor(_emp.joiningDate);
+  String get _monthStr => '$_month $_year';
+  Map<String, String> get _existing => _statusByMonth[_monthStr] ?? const {};
+  String? get _selectedStatus => _existing[_emp.id];
+  bool get _isLocked => _selectedStatus == 'Processed';
+
+  /// Keeps the chosen period one of this employee's periods.
+  void _syncPeriod() {
+    final periods = _periods;
+    if (periods.isEmpty) return;
+    if (!periods.any((p) => p.month == _month && p.year == _year)) {
+      _month = periods.first.month;
+      _year = periods.first.year;
+    }
+  }
+
+  Future<void> _loadExisting() async {
+    final key = _monthStr;
+    if (_statusByMonth.containsKey(key)) return;
+    setState(() => _loadingStatus = true);
+    try {
+      final list = await widget.service.getPayrollList(key);
+      final map = <String, String>{};
+      for (final rec in list) {
+        final sid = (rec['staffId'] ?? '').toString();
+        if (sid.isNotEmpty) map[sid] = (rec['status'] ?? '').toString();
+      }
+      _statusByMonth[key] = map;
+    } catch (e) {
+      if (mounted) SnackBarUtils.showSnackBar(context, e.toString(), isError: true);
+    } finally {
+      if (mounted) setState(() => _loadingStatus = false);
+    }
+  }
+
+  void _onPeriodChanged() {
+    _syncPeriod();
+    setState(() {});
+    _loadExisting();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final periods = _periods;
+    final hasPeriods = periods.isNotEmpty;
+    final years = periods.map((p) => p.year).toSet().toList();
+    final monthsInYear = periods.where((p) => p.year == _year).map((p) => p.month).toList();
+    final lockedMessage = 'Payroll for ${_emp.name} for $_monthStr is already generated and paid. It cannot be generated again.';
+
+    String suffixFor(_PayrollEmployee e) {
+      final s = _existing[e.id];
+      if (s == 'Processed') return ' - Already generated';
+      if (s == 'Pending') return ' - Pending approval';
+      return '';
+    }
+
+    return AlertDialog(
+      backgroundColor: AppColors.surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Generate Payroll', style: AppTextStyles.headingMedium),
+                SizedBox(height: 4),
+                Text('Generate payroll for an employee based on salary structure and attendance', style: AppTextStyles.bodySmall),
+              ],
+            ),
+          ),
+          IconButton(
+            tooltip: 'Close',
+            icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.textSecondary),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Employee', style: AppTextStyles.label),
+            const SizedBox(height: 6),
+            Container(
+              height: 48,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.primary, width: 1.4),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _emp.id,
+                  isExpanded: true,
+                  items: widget.employees
+                      .map((e) => DropdownMenuItem(
+                            value: e.id,
+                            child: Text('${e.name} (${e.employeeId})${suffixFor(e)}', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null) return;
+                    _emp = widget.employees.firstWhere((e) => e.id == v);
+                    _onPeriodChanged();
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: _dialogDropdown('Year', hasPeriods ? _year : null, years, hasPeriods
+                      ? (v) {
+                          _year = v;
+                          final inYear = periods.where((p) => p.year == v).toList();
+                          if (!inYear.any((p) => p.month == _month) && inYear.isNotEmpty) _month = inYear.first.month;
+                          _onPeriodChanged();
+                        }
+                      : null),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _dialogDropdown('Month', hasPeriods ? _month : null, monthsInYear, hasPeriods
+                      ? (v) {
+                          _month = v;
+                          _onPeriodChanged();
+                        }
+                      : null),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_loadingStatus)
+              const LinearProgressIndicator(minHeight: 2)
+            else if (_isLocked)
+              _notice(lockedMessage, Icons.warning_amber_rounded, AppColors.errorBg, AppColors.error)
+            else if (_selectedStatus == 'Pending')
+              _notice('Payroll for $_monthStr is already generated and pending approval. Generating again will recalculate it.',
+                  Icons.info_outline_rounded, AppColors.warningBg, AppColors.warning),
+            const SizedBox(height: 8),
+            Text(
+              hasPeriods
+                  ? (_emp.joiningDate != null
+                      ? 'Payroll is available from ${periods.last.month} ${periods.last.year} — the month ${_emp.name} joined.'
+                      : 'No joining date on record, so only the current month is offered.')
+                  : '${_emp.name} has a joining date in the future, so there is no payroll period to generate yet.',
+              style: TextStyle(fontSize: 12, color: hasPeriods ? AppColors.textSecondary : AppColors.warning, fontWeight: hasPeriods ? FontWeight.w400 : FontWeight.w600),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+        ),
+        ElevatedButton(
+          onPressed: (!hasPeriods || _isLocked || _loadingStatus)
+              ? null
+              : () => Navigator.pop(context, (emp: _emp, month: _month, year: _year)),
+          style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
+          child: Text(_selectedStatus == 'Pending' ? 'Regenerate' : 'Generate'),
+        ),
+      ],
+    );
+  }
+}
+
+Widget _notice(String text, IconData icon, Color bg, Color fg) {
+  return Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(12)),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: fg),
+        const SizedBox(width: 8),
+        Expanded(child: Text(text, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w500, height: 1.4, color: fg))),
+      ],
+    ),
+  );
+}
+
+Widget _dialogDropdown(String label, String? value, List<String> items, ValueChanged<String>? onChanged) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(label, style: AppTextStyles.label),
+      const SizedBox(height: 6),
+      Container(
+        height: 48,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF7F8FA),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: const Color(0xFFE2E5EA)),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: value != null && items.contains(value) ? value : null,
+            isExpanded: true,
+            items: items.map((m) => DropdownMenuItem(value: m, child: Text(m, style: const TextStyle(fontSize: 13.5, color: AppColors.textPrimary)))).toList(),
+            onChanged: onChanged == null
+                ? null
+                : (v) {
+                    if (v != null) onChanged(v);
+                  },
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk Generate dialog (web bulkGenerateModal.tsx + Payroll.handleBulkGenerateSubmit)
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _BulkGenerateDialog extends StatefulWidget {
+  final List<_PayrollEmployee> employees;
+  final AdminPayrollService service;
+
+  const _BulkGenerateDialog({required this.employees, required this.service});
+
+  @override
+  State<_BulkGenerateDialog> createState() => _BulkGenerateDialogState();
+}
+
+class _BulkGenerateDialogState extends State<_BulkGenerateDialog> {
+  late String _month;
+  late String _year;
+  int? _done;
+  int _total = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _month = _kMonths[now.month - 1];
+    _year = '${now.year}';
+  }
+
+  List<_PayrollEmployee> get _active => widget.employees.where((e) => e.isActive).toList();
+
+  List<String> get _years {
+    final now = DateTime.now();
+    var first = now.year;
+    for (final e in _active) {
+      final j = e.joiningDate;
+      if (j != null && j.year < first) first = j.year;
+    }
+    return [for (var y = now.year; y >= first; y--) '$y'];
+  }
+
+  List<String> get _monthsForYear {
+    final now = DateTime.now();
+    return int.tryParse(_year) == now.year ? _kMonths.sublist(0, now.month) : _kMonths;
+  }
+
+  /// Active employees who had joined by the end of the chosen month.
+  List<_PayrollEmployee> get _eligible {
+    final monthEnd = DateTime(int.parse(_year), _kMonths.indexOf(_month) + 2, 0, 23, 59, 59, 999);
+    return _active.where((e) => e.joiningDate == null || !e.joiningDate!.isAfter(monthEnd)).toList();
+  }
+
+  bool get _running => _done != null;
+
+  Future<void> _run() async {
+    final employees = _eligible;
+    final monthStr = '$_month $_year';
+    var generated = 0;
+    var alreadyPaid = 0;
+    final failed = <String>[];
+    setState(() {
+      _done = 0;
+      _total = employees.length;
+    });
+    for (final emp in employees) {
+      try {
+        await widget.service.generatePayrollForStaff(emp.id, monthStr);
+        generated++;
+      } on AdminPayrollException catch (e) {
+        if (e.statusCode == 409) {
+          alreadyPaid++;
+        } else {
+          failed.add(emp.name);
+        }
+      }
+      if (!mounted) return;
+      setState(() => _done = (_done ?? 0) + 1);
+    }
+    if (!mounted) return;
+    Navigator.pop(context, (month: _month, year: _year, generated: generated, alreadyPaid: alreadyPaid, failed: failed));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final months = _monthsForYear;
+    if (!months.contains(_month)) _month = months.last;
+    final eligible = _eligible;
+
+    return PopScope(
+      canPop: !_running,
+      child: AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Bulk Generate Payroll', style: AppTextStyles.headingMedium),
+                  SizedBox(height: 4),
+                  Text('Generate payroll for all active employees for the selected period', style: AppTextStyles.bodySmall),
+                ],
+              ),
+            ),
+            IconButton(
+              tooltip: 'Close',
+            icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.textSecondary),
+              onPressed: _running ? null : () => Navigator.pop(context),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: _dialogDropdown('Month', _month, months, _running ? null : (v) => setState(() => _month = v)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _dialogDropdown('Year', _year, _years, _running ? null : (v) => setState(() => _year = v)),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            _notice(
+              '${eligible.length} active employee${eligible.length == 1 ? '' : 's'} for $_month $_year. '
+              'Payroll already paid for the month is left as it is, and pending payroll is recalculated.',
+              Icons.info_outline_rounded,
+              AppColors.background,
+              AppColors.textSecondary,
+            ),
+            if (_running) ...[
+              const SizedBox(height: 12),
+              LinearProgressIndicator(value: _total == 0 ? null : (_done ?? 0) / _total, minHeight: 3),
+              const SizedBox(height: 6),
+              Text('Generating ${_done ?? 0} of $_total...', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: _running ? null : () => Navigator.pop(context),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
+          ),
+          ElevatedButton(
+            onPressed: (_running || eligible.isEmpty) ? null : _run,
+            style: ElevatedButton.styleFrom(minimumSize: const Size(0, 44)),
+            child: Text(_running ? 'Generating...' : 'Generate All'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Payslip statement viewer: the server-rendered statement PDF
+// (GET /admin/staff/payroll/statement/:id/view?download=true) shown in-app.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _PayrollStatementViewer extends StatefulWidget {
+  final AdminPayrollRecord record;
+  final File file;
+
+  const _PayrollStatementViewer({required this.record, required this.file});
+
+  @override
+  State<_PayrollStatementViewer> createState() => _PayrollStatementViewerState();
+}
+
+class _PayrollStatementViewerState extends State<_PayrollStatementViewer> {
+  late final PdfControllerPinch _controller;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PdfControllerPinch(document: PdfDocument.openFile(widget.file.path));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _openExternally() async {
+    final result = await OpenFilex.open(widget.file.path);
+    if (!mounted) return;
+    if (result.type != ResultType.done) {
+      SnackBarUtils.showSnackBar(context, result.message.isNotEmpty ? result.message : 'No app found to open the PDF.', isError: true);
+    }
+  }
+
+  Future<void> _share() async {
+    try {
+      await SharePlus.instance.share(ShareParams(
+        files: [XFile(widget.file.path, mimeType: 'application/pdf')],
+        subject: 'Payslip - ${widget.record.name} - ${widget.record.monthYear}',
+      ));
+    } catch (e) {
+      if (mounted) SnackBarUtils.showSnackBar(context, 'Could not share the payslip: $e', isError: true);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = widget.record;
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.surface,
+        elevation: 0,
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${r.name} - Statement', style: AppTextStyles.headingSmall),
+            Text('${r.employeeId} • ${r.monthYear}', style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+          ],
+        ),
+        actions: [
+          IconButton(onPressed: _share, icon: const Icon(Icons.share_rounded), tooltip: 'Share'),
+          IconButton(onPressed: _openExternally, icon: const Icon(Icons.open_in_new_rounded), tooltip: 'Open in another app'),
+        ],
+      ),
+      body: Column(
+        children: [
+          Container(
+            color: AppColors.surface,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Row(
+              children: [
+                Expanded(child: _summary('GROSS', _money(r.gross), AppColors.textPrimary)),
+                Expanded(child: _summary('DEDUCTIONS', _money(r.deductions), AppColors.error)),
+                Expanded(child: _summary('NET PAY', _money(r.netPay), AppColors.success)),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _error != null
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(_error!, textAlign: TextAlign.center, style: AppTextStyles.bodySmall),
+                          const SizedBox(height: 12),
+                          OutlinedButton.icon(
+                            onPressed: _openExternally,
+                            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+                            label: const Text('Open in another app'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                : PdfViewPinch(
+                    controller: _controller,
+                    onDocumentError: (_) => setState(() => _error = 'This payslip could not be displayed here.'),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _summary(String label, String value, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, letterSpacing: 0.4, color: AppColors.textSecondary)),
         const SizedBox(height: 2),
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: Alignment.centerLeft,
-          child: Text(value, maxLines: 1, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
+          child: Text(value, maxLines: 1, style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: color)),
         ),
       ],
     );

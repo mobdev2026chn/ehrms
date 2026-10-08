@@ -63,13 +63,7 @@ class _LmsAdminShellScreenState extends State<LmsAdminShellScreen>
         backgroundColor: AppColors.background,
         appBar: AppBar(
           leading: const MenuIconButton(),
-          title: const Text(
-            'LMS Admin',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          backgroundColor: AppColors.surface,
-          foregroundColor: AppColors.textPrimary,
-          elevation: 0,
+          title: const Text('LMS Admin'),
           bottom: PreferredSize(
             preferredSize: const Size.fromHeight(46),
             child: Container(
@@ -79,12 +73,9 @@ class _LmsAdminShellScreenState extends State<LmsAdminShellScreen>
                 controller: _tabController,
                 isScrollable: true,
                 tabAlignment: TabAlignment.start,
-                labelColor: AppColors.primary,
-                unselectedLabelColor: AppColors.textSecondary,
-                indicatorColor: AppColors.primary,
-                indicatorWeight: 2.5,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 14),
                 labelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-                unselectedLabelStyle: const TextStyle(fontSize: 13),
+                unselectedLabelStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
                 tabs: _tabs
                     .map((t) => Tab(
                           height: 44,
@@ -93,7 +84,7 @@ class _LmsAdminShellScreenState extends State<LmsAdminShellScreen>
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(t.icon, size: 16),
+                              Icon(t.icon, size: 18),
                               const SizedBox(width: 6),
                               Text(t.label),
                             ],

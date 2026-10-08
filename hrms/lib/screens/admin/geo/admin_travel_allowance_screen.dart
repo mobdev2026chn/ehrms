@@ -1,11 +1,15 @@
-// Admin GEO: travel-allowance claims from field employees, with approve (paid via payroll).
+// Admin GEO: travel-allowance claims from field employees, filtered by status / day / name, with
+// approve (payroll month, or UPI / bank with proof), revise and reject, and a details screen.
 // HRMSbackend /api/admin/hrms-geo/travel-allowance.
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../config/app_colors.dart';
 import '../../../services/admin_geo_service.dart';
-import '../../../utils/snackbar_utils.dart';
+import 'admin_geo_travel_allowance_detail_screen.dart';
+import 'geo_admin_ui.dart';
+import 'geo_ta_actions.dart';
 
 class AdminTravelAllowanceScreen extends StatefulWidget {
   const AdminTravelAllowanceScreen({super.key});
@@ -15,16 +19,14 @@ class AdminTravelAllowanceScreen extends StatefulWidget {
 }
 
 class _AdminTravelAllowanceScreenState extends State<AdminTravelAllowanceScreen> {
-  static const _accent = Color(0xFFEFAA1F);
-  static const _ink = Color(0xFF0F172A);
-  static const _muted = Color(0xFF64748B);
   static const _tabs = ['All', 'Pending', 'Approved', 'Rejected'];
 
   List<Map<String, dynamic>> _all = [];
   bool _loading = true;
   String? _error;
   String _tab = 'Pending';
-  String? _busyKey;
+  DateTime? _day;
+  String _query = '';
 
   @override
   void initState() {
@@ -33,220 +35,172 @@ class _AdminTravelAllowanceScreenState extends State<AdminTravelAllowanceScreen>
   }
 
   Future<void> _load() async {
-    if (mounted) setState(() => _error = null);
-    final r = await AdminGeoService.instance.getTravelAllowances();
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      if (r['success'] == true) {
-        _all = List<Map<String, dynamic>>.from(r['data'] as List);
-      } else {
-        _error = r['message']?.toString() ?? 'Could not load claims.';
-      }
-    });
+    setState(() => _error = null);
+    try {
+      final list = await AdminGeoService.instance
+          .getTravelAllowances(date: _day != null ? AdminGeoService.dayKey(_day!) : null);
+      if (!mounted) return;
+      setState(() {
+        _all = list;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
   }
 
-  bool _isPending(String s) => s == 'Pending' || s == 'Generated';
-  bool _isApproved(String s) => s == 'Approved' || s == 'Revised-Approved';
+  String _bucket(String s) => taIsPending(s) ? 'Pending' : taIsApproved(s) ? 'Approved' : s == 'Rejected' ? 'Rejected' : '';
 
   List<Map<String, dynamic>> get _visible {
+    final q = _query.toLowerCase();
     return _all.where((c) {
-      final s = (c['status'] ?? '').toString();
-      switch (_tab) {
-        case 'Pending':
-          return _isPending(s);
-        case 'Approved':
-          return _isApproved(s);
-        case 'Rejected':
-          return s == 'Rejected';
-        default:
-          return true;
-      }
+      if (_tab != 'All' && _bucket(GeoUi.s(c['status'])) != _tab) return false;
+      return q.isEmpty || GeoUi.s(c['staffName']).toLowerCase().contains(q);
     }).toList();
   }
 
-  num _n(dynamic v) => v is num ? v : num.tryParse('${v ?? ''}') ?? 0;
+  String _staffId(Map<String, dynamic> c) => GeoUi.s(c['staffId'] is Map ? (c['staffId'] as Map)['_id'] : c['staffId']);
 
   double _amount(Map<String, dynamic> c) {
     final revised = c['revisedAmount'];
     if (revised is num) return revised.toDouble();
-    return _n(c['generatedAmount']).toDouble();
+    return GeoUi.n(c['generatedAmount']).toDouble();
   }
 
-  Future<void> _approve(Map<String, dynamic> c) async {
-    final staffId = (c['staffId'] is Map ? c['staffId']['_id'] : c['staffId'])?.toString() ?? '';
-    final date = (c['date'] ?? '').toString();
-    if (staffId.isEmpty || date.isEmpty) return;
-    final key = '$staffId|$date';
-
+  Future<void> _pickDay() async {
     final now = DateTime.now();
-    final month = '${now.year}-${now.month.toString().padLeft(2, '0')}';
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Approve claim'),
-        content: Text('Approve ₹${_amount(c).toStringAsFixed(2)} for ${c['staffName'] ?? 'this employee'}, paid through payroll $month?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: _accent, foregroundColor: Colors.white),
-            child: const Text('Approve'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    setState(() => _busyKey = key);
-    final r = await AdminGeoService.instance.approveTravelAllowance(staffId: staffId, date: date, payrollMonth: month);
-    if (!mounted) return;
-    setState(() => _busyKey = null);
-    if (r['success'] == true) {
-      SnackBarUtils.showSnackBar(context, 'Claim approved.');
-      _load();
-    } else {
-      SnackBarUtils.showSnackBar(context, r['message']?.toString() ?? 'Could not approve.', isError: true);
-    }
+    final d = await showDatePicker(context: context, initialDate: _day ?? now, firstDate: DateTime(now.year - 2), lastDate: now);
+    if (d == null) return;
+    setState(() {
+      _day = d;
+      _loading = true;
+    });
+    _load();
   }
 
   @override
   Widget build(BuildContext context) {
     final counts = <String, int>{'All': _all.length};
     for (final c in _all) {
-      final s = (c['status'] ?? '').toString();
-      final bucket = _isPending(s) ? 'Pending' : _isApproved(s) ? 'Approved' : s == 'Rejected' ? 'Rejected' : null;
-      if (bucket != null) counts[bucket] = (counts[bucket] ?? 0) + 1;
+      final b = _bucket(GeoUi.s(c['status']));
+      if (b.isNotEmpty) counts[b] = (counts[b] ?? 0) + 1;
     }
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: _ink,
-        title: const Text('Travel Allowance', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
-        actions: [IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded))],
-      ),
-      body: Column(
-        children: [
-          Container(
-            color: Colors.white,
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-            child: SizedBox(
-              height: 34,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _tabs.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 8),
-                itemBuilder: (_, i) {
-                  final t = _tabs[i];
-                  final sel = t == _tab;
-                  final n = counts[t] ?? 0;
-                  return ChoiceChip(
-                    selected: sel,
-                    onSelected: (_) => setState(() => _tab = t),
-                    showCheckmark: false,
-                    selectedColor: _accent,
-                    backgroundColor: const Color(0xFFF1F5F9),
-                    side: BorderSide.none,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    label: Text(n > 0 ? '$t  $n' : t,
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: sel ? Colors.white : _ink)),
-                  );
-                },
+      backgroundColor: GeoUi.bg,
+      appBar: GeoUi.appBar('Travel Allowance', actions: [
+        IconButton(tooltip: 'Refresh', onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded)),
+      ]),
+      body: Column(children: [
+        Container(
+          color: AppColors.surface,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Column(children: [
+            Row(children: [
+              Expanded(
+                child: TextField(
+                  decoration: GeoUi.input('Search employee', suffix: const Icon(Icons.search_rounded, size: 20)),
+                  onChanged: (v) => setState(() => _query = v.trim()),
+                ),
               ),
-            ),
-          ),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
-                : RefreshIndicator(
-                    onRefresh: _load,
-                    child: (_error != null && _all.isEmpty)
-                        ? _center(Icons.wifi_off_rounded, 'Could not load', _error!)
-                        : _visible.isEmpty
-                            ? _center(Icons.receipt_long_outlined, 'No claims', 'Nothing in “$_tab”.')
-                            : ListView(
-                                padding: const EdgeInsets.fromLTRB(14, 12, 14, 28),
-                                children: _visible.map(_card).toList(),
-                              ),
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _card(Map<String, dynamic> c) {
-    final name = (c['staffName'] ?? 'Staff').toString();
-    final status = (c['status'] ?? '').toString();
-    final dateStr = (c['date'] ?? '').toString();
-    DateTime? d = DateTime.tryParse(dateStr);
-    final dateLabel = d != null ? DateFormat('d MMM yyyy').format(d) : dateStr;
-    final km = _n(c['totalDistanceKm']);
-    final staffId = (c['staffId'] is Map ? c['staffId']['_id'] : c['staffId'])?.toString() ?? '';
-    final key = '$staffId|$dateStr';
-    final (bg, fg) = _isApproved(status)
-        ? (const Color(0xFFDCFCE7), const Color(0xFF15803D))
-        : status == 'Rejected'
-            ? (const Color(0xFFFEE2E2), const Color(0xFFB91C1C))
-            : (const Color(0xFFFEF3C7), const Color(0xFF92400E));
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 8, offset: Offset(0, 2))],
-      ),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          Expanded(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _ink))),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-            child: Text(status.toUpperCase(), style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: fg)),
-          ),
-        ]),
-        const SizedBox(height: 6),
-        Text('$dateLabel  ·  ${km.toStringAsFixed(1)} km', style: const TextStyle(fontSize: 12.5, color: _muted)),
-        const SizedBox(height: 8),
-        Row(children: [
-          Text('₹${_amount(c).toStringAsFixed(2)}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: _ink)),
-          const Spacer(),
-          if (_isPending(status))
-            _busyKey == key
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : ElevatedButton.icon(
-                    onPressed: () => _approve(c),
-                    icon: const Icon(Icons.check_rounded, size: 16),
-                    label: const Text('Approve'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _accent,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              const SizedBox(width: 8),
+              _day == null
+                  ? IconButton.outlined(onPressed: _pickDay, icon: const Icon(Icons.event_rounded), tooltip: 'Filter by day')
+                  : InputChip(
+                      label: Text(DateFormat('d MMM').format(_day!)),
+                      onPressed: _pickDay,
+                      onDeleted: () {
+                        setState(() {
+                          _day = null;
+                          _loading = true;
+                        });
+                        _load();
+                      },
                     ),
-                  ),
-        ]),
+            ]),
+            const SizedBox(height: 10),
+            GeoUi.choiceChips<String>(
+              values: _tabs,
+              selected: _tab,
+              label: (t) => (counts[t] ?? 0) > 0 ? '$t  ${counts[t]}' : t,
+              onSelected: (t) => setState(() => _tab = t),
+            ),
+          ]),
+        ),
+        Expanded(
+          child: _loading
+              ? GeoUi.loading
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: _error != null
+                      ? GeoUi.error(_error!, _load)
+                      : _visible.isEmpty
+                          ? GeoUi.message(Icons.receipt_long_outlined, 'No claims', 'Nothing in “$_tab”.')
+                          : ListView(
+                              padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                              children: _visible.map(_card).toList(),
+                            ),
+                ),
+        ),
       ]),
     );
   }
 
-  Widget _center(IconData icon, String title, String msg) => ListView(
-        children: [
-          const SizedBox(height: 120),
-          Icon(icon, size: 40, color: _muted),
-          const SizedBox(height: 10),
-          Center(child: Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _ink))),
-          const SizedBox(height: 4),
-          Center(child: Text(msg, style: const TextStyle(fontSize: 12.5, color: _muted))),
-          const SizedBox(height: 12),
-          Center(child: OutlinedButton(onPressed: _load, child: const Text('Retry'))),
-        ],
-      );
+  Widget _card(Map<String, dynamic> c) {
+    final name = GeoUi.s(c['staffName'], 'Staff');
+    final status = GeoUi.s(c['status']);
+    final date = GeoUi.s(c['date']);
+    final staffId = _staffId(c);
+    final transport = c['transport'] is Map ? GeoUi.s((c['transport'] as Map)['name']) : '';
+
+    return GeoUi.card(
+      onTap: () => Navigator.of(context)
+          .push(MaterialPageRoute(
+              builder: (_) => AdminGeoTravelAllowanceDetailScreen(
+                  claimId: GeoUi.s(c['_id']), staffId: staffId, date: date, staffName: name)))
+          .then((_) => _load()),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(
+            child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: GeoUi.ink)),
+          ),
+          const SizedBox(width: 8),
+          GeoUi.statusPill(status),
+        ]),
+        const SizedBox(height: 6),
+        Text(
+          [GeoUi.date(date), '${GeoUi.n(c['totalDistanceKm']).toStringAsFixed(1)} km', if (transport.isNotEmpty) transport].join('  ·  '),
+          style: const TextStyle(fontSize: 12.5, color: GeoUi.muted),
+        ),
+        const SizedBox(height: 12),
+        Row(children: [
+          Text(GeoUi.money(_amount(c)), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: GeoUi.ink)),
+          if (c['revisedAmount'] is num) ...[
+            const SizedBox(width: 6),
+            const Text('revised', style: TextStyle(fontSize: 12, color: GeoUi.muted)),
+          ],
+          const Spacer(),
+          if (taIsPending(status) && staffId.isNotEmpty)
+            ElevatedButton.icon(
+              onPressed: () async {
+                final ok = await showTaApproveSheet(context, staffId: staffId, date: date, amount: _amount(c), staffName: name);
+                if (ok) _load();
+              },
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: const Text('Approve'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.success,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(0, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              ),
+            ),
+        ]),
+      ]),
+    );
+  }
 }

@@ -136,17 +136,19 @@ class _CloudPunchCardState extends State<CloudPunchCard>
       width: double.infinity,
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
+        // Charcoal brand surface (same family as the bottom nav / login).
         gradient: const LinearGradient(
-          colors: [Color(0xFF1A1A2E), Color(0xFF16213E)],
+          colors: [Color(0xFF26262B), AppColors.ink],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.22),
-            blurRadius: 18,
-            offset: const Offset(0, 7),
+            color: Colors.black.withValues(alpha: 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -185,8 +187,11 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                       width: 44,
                       height: 44,
                       decoration: BoxDecoration(
-                        color: AppColors.primary.withValues(alpha: 0.15),
+                        color: AppColors.primary.withValues(alpha: 0.16),
                         shape: BoxShape.circle,
+                        border: Border.all(
+                          color: AppColors.primary.withValues(alpha: 0.28),
+                        ),
                       ),
                       child: Icon(
                         _isLive
@@ -211,10 +216,10 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                         Text(
                           _isLive ? 'Currently Working' : 'Worked Today',
                           style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.white.withValues(alpha: 0.5),
+                            fontSize: 12,
+                            color: Colors.white.withValues(alpha: 0.64),
                             fontWeight: FontWeight.w500,
-                            letterSpacing: 0.3,
+                            letterSpacing: 0.2,
                           ),
                         ),
                         if (_isLive) ...[
@@ -238,10 +243,11 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                           '${_hrs(_displayed)}:${_mins(_displayed)}',
                           style: const TextStyle(
                             fontSize: 28,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w700,
                             color: Colors.white,
                             letterSpacing: -0.5,
                             height: 1.0,
+                            fontFeatures: [FontFeature.tabularFigures()],
                           ),
                         ),
                         if (_isLive) ...[
@@ -255,18 +261,21 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                                 fontWeight: FontWeight.w600,
                                 color: AppColors.primary,
                                 height: 1.0,
+                                fontFeatures: const [
+                                  FontFeature.tabularFigures(),
+                                ],
                               ),
                             ),
                           ),
                         ],
                       ],
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Text(
                       'hrs : mins${_isLive ? ' : secs' : ''}',
                       style: TextStyle(
-                        fontSize: 9,
-                        color: Colors.white.withValues(alpha: 0.3),
+                        fontSize: 10,
+                        color: Colors.white.withValues(alpha: 0.42),
                         letterSpacing: 0.5,
                       ),
                     ),
@@ -282,7 +291,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                     icon: Icons.login_rounded,
                     label: 'IN',
                     time: inStr,
-                    color: Colors.greenAccent.shade400,
+                    color: const Color(0xFF34D399),
                   ),
                   const SizedBox(height: 8),
                   _buildTimeTag(
@@ -291,7 +300,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                     time: outStr ?? '--:--',
                     color: outStr != null
                         ? AppColors.primary
-                        : Colors.white.withValues(alpha: 0.2),
+                        : Colors.white.withValues(alpha: 0.38),
                   ),
                 ],
               ),
@@ -324,23 +333,23 @@ class _CloudPunchCardState extends State<CloudPunchCard>
 
     return [
       const SizedBox(height: 16),
-      Divider(color: Colors.white.withValues(alpha: 0.12), height: 1),
+      Divider(color: Colors.white.withValues(alpha: 0.10), height: 1),
       const SizedBox(height: 12),
       Row(
         children: [
           Icon(
-            Icons.coffee_rounded,
-            size: 14,
+            Icons.coffee_outlined,
+            size: 16,
             color: AppColors.brand,
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 8),
           Text(
             'Breaks Today',
             style: TextStyle(
-              fontSize: 11,
-              color: Colors.white.withValues(alpha: 0.6),
+              fontSize: 12,
+              color: Colors.white.withValues(alpha: 0.72),
               fontWeight: FontWeight.w600,
-              letterSpacing: 0.3,
+              letterSpacing: 0.2,
             ),
           ),
           const Spacer(),
@@ -349,7 +358,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             style: TextStyle(
               fontSize: 12,
               color: AppColors.brand,
-              fontWeight: FontWeight.bold,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -366,8 +375,7 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             'No breaks taken yet today',
             style: TextStyle(
               fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.5),
-              fontStyle: FontStyle.italic,
+              color: Colors.white.withValues(alpha: 0.55),
             ),
           ),
         )
@@ -388,8 +396,8 @@ class _CloudPunchCardState extends State<CloudPunchCard>
         : 0;
     final exhausted = remainingSec <= 0;
     final accent = exhausted
-        ? Colors.redAccent.shade200
-        : Colors.greenAccent.shade400;
+        ? const Color(0xFFF87171)
+        : const Color(0xFF34D399);
     final fraction = allowedSec > 0
         ? (usedSeconds / allowedSec).clamp(0.0, 1.0)
         : 0.0;
@@ -401,8 +409,8 @@ class _CloudPunchCardState extends State<CloudPunchCard>
             Text(
               exhausted ? 'Limit reached' : 'Remaining',
               style: TextStyle(
-                fontSize: 11,
-                color: Colors.white.withValues(alpha: 0.6),
+                fontSize: 12,
+                color: Colors.white.withValues(alpha: 0.64),
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -412,18 +420,18 @@ class _CloudPunchCardState extends State<CloudPunchCard>
               style: TextStyle(
                 fontSize: 12,
                 color: accent,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 8),
         ClipRRect(
-          borderRadius: BorderRadius.circular(4),
+          borderRadius: BorderRadius.circular(999),
           child: LinearProgressIndicator(
             value: fraction,
-            minHeight: 5,
-            backgroundColor: Colors.white.withValues(alpha: 0.12),
+            minHeight: 6,
+            backgroundColor: Colors.white.withValues(alpha: 0.10),
             valueColor: AlwaysStoppedAnimation<Color>(accent),
           ),
         ),
@@ -444,12 +452,12 @@ class _CloudPunchCardState extends State<CloudPunchCard>
         ? AppColors.brand
         : Colors.white.withValues(alpha: 0.85);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
           Container(
-            width: 8,
-            height: 8,
+            width: 7,
+            height: 7,
             decoration: BoxDecoration(
               color: b.ongoing
                   ? AppColors.brand
@@ -466,16 +474,16 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                 color: b.ongoing
                     ? AppColors.brandLight
                     : Colors.white.withValues(alpha: 0.8),
-                fontWeight: b.ongoing ? FontWeight.bold : FontWeight.w500,
+                fontWeight: b.ongoing ? FontWeight.w600 : FontWeight.w500,
               ),
             ),
           ),
           if (b.ongoing)
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
               decoration: BoxDecoration(
-                color: AppColors.brand.withValues(alpha: 0.2),
-                borderRadius: BorderRadius.circular(6),
+                color: AppColors.brand.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(999),
                 border: Border.all(
                   color: AppColors.brand.withValues(alpha: 0.4),
                 ),
@@ -484,7 +492,8 @@ class _CloudPunchCardState extends State<CloudPunchCard>
                 'ON BREAK',
                 style: TextStyle(
                   fontSize: 10,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.6,
                   color: AppColors.brand,
                 ),
               ),
@@ -510,17 +519,17 @@ class _CloudPunchCardState extends State<CloudPunchCard>
     required Color color,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: color.withValues(alpha: 0.25), width: 1),
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.24), width: 1),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 11, color: color),
-          const SizedBox(width: 4),
+          Icon(icon, size: 14, color: color),
+          const SizedBox(width: 6),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -528,18 +537,18 @@ class _CloudPunchCardState extends State<CloudPunchCard>
               Text(
                 label,
                 style: TextStyle(
-                  fontSize: 8,
-                  color: color.withValues(alpha: 0.7),
+                  fontSize: 9,
+                  color: color.withValues(alpha: 0.8),
                   fontWeight: FontWeight.w700,
-                  letterSpacing: 0.5,
+                  letterSpacing: 0.8,
                 ),
               ),
               Text(
                 time,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 12,
                   color: color,
-                  fontWeight: FontWeight.bold,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
             ],

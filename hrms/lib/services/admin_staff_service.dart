@@ -1,5 +1,4 @@
 // lib/services/admin_staff_service.dart
-import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'api_client.dart';
 
@@ -29,7 +28,7 @@ class AdminStaffService {
       }
       return {'success': true, 'data': {'staff': []}};
     } catch (e) {
-      return {'success': false, 'message': e.toString(), 'data': {'staff': []}};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.'), 'data': {'staff': []}};
     }
   }
 
@@ -46,7 +45,7 @@ class AdminStaffService {
       }
       return {'success': true, 'data': {}};
     } catch (e) {
-      return {'success': false, 'message': e.toString(), 'data': {}};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.'), 'data': {}};
     }
   }
 
@@ -63,7 +62,7 @@ class AdminStaffService {
       }
       return {'success': true, 'data': {}};
     } catch (e) {
-      return {'success': false, 'message': e.toString(), 'data': {}};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.'), 'data': {}};
     }
   }
 
@@ -80,7 +79,7 @@ class AdminStaffService {
       }
       return {'success': true};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.')};
     }
   }
 
@@ -97,7 +96,7 @@ class AdminStaffService {
       }
       return {'success': true};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.')};
     }
   }
 
@@ -114,7 +113,7 @@ class AdminStaffService {
       }
       return {'success': true, 'data': {'staff': {}}};
     } catch (e) {
-      return {'success': false, 'message': e.toString(), 'data': {'staff': {}}};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.'), 'data': {'staff': {}}};
     }
   }
 
@@ -132,7 +131,7 @@ class AdminStaffService {
       }
       return {'success': true, 'data': data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _errorMessage(e, 'Failed to create staff member.')};
     }
   }
 
@@ -150,7 +149,7 @@ class AdminStaffService {
       }
       return {'success': true, 'data': data};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.')};
     }
   }
 
@@ -167,7 +166,7 @@ class AdminStaffService {
       }
       return {'success': true};
     } catch (e) {
-      return {'success': false, 'message': e.toString()};
+      return {'success': false, 'message': _errorMessage(e, 'Request failed. Please try again.')};
     }
   }
 
@@ -206,9 +205,94 @@ class AdminStaffService {
   static String _errorMessage(Object e, String fallback) {
     if (e is DioException) {
       final body = e.response?.data;
-      if (body is Map && body['message'] != null) return body['message'].toString();
+      if (body is Map) {
+        final msg = body['message'] ?? body['error'];
+        if (msg != null && msg.toString().trim().isNotEmpty) return msg.toString();
+      }
+      if (body is String && body.trim().isNotEmpty && body.length < 300) return body;
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+          return 'The server took too long to respond. Please try again.';
+        case DioExceptionType.connectionError:
+          return 'Could not reach the server. Check your connection and try again.';
+        default:
+          break;
+      }
     }
     return fallback;
+  }
+
+  /// Branches of the company (GET /admin/settings/attendance/branches →
+  /// { success, data: Branch[] }). Each branch carries `_id` and `branchName`.
+  Future<Map<String, dynamic>> getBranches() async {
+    try {
+      final response = await _api.request(
+        '/admin/settings/attendance/branches',
+        method: 'GET',
+      );
+      final data = response.data;
+      if (data is Map) {
+        final map = Map<String, dynamic>.from(data);
+        final list = map['data'];
+        map['data'] = list is List ? list : <dynamic>[];
+        return map;
+      }
+      return {'success': false, 'message': 'Unexpected response while loading branches.', 'data': <dynamic>[]};
+    } catch (e) {
+      return {
+        'success': false,
+        'message': _errorMessage(e, 'Could not load branches.'),
+        'data': <dynamic>[],
+      };
+    }
+  }
+
+  /// Reporting managers offerable for a designation
+  /// (GET /admin/staff/reporting-managers?designation=&excludeId= →
+  /// { success, data: { designation, reportsTo: string[], defaultOption, options: string[] } }).
+  /// `options` are the literal strings to store on `reportingManager`.
+  Future<Map<String, dynamic>> getReportingManagers({String? designation, String? excludeId}) async {
+    try {
+      final query = <String, dynamic>{};
+      if (designation != null && designation.isNotEmpty) query['designation'] = designation;
+      if (excludeId != null && excludeId.isNotEmpty) query['excludeId'] = excludeId;
+      final response = await _api.request(
+        '/admin/staff/reporting-managers',
+        method: 'GET',
+        queryParameters: query.isEmpty ? null : query,
+      );
+      final data = response.data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return {'success': false, 'message': 'Unexpected response while loading reporting managers.'};
+    } catch (e) {
+      return {'success': false, 'message': _errorMessage(e, 'Could not load reporting managers.')};
+    }
+  }
+
+  /// Bulk import of staff parsed from a spreadsheet (POST /admin/staff/import).
+  /// Body: { rows: [...], defaultBranch?: branchId }.
+  /// Response data: { totalRows, imported, failed, weekOffAssigned, seatsRemaining,
+  /// importedStaffIds, failures: [{row, employeeId, reason}], warnings: [{row, employeeId, staffId, reason}] }.
+  Future<Map<String, dynamic>> importStaff({
+    required List<Map<String, dynamic>> rows,
+    String? defaultBranch,
+  }) async {
+    try {
+      final body = <String, dynamic>{'rows': rows};
+      if (defaultBranch != null && defaultBranch.isNotEmpty) body['defaultBranch'] = defaultBranch;
+      final response = await _api.request(
+        '/admin/staff/import',
+        method: 'POST',
+        data: body,
+      );
+      final data = response.data;
+      if (data is Map) return Map<String, dynamic>.from(data);
+      return {'success': false, 'message': 'Unexpected response from the import.'};
+    } catch (e) {
+      return {'success': false, 'message': _errorMessage(e, 'Failed to import staff members.')};
+    }
   }
 
   /// Fetches next available employee ID (GET /admin/staff/next-employee-id)

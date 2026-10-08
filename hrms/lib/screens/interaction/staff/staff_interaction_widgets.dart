@@ -1,6 +1,7 @@
 // Shared bits for the staff Interaction screens (chats, polls, announcements).
 
 import 'package:hrms/config/app_colors.dart';
+import 'package:hrms/config/app_text_styles.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -15,10 +16,10 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../config/constants.dart';
 import '../../../services/staff_interaction_service.dart';
 
-const kInteractionAccent = Color(0xFFEFAA1F);
-const kInteractionInk = Color(0xFF0F172A);
-const kInteractionMuted = Color(0xFF64748B);
-const kInteractionLine = Color(0xFFF1F5F9);
+const kInteractionAccent = AppColors.brand;
+const kInteractionInk = AppColors.textPrimary;
+const kInteractionMuted = AppColors.textSecondary;
+const kInteractionLine = Color(0xFFECEEF1);
 
 /// Bytes of a `data:*;base64,...` URL, else null.
 Uint8List? dataUrlBytes(String url) {
@@ -96,7 +97,7 @@ class InteractionAvatar extends StatelessWidget {
           ? Icon(icon, color: tint, size: size * 0.48)
           : Text(
               initialsOf(name),
-              style: TextStyle(color: tint, fontWeight: FontWeight.w800, fontSize: size * 0.34),
+              style: TextStyle(color: tint, fontWeight: FontWeight.w700, fontSize: size * 0.34),
             ),
     );
     if (!online) return avatar;
@@ -111,7 +112,7 @@ class InteractionAvatar extends StatelessWidget {
             width: size * 0.28,
             height: size * 0.28,
             decoration: BoxDecoration(
-              color: const Color(0xFF22C55E),
+              color: AppColors.success,
               shape: BoxShape.circle,
               border: Border.all(color: Colors.white, width: 2),
             ),
@@ -221,28 +222,29 @@ class InteractionEmptyState extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              padding: const EdgeInsets.all(18),
+              width: 64,
+              height: 64,
               decoration: BoxDecoration(
-                color: kInteractionAccent.withValues(alpha: 0.12),
+                color: AppColors.primary.withValues(alpha: 0.12),
                 shape: BoxShape.circle,
               ),
-              child: Icon(icon, size: 34, color: kInteractionAccent),
+              child: Icon(icon, size: 28, color: AppColors.primaryText),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: kInteractionInk),
+              style: AppTextStyles.headingSmall,
             ),
             if (message.isNotEmpty) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 message,
                 textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 13, color: kInteractionMuted, height: 1.4),
+                style: AppTextStyles.bodySmall.copyWith(height: 1.4),
               ),
             ],
-            if (action != null) ...[const SizedBox(height: 14), action!],
+            if (action != null) ...[const SizedBox(height: 16), action!],
           ],
         ),
       ),

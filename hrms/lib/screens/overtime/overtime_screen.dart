@@ -2,8 +2,10 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/request_service.dart';
 import '../../utils/error_message_utils.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/app_drawer.dart';
 
 class OvertimeScreen extends StatefulWidget {
@@ -99,7 +101,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Overtime request $action successfully!'),
-          backgroundColor: action == 'Accepted' ? Colors.green : Colors.red,
+          backgroundColor: action == 'Accepted' ? AppColors.success : AppColors.error,
         ),
       );
       _fetchOvertimeData();
@@ -107,7 +109,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(res['message'] ?? 'Failed to update overtime request.'),
-          backgroundColor: Colors.red,
+          backgroundColor: AppColors.error,
         ),
       );
     }
@@ -136,31 +138,81 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
   Color _getStatusBgColor(String status) {
     switch (status.toLowerCase()) {
       case 'accepted':
-        return const Color(0xFFECFDF5);
+        return AppColors.successBg;
       case 'pending':
-        return const Color(0xFFFFFBEB);
+        return AppColors.warningBg;
       case 'rejected':
-        return const Color(0xFFFEF2F2);
+        return AppColors.errorBg;
       case 'expired':
-        return const Color(0xFFF3F4F6);
+        return AppColors.inputFill;
       default:
-        return const Color(0xFFF1F5F9);
+        return AppColors.inputFill;
     }
   }
 
   Color _getStatusTextColor(String status) {
     switch (status.toLowerCase()) {
       case 'accepted':
-        return const Color(0xFF059669);
+        return AppColors.success;
       case 'pending':
         return AppColors.brandDark;
       case 'rejected':
-        return const Color(0xFFDC2626);
+        return AppColors.error;
       case 'expired':
-        return const Color(0xFF6B7280);
+        return AppColors.textSecondary;
       default:
-        return const Color(0xFF475569);
+        return AppColors.textSecondary;
     }
+  }
+
+  static const Color _hairline = Color(0xFFECEEF1);
+
+  Widget _buildStatCard({
+    required String label,
+    required String value,
+    required String caption,
+    required IconData icon,
+    required Color color,
+    required Color tint,
+  }) {
+    return AppCard(
+      border: Border.all(color: _hairline),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: tint,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, size: 20, color: color),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.sectionLabel
+                .copyWith(color: AppColors.textSecondary),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: AppTextStyles.displayLarge.copyWith(fontSize: 24),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            caption,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.caption
+                .copyWith(color: AppColors.textSecondary),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -168,23 +220,14 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
     final monthLabel = DateFormat('MMMM yyyy').format(_selectedMonth);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
-        title: const Text(
-          'My Overtime',
-          style: TextStyle(
-            color: Color(0xFF0F172A),
-            fontWeight: FontWeight.w700,
-            fontSize: 18,
-          ),
-        ),
-        backgroundColor: Colors.white,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Color(0xFF0F172A)),
+        title: const Text('My Overtime'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
+            tooltip: 'Refresh',
             onPressed: _fetchOvertimeData,
           ),
         ],
@@ -192,44 +235,41 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
       body: RefreshIndicator(
         onRefresh: _fetchOvertimeData,
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
             // Month Picker Bar
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
+            AppCard(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+              border: Border.all(color: _hairline),
+              boxShadow: const [],
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   IconButton(
                     icon: const Icon(Icons.chevron_left_rounded),
+                    color: AppColors.textPrimary,
+                    tooltip: 'Previous month',
                     onPressed: _prevMonth,
                     splashRadius: 20,
                   ),
                   Row(
                     children: [
-                      const Icon(
-                        Icons.calendar_month_rounded,
+                      Icon(
+                        Icons.calendar_month_outlined,
                         size: 18,
-                        color: AppColors.brandDark,
+                        color: AppColors.primaryText,
                       ),
                       const SizedBox(width: 8),
                       Text(
                         monthLabel,
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF1E293B),
-                        ),
+                        style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                       ),
                     ],
                   ),
                   IconButton(
                     icon: const Icon(Icons.chevron_right_rounded),
+                    color: AppColors.textPrimary,
+                    tooltip: 'Next month',
                     onPressed: _nextMonth,
                     splashRadius: 20,
                   ),
@@ -242,142 +282,24 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
             Row(
               children: [
                 Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.02),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'TOTAL OT HOURS',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF64748B),
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFEF3C7),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.access_time_filled_rounded,
-                                size: 16,
-                                color: AppColors.brandDark,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '${_totalOtHoursWorked.toStringAsFixed(1)}h',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Worked this cycle',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF94A3B8),
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: _buildStatCard(
+                    label: 'TOTAL OT HOURS',
+                    value: '${_totalOtHoursWorked.toStringAsFixed(1)}h',
+                    caption: 'Worked this cycle',
+                    icon: Icons.access_time_rounded,
+                    color: AppColors.brand,
+                    tint: AppColors.brandLight,
                   ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.02),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            const Expanded(
-                              child: Text(
-                                'OT REQUESTS',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  color: Color(0xFF64748B),
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFDBEAFE),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: const Icon(
-                                Icons.schedule_send_rounded,
-                                size: 16,
-                                color: Color(0xFF2563EB),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          '$_totalOtRequestsReceived',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        const Text(
-                          'Assigned schedules',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFF94A3B8),
-                          ),
-                        ),
-                      ],
-                    ),
+                  child: _buildStatCard(
+                    label: 'OT REQUESTS',
+                    value: '$_totalOtRequestsReceived',
+                    caption: 'Assigned schedules',
+                    icon: Icons.schedule_send_outlined,
+                    color: AppColors.info,
+                    tint: AppColors.infoBg,
                   ),
                 ),
               ],
@@ -397,6 +319,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                   return ChoiceChip(
                     label: Text(status),
                     selected: isSelected,
+                    showCheckmark: false,
                     onSelected: (selected) {
                       if (selected) {
                         setState(() => _selectedStatus = status);
@@ -404,45 +327,40 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                       }
                     },
                     selectedColor: AppColors.primary,
-                    backgroundColor: Colors.white,
+                    backgroundColor: AppColors.surface,
                     labelStyle: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: isSelected ? Colors.white : const Color(0xFF475569),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: isSelected
+                          ? AppColors.onPrimary
+                          : AppColors.textSecondary,
                     ),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
+                      borderRadius: BorderRadius.circular(999),
                       side: BorderSide(
-                        color: isSelected
-                            ? AppColors.primary
-                            : const Color(0xFFE2E8F0),
+                        color: isSelected ? AppColors.primary : _hairline,
                       ),
                     ),
                   );
                 },
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
 
             // List Title
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
+                Text(
                   'OVERTIME SCHEDULES',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.8,
-                    color: Color(0xFF64748B),
-                  ),
+                  style: AppTextStyles.sectionLabel
+                      .copyWith(color: AppColors.textSecondary),
                 ),
                 Text(
                   '${_requests.length} Showing',
-                  style: const TextStyle(
-                    fontSize: 12,
+                  style: AppTextStyles.caption.copyWith(
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFF94A3B8),
+                    color: AppColors.textSecondary,
                   ),
                 ),
               ],
@@ -458,78 +376,68 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                 ),
               )
             else if (_errorMessage != null)
-              Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Column(
-                    children: [
-                      const Icon(
-                        Icons.error_outline_rounded,
-                        size: 44,
-                        color: Color(0xFFEF4444),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        _errorMessage!,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontSize: 13,
-                          color: Color(0xFF64748B),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: _fetchOvertimeData,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppColors.primary,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                        ),
-                        child: const Text('Try Again', style: TextStyle(color: Colors.white)),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else if (_requests.isEmpty)
-              Container(
-                padding: const EdgeInsets.all(36),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
+              AppCard(
+                padding: const EdgeInsets.all(24),
+                border: Border.all(color: _hairline),
                 child: Column(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(16),
+                      width: 64,
+                      height: 64,
                       decoration: const BoxDecoration(
-                        color: Color(0xFFF8FAFC),
+                        color: AppColors.errorBg,
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.error_outline_rounded,
+                        size: 30,
+                        color: AppColors.error,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorMessage!,
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodySmall,
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: _fetchOvertimeData,
+                      child: const Text('Try Again'),
+                    ),
+                  ],
+                ),
+              )
+            else if (_requests.isEmpty)
+              AppCard(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+                border: Border.all(color: _hairline),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: const BoxDecoration(
+                        color: AppColors.brandLight,
                         shape: BoxShape.circle,
                       ),
                       child: const Icon(
                         Icons.more_time_rounded,
-                        size: 40,
-                        color: Color(0xFF94A3B8),
+                        size: 30,
+                        color: AppColors.brand,
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 16),
                     const Text(
                       'No Overtime Schedules',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF1E293B),
-                      ),
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.headingSmall,
                     ),
                     const SizedBox(height: 6),
                     const Text(
                       'No overtime assigned for this selection.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Color(0xFF94A3B8),
-                      ),
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodySmall,
                     ),
                   ],
                 ),
@@ -555,44 +463,37 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                     formattedDate = DateFormat('yyyy-MM-dd (EEE)').format(d);
                   } catch (_) {}
 
-                  return Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.02),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
+                  return AppCard(
+                    border: Border.all(color: _hairline),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.calendar_today_rounded,
-                                  size: 15,
-                                  color: AppColors.brandDark,
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  formattedDate,
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w700,
-                                    color: Color(0xFF0F172A),
-                                  ),
-                                ),
-                              ],
+                            Container(
+                              width: 40,
+                              height: 40,
+                              decoration: BoxDecoration(
+                                color: AppColors.brandLight,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Icon(
+                                Icons.calendar_today_outlined,
+                                size: 18,
+                                color: AppColors.brand,
+                              ),
                             ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Text(
+                                formattedDate,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: AppTextStyles.headingSmall
+                                    .copyWith(fontSize: 15),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
                             Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 10,
@@ -600,13 +501,13 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                               ),
                               decoration: BoxDecoration(
                                 color: _getStatusBgColor(status),
-                                borderRadius: BorderRadius.circular(20),
+                                borderRadius: BorderRadius.circular(999),
                               ),
                               child: Text(
                                 status,
                                 style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
                                   color: _getStatusTextColor(status),
                                 ),
                               ),
@@ -614,23 +515,23 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                           ],
                         ),
                         const SizedBox(height: 12),
+                        const Divider(height: 1),
+                        const SizedBox(height: 12),
                         Row(
                           children: [
                             const Icon(
                               Icons.person_outline_rounded,
-                              size: 15,
-                              color: Color(0xFF64748B),
+                              size: 16,
+                              color: AppColors.textSecondary,
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 'Requested by: $requestedBy',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF475569),
-                                ),
+                                style: AppTextStyles.bodySmall
+                                    .copyWith(color: AppColors.textPrimary),
                               ),
                             ),
                           ],
@@ -642,17 +543,14 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                             children: [
                               const Icon(
                                 Icons.notes_rounded,
-                                size: 15,
-                                color: Color(0xFF64748B),
+                                size: 16,
+                                color: AppColors.textSecondary,
                               ),
-                              const SizedBox(width: 6),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   notes,
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Color(0xFF64748B),
-                                  ),
+                                  style: AppTextStyles.bodySmall,
                                 ),
                               ),
                             ],
@@ -666,12 +564,9 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                                 child: OutlinedButton(
                                   onPressed: () => _respondToRequest(id, 'Rejected'),
                                   style: OutlinedButton.styleFrom(
-                                    foregroundColor: const Color(0xFFDC2626),
+                                    foregroundColor: AppColors.error,
                                     side: const BorderSide(color: Color(0xFFFCA5A5)),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    minimumSize: const Size(0, 44),
                                   ),
                                   child: const Text('Reject'),
                                 ),
@@ -681,12 +576,9 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
                                 child: ElevatedButton(
                                   onPressed: () => _respondToRequest(id, 'Accepted'),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF059669),
+                                    backgroundColor: AppColors.success,
                                     foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(vertical: 10),
+                                    minimumSize: const Size(0, 44),
                                   ),
                                   child: const Text('Accept'),
                                 ),

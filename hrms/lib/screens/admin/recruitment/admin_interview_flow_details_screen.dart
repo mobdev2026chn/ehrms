@@ -1,535 +1,361 @@
 // lib/screens/admin/recruitment/admin_interview_flow_details_screen.dart
-import 'package:hrms/config/app_colors.dart';
+// One interview flow: rounds (add / edit / delete / reorder) and each round's questions (CRUD).
+
 import 'package:flutter/material.dart';
-import '../../../services/api_client.dart';
-import '../../../utils/snackbar_utils.dart';
-import 'admin_interview_flow_screen.dart';
+
+import '../../../config/app_colors.dart';
+import '../../../models/admin_recruitment_models.dart';
+import '../../../services/admin_recruitment_service.dart';
+import 'rec_question_editor.dart';
+import 'rec_widgets.dart';
 
 class AdminInterviewFlowDetailsScreen extends StatefulWidget {
-  final AdminJobFlow flow;
-
-  const AdminInterviewFlowDetailsScreen({super.key, required this.flow});
+  final String flowId;
+  const AdminInterviewFlowDetailsScreen({super.key, required this.flowId});
 
   @override
   State<AdminInterviewFlowDetailsScreen> createState() => _AdminInterviewFlowDetailsScreenState();
 }
 
 class _AdminInterviewFlowDetailsScreenState extends State<AdminInterviewFlowDetailsScreen> {
-  final ApiClient _api = ApiClient();
-  final Map<String, TextEditingController> _newQuestionControllers = {};
-  final Map<String, String> _newQuestionTypes = {};
+  final AdminRecruitmentService _service = AdminRecruitmentService();
 
-  final List<String> _durations = ['30 mins', '45 mins', '60 mins', '90 mins', '120 mins'];
-  final List<String> _evaluators = [
-    'Sanjay Patel (Tech Lead)',
-    'Animesh Roy (Principal Architect)',
-    'Meera Sen (HR Director)',
-    'Vikram Malhotra (UX Director)',
-    'Pooja Hegde (Senior Product Designer)',
-    'Karan Singh (DevOps Lead)',
-    'Neha Gupta (QA Manager)',
-  ];
+  RecInterviewFlow? _flow;
+  List<RecStaffOption> _staff = [];
+  bool _loading = true;
+  String? _error;
+  bool _busy = false;
+  final Set<String> _expanded = {};
 
   @override
-  void dispose() {
-    for (final ctrl in _newQuestionControllers.values) {
-      ctrl.dispose();
-    }
-    super.dispose();
+  void initState() {
+    super.initState();
+    _load();
   }
 
-  TextEditingController _getControllerForRound(String roundId) {
-    if (!_newQuestionControllers.containsKey(roundId)) {
-      _newQuestionControllers[roundId] = TextEditingController();
-      _newQuestionTypes[roundId] = 'TEXT';
-    }
-    return _newQuestionControllers[roundId]!;
-  }
-
-  String _getTypeForRound(String roundId) {
-    return _newQuestionTypes[roundId] ?? 'TEXT';
-  }
-
-  void _addQuestionToRound(AdminInterviewRound round) {
-    final ctrl = _getControllerForRound(round.id);
-    final text = ctrl.text.trim();
-    if (text.isEmpty) return;
-
-    final type = _getTypeForRound(round.id);
-    setState(() {
-      round.questions.add({'text': text, 'type': type});
-      ctrl.clear();
-    });
-    _saveFlowToBackend();
-    SnackBarUtils.showSnackBar(context, 'Question added');
-  }
-
-  void _removeQuestionFromRound(AdminInterviewRound round, int index) {
-    setState(() {
-      round.questions.removeAt(index);
-    });
-    _saveFlowToBackend();
-  }
-
-  void _moveRoundUp(int index) {
-    if (index <= 0) return;
-    setState(() {
-      final item = widget.flow.rounds.removeAt(index);
-      widget.flow.rounds.insert(index - 1, item);
-      _reindexRounds();
-    });
-    _saveFlowToBackend();
-  }
-
-  void _moveRoundDown(int index) {
-    if (index >= widget.flow.rounds.length - 1) return;
-    setState(() {
-      final item = widget.flow.rounds.removeAt(index);
-      widget.flow.rounds.insert(index + 1, item);
-      _reindexRounds();
-    });
-    _saveFlowToBackend();
-  }
-
-  void _reindexRounds() {
-    for (int i = 0; i < widget.flow.rounds.length; i++) {
-      widget.flow.rounds[i].roundNumber = i + 1;
-    }
-  }
-
-  void _deleteRound(int index) {
-    setState(() {
-      widget.flow.rounds.removeAt(index);
-      _reindexRounds();
-    });
-    _saveFlowToBackend();
-    SnackBarUtils.showSnackBar(context, 'Round deleted');
-  }
-
-  void _showAddRoundModal() {
-    final nameCtrl = TextEditingController();
-    String duration = '45 mins';
-    String evaluator = _evaluators.first;
-    final initialQuestionCtrl = TextEditingController();
-    String questionType = 'TEXT';
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return AlertDialog(
-              backgroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: Row(
-                children: const [
-                  Icon(Icons.account_tree_outlined, color: Color(0xFFEFAA1F), size: 20),
-                  SizedBox(width: 8),
-                  Text('Add Interview Round Stage', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
-                ],
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('ROUND STAGE NAME *', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: nameCtrl,
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        hintText: 'e.g. System Design Interview',
-                        hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFEFAA1F))),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    const Text('DURATION *', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: duration,
-                          isExpanded: true,
-                          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
-                          items: _durations.map((d) => DropdownMenuItem(value: d, child: Text(d))).toList(),
-                          onChanged: (v) {
-                            if (v != null) setModalState(() => duration = v);
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    const Text('ASSIGNED EVALUATOR *', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                    const SizedBox(height: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFE2E8F0)),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: evaluator,
-                          isExpanded: true,
-                          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: Color(0xFF64748B)),
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
-                          items: _evaluators.map((e) => DropdownMenuItem(value: e, child: Text(e, overflow: TextOverflow.ellipsis))).toList(),
-                          onChanged: (v) {
-                            if (v != null) setModalState(() => evaluator = v);
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    const Text('INITIAL ASSESSMENT QUESTIONS (OPTIONAL)', style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: Color(0xFF64748B))),
-                    const SizedBox(height: 6),
-                    TextField(
-                      controller: initialQuestionCtrl,
-                      style: const TextStyle(fontSize: 13),
-                      decoration: InputDecoration(
-                        hintText: 'Type an assessment question...',
-                        hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFFEFAA1F))),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cancel', style: TextStyle(color: Color(0xFF64748B))),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    if (nameCtrl.text.trim().isEmpty) {
-                      SnackBarUtils.showSnackBar(context, 'Please enter round name', isError: true);
-                      return;
-                    }
-                    Navigator.pop(ctx);
-                    final newQuestions = <Map<String, String>>[];
-                    if (initialQuestionCtrl.text.trim().isNotEmpty) {
-                      newQuestions.add({'text': initialQuestionCtrl.text.trim(), 'type': questionType});
-                    }
-
-                    final newRound = AdminInterviewRound(
-                      id: 'R-${widget.flow.rounds.length + 1}',
-                      roundNumber: widget.flow.rounds.length + 1,
-                      name: nameCtrl.text.trim(),
-                      interviewer: evaluator,
-                      duration: duration,
-                      questions: newQuestions,
-                    );
-
-                    setState(() {
-                      widget.flow.rounds.add(newRound);
-                    });
-                    _saveFlowToBackend();
-                    SnackBarUtils.showSnackBar(context, 'Round stage added');
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFEFAA1F),
-                    foregroundColor: const Color(0xFF0F172A),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                    elevation: 0,
-                  ),
-                  child: const Text('Add Round', style: TextStyle(fontWeight: FontWeight.w800)),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _saveFlowToBackend() async {
+  Future<void> _load({bool showLoader = true}) async {
+    if (showLoader) setState(() => _loading = true);
     try {
-      await _api.request(
-        '/admin/recruitment/interview-process/flow/${widget.flow.jobId}',
-        method: 'PUT',
-        data: widget.flow.toJson(),
-      );
-    } catch (_) {}
+      final flow = await _service.getInterviewFlow(widget.flowId);
+      if (!mounted) return;
+      setState(() {
+        _flow = flow;
+        _error = null;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+
+  Future<List<RecStaffOption>> _ensureStaff() async {
+    if (_staff.isNotEmpty) return _staff;
+    _staff = await _service.getStaffOptions();
+    return _staff;
+  }
+
+  /// Runs a flow mutation; the response is the updated flow.
+  Future<void> _mutate(Future<RecInterviewFlow> Function() op, String success) async {
+    setState(() => _busy = true);
+    try {
+      final flow = await op();
+      if (!mounted) return;
+      setState(() => _flow = flow);
+      recShowSuccess(context, success);
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _roundForm([RecFlowRound? round]) async {
+    List<RecStaffOption> staff;
+    try {
+      staff = await _ensureStaff();
+    } catch (e) {
+      if (mounted) recShowError(context, e);
+      return;
+    }
+    if (!mounted) return;
+    final name = TextEditingController(text: round?.name ?? '');
+    final otherName = TextEditingController(
+        text: round != null && round.interviewerId.isEmpty ? round.interviewer : '');
+    String? evaluator = round == null ? null : (round.interviewerId.isNotEmpty ? round.interviewerId : '__other');
+    String duration = round?.duration ?? '45 mins';
+    final key = GlobalKey<FormState>();
+
+    final result = await recShowSheet<Map<String, String?>>(
+      context,
+      title: round == null ? 'Add round' : 'Edit round',
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => Form(
+          key: key,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              RecTextField(controller: name, label: 'Round name * (e.g. Technical)', validator: recRequired),
+              RecDropdown<String>(
+                label: 'Evaluator *',
+                value: evaluator,
+                items: [
+                  ...staff.map((s) => s.id),
+                  if (round != null && round.interviewerId.isNotEmpty && !staff.any((s) => s.id == round.interviewerId))
+                    round.interviewerId,
+                  '__other',
+                ],
+                labelOf: (id) {
+                  if (id == '__other') return 'Someone else (type a name)';
+                  final s = staff.where((x) => x.id == id).firstOrNull;
+                  return s?.label ?? round?.interviewer ?? 'Evaluator';
+                },
+                validator: (v) => v == null ? 'Required' : null,
+                onChanged: (v) => setS(() => evaluator = v),
+              ),
+              if (evaluator == '__other') RecTextField(controller: otherName, label: 'Evaluator name *', validator: recRequired),
+              RecDropdown<String>(
+                label: 'Duration',
+                value: duration,
+                items: kRoundDurations,
+                labelOf: (s) => s,
+                onChanged: (v) => setS(() => duration = v ?? duration),
+              ),
+              const SizedBox(height: 4),
+              RecPrimaryButton(
+                label: 'Save',
+                icon: Icons.check_rounded,
+                onPressed: () {
+                  if (!(key.currentState?.validate() ?? false)) return;
+                  Navigator.pop(ctx, {
+                    'name': name.text.trim(),
+                    'interviewerId': evaluator == '__other' ? null : evaluator,
+                    'interviewerName': evaluator == '__other' ? otherName.text.trim() : null,
+                    'duration': duration,
+                  });
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+
+    if (result == null) return;
+    final flow = _flow!;
+    if (round == null) {
+      await _mutate(
+          () => _service.addFlowRound(flow.id,
+              name: result['name']!,
+              interviewerId: result['interviewerId'],
+              interviewerName: result['interviewerName'],
+              duration: result['duration']!),
+          'Round added');
+    } else {
+      await _mutate(
+          () => _service.updateFlowRound(flow.id, round.id,
+              name: result['name'],
+              interviewerId: result['interviewerId'],
+              interviewerName: result['interviewerName'],
+              duration: result['duration']),
+          'Round updated');
+    }
+  }
+
+  Future<void> _deleteRound(RecFlowRound r) async {
+    final ok = await recConfirm(context,
+        title: 'Delete round?',
+        message: 'Round ${r.roundNumber}: ${r.name} and its ${r.questions.length} question(s) will be removed from this flow.',
+        confirmLabel: 'Delete',
+        destructive: true);
+    if (ok) await _mutate(() => _service.deleteFlowRound(_flow!.id, r.id), 'Round deleted');
+  }
+
+  Future<void> _reorder(int oldIndex, int newIndex) async {
+    final rounds = [..._flow!.rounds];
+
+    final moved = rounds.removeAt(oldIndex);
+    rounds.insert(newIndex, moved);
+    await _mutate(() => _service.reorderFlowRounds(_flow!.id, rounds.map((r) => r.id).toList()), 'Rounds reordered');
+  }
+
+  Future<void> _questionForm(RecFlowRound round, [RecQuestion? q]) async {
+    final input = await showQuestionEditor(context, initial: q);
+    if (input == null) return;
+    final flow = _flow!;
+    if (q == null) {
+      await _mutate(() => _service.addFlowQuestion(flow.id, round.id, input), 'Question added');
+    } else {
+      await _mutate(() => _service.updateFlowQuestion(flow.id, round.id, q.id, input), 'Question updated');
+    }
+  }
+
+  Future<void> _deleteQuestion(RecFlowRound round, RecQuestion q) async {
+    final ok = await recConfirm(context,
+        title: 'Delete question?', message: q.text, confirmLabel: 'Delete', destructive: true);
+    if (ok) await _mutate(() => _service.deleteFlowQuestion(_flow!.id, round.id, q.id), 'Question deleted');
   }
 
   @override
   Widget build(BuildContext context) {
+    final f = _flow;
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF0F172A)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          '${widget.flow.jobTitle} Pipeline',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-        ),
-        centerTitle: false,
-        backgroundColor: Colors.white,
-        elevation: 0,
-        surfaceTintColor: Colors.transparent,
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          // Banner & Add Stage Button
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: const Color(0xFFF1F5F9)),
+      backgroundColor: kRecBg,
+      appBar: recAppBar(context, f?.jobTitle ?? 'Interview Flow', onRefresh: () => _load()),
+      floatingActionButton: f == null
+          ? null
+          : FloatingActionButton.extended(
+              onPressed: _busy ? null : () => _roundForm(),
+              backgroundColor: AppColors.primary,
+              foregroundColor: AppColors.onPrimary,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Add Round', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        '${widget.flow.jobTitle} Pipeline',
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-                      ),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _showAddRoundModal,
-                      icon: const Icon(Icons.add_rounded, size: 16),
-                      label: const Text('+ Add Round Stage', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800)),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFEFAA1F),
-                        foregroundColor: const Color(0xFF0F172A),
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'Configure and reorder interview stages, evaluators, and question templates for this position.',
-                  style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Round Cards
-          if (widget.flow.rounds.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(32),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
-              child: const Text('No round stages added. Tap + Add Round Stage to begin.', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
-            )
-          else
-            ...widget.flow.rounds.asMap().entries.map((entry) => _buildRoundCard(entry.key, entry.value)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRoundCard(int index, AdminInterviewRound round) {
-    final ctrl = _getControllerForRound(round.id);
-    final selectedType = _getTypeForRound(round.id);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
-        boxShadow: const [BoxShadow(color: Color(0x04000000), blurRadius: 6, offset: Offset(0, 2))],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header: Round Number & Duration + Reorder/Delete
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: const Color(0xFFFFFBEB), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFFDE68A))),
-                child: Text('ROUND ${round.roundNumber}', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900, color: AppColors.brandDark)),
-              ),
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(6), border: Border.all(color: const Color(0xFFE2E8F0))),
-                child: Row(
-                  children: [
-                    const Icon(Icons.access_time_rounded, size: 12, color: Color(0xFF64748B)),
-                    const SizedBox(width: 4),
-                    Text(round.duration, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Color(0xFF475569))),
-                  ],
-                ),
-              ),
-              const Spacer(),
-              IconButton(
-                icon: const Icon(Icons.arrow_upward_rounded, size: 17, color: Color(0xFF64748B)),
-                onPressed: index > 0 ? () => _moveRoundUp(index) : null,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.arrow_downward_rounded, size: 17, color: Color(0xFF64748B)),
-                onPressed: index < widget.flow.rounds.length - 1 ? () => _moveRoundDown(index) : null,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.delete_outline_rounded, size: 17, color: Color(0xFFEF4444)),
-                onPressed: () => _deleteRound(index),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-
-          Text(round.name, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A))),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              const Icon(Icons.person_outline_rounded, size: 14, color: AppColors.brandDark),
-              const SizedBox(width: 4),
-              Expanded(child: Text('Evaluator: ${round.interviewer}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)))),
-            ],
-          ),
-          const SizedBox(height: 14),
-
-          // Questions Template Section
-          Text(
-            'EVALUATION QUESTIONS TEMPLATE (${round.questions.length})',
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Color(0xFF94A3B8)),
-          ),
-          const SizedBox(height: 8),
-
-          ...round.questions.asMap().entries.map((qEntry) {
-            final qIdx = qEntry.key;
-            final q = qEntry.value;
-            return Container(
-              margin: const EdgeInsets.only(bottom: 8),
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${qIdx + 1}. ', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF1E293B))),
+      body: RecAsyncBody(
+        loading: _loading,
+        error: _error,
+        isEmpty: f == null,
+        emptyText: 'Interview flow not found',
+        onRetry: _load,
+        builder: () => Column(
+          children: [
+            if (_busy) const LinearProgressIndicator(minHeight: 2),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: RecCard(
+                margin: EdgeInsets.zero,
+                child: Row(children: [
+                  const RecIconTile(Icons.account_tree_outlined, size: 44),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(q['text'] ?? '', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF1E293B))),
-                        const SizedBox(height: 4),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                          decoration: BoxDecoration(color: const Color(0xFFE2E8F0), borderRadius: BorderRadius.circular(4)),
-                          child: Text(q['type'] ?? 'TEXT', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: Color(0xFF475569))),
-                        ),
+                        Text(f!.jobTitle, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kRecInk)),
+                        const SizedBox(height: 2),
+                        Text('${f.jobCode} • ${f.department} • ${f.rounds.length} round(s)',
+                            style: const TextStyle(fontSize: 12.5, color: kRecMuted, fontWeight: FontWeight.w500)),
                       ],
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 15, color: Color(0xFF94A3B8)),
-                    onPressed: () => _removeQuestionFromRound(round, qIdx),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                  const SizedBox(width: 8),
+                  if (f.jobStatus.isNotEmpty) RecBadge(f.jobStatus),
+                ]),
+              ),
+            ),
+            if (f.rounds.length > 1)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 10, 16, 0),
+                child: Row(children: [
+                  Icon(Icons.drag_indicator_rounded, size: 16, color: kRecMuted),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text('Long-press and drag a round to change the order.',
+                        style: TextStyle(fontSize: 12.5, color: kRecMuted)),
                   ),
+                ]),
+              ),
+            Expanded(
+              child: f.rounds.isEmpty
+                  ? const RecEmptyState(text: 'No rounds yet. Add the first round.', icon: Icons.layers_outlined)
+                  : ReorderableListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 90),
+                      itemCount: f.rounds.length,
+                      onReorderItem: _busy ? (_, __) {} : _reorder,
+                      itemBuilder: (ctx, i) => _roundCard(f.rounds[i], key: ValueKey(f.rounds[i].id)),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _roundCard(RecFlowRound r, {required Key key}) {
+    final open = _expanded.contains(r.id);
+    return Container(
+      key: key,
+      child: RecCard(
+        onTap: () => setState(() => open ? _expanded.remove(r.id) : _expanded.add(r.id)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Container(
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: AppColors.brandLight, borderRadius: BorderRadius.circular(12)),
+                child: Text('${r.roundNumber}',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.brandDark)),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(r.name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: kRecInk)),
+                    const SizedBox(height: 2),
+                    Text('${r.interviewer} • ${r.duration} • ${r.questions.length} question(s)',
+                        style: const TextStyle(fontSize: 12.5, color: kRecMuted)),
+                  ],
+                ),
+              ),
+              PopupMenuButton<String>(
+                tooltip: 'Round actions',
+                icon: const Icon(Icons.more_vert_rounded, size: 20, color: kRecMuted),
+                onSelected: (v) {
+                  if (v == 'edit') _roundForm(r);
+                  if (v == 'delete') _deleteRound(r);
+                  if (v == 'question') _questionForm(r);
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Edit round')),
+                  PopupMenuItem(value: 'question', child: Text('Add question')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete round', style: TextStyle(color: AppColors.error))),
                 ],
               ),
-            );
-          }),
-
-          const SizedBox(height: 8),
-
-          // Add Question Input Bar
-          Container(
-            padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: ctrl,
-                    onSubmitted: (_) => _addQuestionToRound(round),
-                    style: const TextStyle(fontSize: 12),
-                    decoration: const InputDecoration(
-                      hintText: 'Type a predefined assessment question/topic...',
-                      hintStyle: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
-                      border: InputBorder.none,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-                    ),
+              Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: kRecMuted),
+            ]),
+            if (open) ...[
+              const Divider(height: 24),
+              if (r.questions.isEmpty)
+                const Text('No questions yet.', style: TextStyle(fontSize: 12.5, color: kRecMuted)),
+              ...List.generate(r.questions.length, (i) {
+                final q = r.questions[i];
+                return ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text('${i + 1}. ${q.text}', style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: kRecInk)),
+                  subtitle: Text(
+                    '${answerTypeLabel(q.answerType)} • ${q.maxScore} marks'
+                    '${q.answerType == 'multichoice' ? '\n${q.options.join(' / ')}' : ''}'
+                    '${q.answerType == 'scenario' && q.options.isNotEmpty ? '\nExpected: ${q.options.first}' : ''}',
+                    style: const TextStyle(fontSize: 12, color: kRecMuted),
                   ),
-                ),
-                // Type Dropdown (Text, Rating, Scenario, Multichoice)
-                Container(
-                  height: 32,
-                  padding: const EdgeInsets.symmetric(horizontal: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF1F5F9),
-                    borderRadius: BorderRadius.circular(6),
+                  onTap: () => _questionForm(r, q),
+                  trailing: IconButton(
+                    tooltip: 'Delete question',
+                    icon: const Icon(Icons.delete_outline_rounded, size: 20, color: AppColors.error),
+                    onPressed: () => _deleteQuestion(r, q),
                   ),
-                  child: DropdownButtonHideUnderline(
-                    child: DropdownButton<String>(
-                      value: selectedType,
-                      icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: Color(0xFF64748B)),
-                      style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-                      items: const [
-                        DropdownMenuItem(value: 'TEXT', child: Text('Text')),
-                        DropdownMenuItem(value: 'RATING', child: Text('Rating')),
-                        DropdownMenuItem(value: 'SCENARIO', child: Text('Scenario')),
-                        DropdownMenuItem(value: 'MULTICHOICE', child: Text('Multichoice')),
-                      ],
-                      onChanged: (v) {
-                        if (v != null) setState(() => _newQuestionTypes[round.id] = v);
-                      },
-                    ),
-                  ),
+                );
+              }),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => _questionForm(r),
+                  icon: const Icon(Icons.add_rounded, size: 18),
+                  label: const Text('Add question'),
                 ),
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_rounded, color: Color(0xFFEFAA1F), size: 22),
-                  onPressed: () => _addQuestionToRound(round),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }

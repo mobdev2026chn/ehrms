@@ -3,8 +3,10 @@
 
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/lms_admin_service.dart';
 import '../../widgets/app_tab_loader.dart';
+import '../../widgets/app_card.dart';
 import 'lms_admin_utils.dart';
 import 'widgets/lms_admin_stat_card.dart';
 
@@ -91,18 +93,13 @@ class _LmsAdminAssessmentScreenState extends State<LmsAdminAssessmentScreen> {
                 const Expanded(
                   child: Text(
                     'Assessment Management',
-                    style: TextStyle(
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.textPrimary,
-                    ),
+                    style: AppTextStyles.headingLarge,
                   ),
                 ),
                 TextButton.icon(
                   onPressed: _load,
-                  icon: const Icon(Icons.refresh, size: 18),
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
                   label: const Text('Refresh'),
-                  style: TextButton.styleFrom(foregroundColor: AppColors.primary),
                 ),
               ],
             ),
@@ -155,7 +152,7 @@ class _LmsAdminAssessmentScreenState extends State<LmsAdminAssessmentScreen> {
             LmsAdminUtils.emptyState(emptyMsg)
           else
             ...current.map((m) => Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
                   child: _AssessmentCard(item: m),
                 )),
         ],
@@ -169,15 +166,15 @@ class _LmsAdminAssessmentScreenState extends State<LmsAdminAssessmentScreen> {
       padding: const EdgeInsets.only(right: 8),
       child: InkWell(
         onTap: () => setState(() => _tab = index),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(999),
         child: Container(
           alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(horizontal: 14),
           decoration: BoxDecoration(
             color: active ? AppColors.primary : AppColors.surface,
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(999),
             border: Border.all(
-              color: active ? AppColors.primary : AppColors.divider,
+              color: active ? AppColors.primary : const Color(0xFFE2E5EA),
             ),
           ),
           child: Text(
@@ -185,7 +182,7 @@ class _LmsAdminAssessmentScreenState extends State<LmsAdminAssessmentScreen> {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: active ? Colors.white : AppColors.textSecondary,
+              color: active ? AppColors.onPrimary : AppColors.textSecondary,
             ),
           ),
         ),
@@ -207,11 +204,12 @@ class _AssessmentCard extends StatelessWidget {
     final scoreText = score == null ? null : '${LmsAdminUtils.toInt(score)}%';
 
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.divider),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

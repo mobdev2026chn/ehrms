@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../services/interaction_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
+import '../../widgets/app_card.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../widgets/oriented_image.dart';
 
@@ -585,37 +588,44 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-        child: InkWell(
+        color: AppColors.background,
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: Color(0xFFECEEF1)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
           onTap: () => _openAttachmentUrl(context, url),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  width: 40,
+                  height: 40,
                   decoration: BoxDecoration(
                     color: accent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(icon, color: accent, size: 22),
+                  child: Icon(icon, color: accent, size: 20),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     name,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
+                    style: AppTextStyles.label.copyWith(
                       color: colorScheme.onSurface,
                     ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                Icon(Icons.open_in_new, size: 18, color: accent),
+                const SizedBox(width: 8),
+                const Icon(
+                  Icons.open_in_new_rounded,
+                  size: 18,
+                  color: AppColors.textCaption,
+                ),
               ],
             ),
           ),
@@ -738,24 +748,18 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
     }
 
     return Scaffold(
-      backgroundColor: colorScheme.surfaceContainerHighest,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
+          tooltip: 'Back',
           icon: const Icon(Icons.arrow_back_rounded),
           onPressed: () => Navigator.of(context).pop(),
         ),
         title: Text(
           title,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-            color: colorScheme.onSurface,
-          ),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        centerTitle: true,
-        elevation: 0,
         bottom: TabBar(
           controller: _tabController,
           tabs: const [
@@ -768,39 +772,32 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
         controller: _tabController,
         children: [
           SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
+            padding: const EdgeInsets.all(16),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  padding: const EdgeInsets.all(18),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
                     color: colorScheme.surface,
                     borderRadius: BorderRadius.circular(16),
-                    border: Border(
-                      left: BorderSide(color: widget.accent, width: 4),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: widget.accent.withValues(alpha: 0.1),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
+                    border: Border.all(color: const Color(0xFFECEEF1)),
+                    boxShadow: kSoftCardShadow,
                   ),
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(12),
+                        width: 48,
+                        height: 48,
                         decoration: BoxDecoration(
                           color: widget.accent.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(14),
+                          borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(
                           Icons.campaign_rounded,
                           color: widget.accent,
-                          size: 28,
+                          size: 24,
                         ),
                       ),
                       const SizedBox(width: 16),
@@ -810,10 +807,8 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                           children: [
                             Text(
                               title,
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
-                                color: widget.accent,
+                              style: AppTextStyles.headingMedium.copyWith(
+                                color: colorScheme.onSurface,
                               ),
                             ),
                             if (_isExpired) ...[
@@ -824,24 +819,23 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   vertical: 4,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: colorScheme.errorContainer,
+                                  color: AppColors.errorBg,
                                   borderRadius: BorderRadius.circular(999),
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
-                                    Icon(
+                                    const Icon(
                                       Icons.lock_clock_outlined,
                                       size: 14,
-                                      color: colorScheme.onErrorContainer,
+                                      color: AppColors.error,
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
                                       'Expired',
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: colorScheme.onErrorContainer,
+                                      style: AppTextStyles.caption.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                        color: AppColors.error,
                                       ),
                                     ),
                                   ],
@@ -849,31 +843,29 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                               ),
                             ],
                             if (fromName != null && fromName.isNotEmpty) ...[
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
                               Text(
                                 'From: $fromName',
-                                style: TextStyle(
+                                style: AppTextStyles.bodyMedium.copyWith(
                                   color: colorScheme.onSurfaceVariant,
-                                  fontSize: 14,
                                 ),
                               ),
                             ],
                             if (dateStr.isNotEmpty) ...[
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
                               Row(
                                 children: [
                                   Icon(
                                     Icons.schedule_rounded,
-                                    size: 18,
-                                    color: widget.accent.withValues(alpha: 0.9),
+                                    size: 16,
+                                    color: widget.accent,
                                   ),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
                                       'Published: $dateStr',
-                                      style: TextStyle(
-                                        color: widget.accent.withValues(alpha: 0.9),
-                                        fontSize: 14,
+                                      style: AppTextStyles.bodySmall.copyWith(
+                                        color: AppColors.textSecondary,
                                         fontWeight: FontWeight.w500,
                                       ),
                                     ),
@@ -885,19 +877,18 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                               const SizedBox(height: 6),
                               Row(
                                 children: [
-                                  Icon(
+                                  const Icon(
                                     Icons.event_busy_rounded,
-                                    size: 18,
-                                    color: colorScheme.onSurfaceVariant,
+                                    size: 16,
+                                    color: AppColors.textSecondary,
                                   ),
                                   const SizedBox(width: 6),
                                   Expanded(
                                     child: Text(
                                       'Expires: '
                                       '${DateFormat('d MMM y, h:mm a').format(_expiryDisplayDate ?? _expiryDate!)}',
-                                      style: TextStyle(
-                                        color: colorScheme.onSurfaceVariant,
-                                        fontSize: 14,
+                                      style: AppTextStyles.bodySmall.copyWith(
+                                        color: AppColors.textSecondary,
                                         fontWeight: FontWeight.w500,
                                       ),
                                     ),
@@ -912,12 +903,12 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                   ),
                 ),
                 if (imageUrls.isNotEmpty) ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   ...imageUrls.map(
                     (url) => Padding(
                       padding: const EdgeInsets.only(bottom: 12),
                       child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                         child: OrientedImage.network(
                           url,
                           width: double.infinity,
@@ -928,40 +919,33 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       ),
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                 ],
                 if (description.isNotEmpty) ...[
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: colorScheme.surface,
                       borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colorScheme.shadow.withValues(alpha: 0.08),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      border: Border.all(color: const Color(0xFFECEEF1)),
+                      boxShadow: kSoftCardShadow,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           'Description',
-                          style: TextStyle(
+                          style: AppTextStyles.label.copyWith(
                             fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                            color: colorScheme.onSurfaceVariant,
+                            color: AppColors.textSecondary,
                           ),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 8),
                         Text(
                           description,
-                          style: TextStyle(
-                            fontSize: 15,
+                          style: AppTextStyles.bodyLarge.copyWith(
                             color: colorScheme.onSurface,
                             height: 1.5,
                           ),
@@ -983,43 +967,51 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                       return const SizedBox.shrink();
                     }
                     return Padding(
-                      padding: const EdgeInsets.only(top: 16),
+                      padding: const EdgeInsets.only(top: 12),
                       child: Container(
                         width: double.infinity,
-                        padding: const EdgeInsets.all(18),
+                        padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: colorScheme.surface,
                           borderRadius: BorderRadius.circular(16),
-                          border: Border(
-                            left: BorderSide(color: widget.accent, width: 4),
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: colorScheme.shadow.withValues(alpha: 0.08),
-                              blurRadius: 8,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
+                          border: Border.all(color: const Color(0xFFECEEF1)),
+                          boxShadow: kSoftCardShadow,
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             if (heading.isNotEmpty) ...[
-                              Text(
-                                heading,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 16,
-                                  color: widget.accent,
-                                ),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Container(
+                                    width: 4,
+                                    height: 18,
+                                    margin: const EdgeInsets.only(
+                                      top: 1,
+                                      right: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: widget.accent,
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      heading,
+                                      style: AppTextStyles.headingSmall.copyWith(
+                                        color: colorScheme.onSurface,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              const SizedBox(height: 10),
+                              const SizedBox(height: 8),
                             ],
                             if (body.isNotEmpty)
                               Text(
                                 body,
-                                style: TextStyle(
-                                  fontSize: 15,
+                                style: AppTextStyles.bodyLarge.copyWith(
                                   color: colorScheme.onSurface,
                                   height: 1.5,
                                 ),
@@ -1063,20 +1055,15 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                   }),
                 ],
                 if (attachments.isNotEmpty) ...[
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
                       color: colorScheme.surface,
                       borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: colorScheme.shadow.withValues(alpha: 0.08),
-                          blurRadius: 8,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
+                      border: Border.all(color: const Color(0xFFECEEF1)),
+                      boxShadow: kSoftCardShadow,
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1084,17 +1071,16 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                         Row(
                           children: [
                             Icon(
-                              Icons.attach_file,
+                              Icons.attach_file_rounded,
                               size: 18,
                               color: widget.accent,
                             ),
                             const SizedBox(width: 8),
                             Text(
                               'Attachments',
-                              style: TextStyle(
+                              style: AppTextStyles.label.copyWith(
                                 fontWeight: FontWeight.w600,
-                                fontSize: 14,
-                                color: colorScheme.onSurfaceVariant,
+                                color: AppColors.textSecondary,
                               ),
                             ),
                           ],
@@ -1121,25 +1107,46 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
           RefreshIndicator(
             onRefresh: _syncReadAndSeen,
             child: ListView(
-              padding: const EdgeInsets.all(20),
+              padding: const EdgeInsets.all(16),
               children: [
                 Text(
                   'You can send multiple messages about this announcement; they appear in order below. HR/Admin can reply to each thread and send follow-up messages when needed.',
-                  style: TextStyle(
+                  style: AppTextStyles.bodySmall.copyWith(
                     color: colorScheme.onSurfaceVariant,
-                    height: 1.4,
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
                 if (_loadingEngagement)
                   const Padding(
                     padding: EdgeInsets.all(16),
                     child: Center(child: CircularProgressIndicator()),
                   ),
                 if (!_loadingEngagement && _myReplies.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('No engagement yet.'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 24),
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: widget.accent.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.forum_outlined,
+                            size: 28,
+                            color: widget.accent,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'No engagement yet.',
+                          textAlign: TextAlign.center,
+                          style: AppTextStyles.headingSmall,
+                        ),
+                      ],
+                    ),
                   ),
                 if (_myReplies.isNotEmpty) ...[
                   ..._myReplies.map((r) {
@@ -1198,10 +1205,18 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   maxWidth: 280,
                                 ),
                                 child: Container(
-                                  padding: const EdgeInsets.all(11),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                    vertical: 10,
+                                  ),
                                   decoration: BoxDecoration(
-                                    color: colorScheme.primaryContainer,
-                                    borderRadius: BorderRadius.circular(12),
+                                    color: AppColors.primary,
+                                    borderRadius: const BorderRadius.only(
+                                      topLeft: Radius.circular(18),
+                                      topRight: Radius.circular(18),
+                                      bottomLeft: Radius.circular(18),
+                                      bottomRight: Radius.circular(4),
+                                    ),
                                   ),
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -1209,8 +1224,8 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                       Text(
                                         myMessage,
                                         textAlign: TextAlign.right,
-                                        style: TextStyle(
-                                          color: colorScheme.onPrimaryContainer,
+                                        style: AppTextStyles.bodyMedium.copyWith(
+                                          color: AppColors.onPrimary,
                                         ),
                                       ),
                                       if (created != null) ...[
@@ -1219,11 +1234,10 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                           DateFormat(
                                             'd MMM, h:mm a',
                                           ).format(created.toLocal()),
-                                          style: TextStyle(
+                                          style: AppTextStyles.caption.copyWith(
                                             fontSize: 11,
-                                            color: colorScheme
-                                                .onPrimaryContainer
-                                                .withValues(alpha: 0.8),
+                                            color: AppColors.onPrimary
+                                                .withValues(alpha: 0.75),
                                           ),
                                         ),
                                       ],
@@ -1263,13 +1277,22 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                   ),
                                   child: Container(
                                     margin: const EdgeInsets.only(top: 8),
-                                    padding: const EdgeInsets.all(10),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
                                     decoration: BoxDecoration(
                                       color: colorScheme.surface,
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: colorScheme.outlineVariant,
+                                      borderRadius: const BorderRadius.only(
+                                        topLeft: Radius.circular(18),
+                                        topRight: Radius.circular(18),
+                                        bottomLeft: Radius.circular(4),
+                                        bottomRight: Radius.circular(18),
                                       ),
+                                      border: Border.all(
+                                        color: const Color(0xFFECEEF1),
+                                      ),
+                                      boxShadow: kSoftCardShadow,
                                     ),
                                     child: Column(
                                       crossAxisAlignment:
@@ -1282,21 +1305,23 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                                               hr['fromName']?.toString() ??
                                               hr['senderName']?.toString() ??
                                               'HR/Admin',
-                                          style: TextStyle(
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.w700,
-                                            color: colorScheme.primary,
+                                          style: AppTextStyles.caption.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                            color: AppColors.primaryText,
                                           ),
                                         ),
                                         const SizedBox(height: 4),
-                                        Text(hrText),
+                                        Text(
+                                          hrText,
+                                          style: AppTextStyles.bodyMedium,
+                                        ),
                                         if (hrDate != null) ...[
                                           const SizedBox(height: 4),
                                           Text(
                                             DateFormat(
                                               'd MMM, h:mm a',
                                             ).format(hrDate.toLocal()),
-                                            style: TextStyle(
+                                            style: AppTextStyles.caption.copyWith(
                                               fontSize: 11,
                                               color:
                                                   colorScheme.onSurfaceVariant,
@@ -1315,8 +1340,7 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                               alignment: Alignment.centerLeft,
                               child: Text(
                                 'Awaiting response from HR.',
-                                style: TextStyle(
-                                  fontSize: 12,
+                                style: AppTextStyles.caption.copyWith(
                                   color: colorScheme.onSurfaceVariant,
                                 ),
                               ),
@@ -1331,27 +1355,34 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                 if (_isExpired)
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(14),
+                    padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: colorScheme.outlineVariant),
+                      color: colorScheme.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFECEEF1)),
                     ),
                     child: Row(
                       children: [
-                        Icon(
-                          Icons.lock_clock_outlined,
-                          size: 20,
-                          color: colorScheme.onSurfaceVariant,
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: AppColors.errorBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: const Icon(
+                            Icons.lock_clock_outlined,
+                            size: 20,
+                            color: AppColors.error,
+                          ),
                         ),
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
                             'This announcement has expired. You can no longer '
                             'send messages or engage with it.',
-                            style: TextStyle(
+                            style: AppTextStyles.bodySmall.copyWith(
                               color: colorScheme.onSurfaceVariant,
-                              height: 1.4,
                             ),
                           ),
                         ),
@@ -1361,10 +1392,8 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                 else ...[
                   Text(
                     'Send another message',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
+                    style: AppTextStyles.headingSmall.copyWith(
                       color: colorScheme.onSurface,
-                      fontSize: 18,
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -1373,14 +1402,11 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                     minLines: 3,
                     maxLines: 5,
                     textInputAction: TextInputAction.newline,
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       hintText: 'Write your feedback or questions for HR...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
                     ),
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 12),
                   Align(
                     alignment: Alignment.centerRight,
                     child: FilledButton(
@@ -1388,12 +1414,12 @@ class _AnnouncementDetailScreenState extends State<AnnouncementDetailScreen>
                           ? null
                           : _sendEngagementMessage,
                       child: _sendingMessage
-                          ? const SizedBox(
+                          ? SizedBox(
                               height: 18,
                               width: 18,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: AppColors.onPrimary,
                               ),
                             )
                           : const Text('Send'),

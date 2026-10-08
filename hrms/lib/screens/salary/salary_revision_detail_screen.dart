@@ -10,6 +10,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../utils/mongo_date_parse.dart';
 import '../../utils/salary_ctc_helpers.dart';
 import '../../utils/snackbar_utils.dart';
@@ -90,20 +92,19 @@ class _SalaryRevisionDetailScreenState
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text(
-          'Salary Revision History',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-        ),
-        centerTitle: true,
+        title: const Text('Salary Revision History'),
         actions: [
           _exporting
-              ? const Padding(
-                  padding: EdgeInsets.only(right: 16),
+              ? Padding(
+                  padding: const EdgeInsets.only(right: 16),
                   child: Center(
                     child: SizedBox(
                       width: 18,
                       height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: AppColors.primary,
+                      ),
                     ),
                   ),
                 )
@@ -120,12 +121,14 @@ class _SalaryRevisionDetailScreenState
                     effStr: effStr,
                     payoutStr: payoutStr,
                   ),
-                  icon: Icon(Icons.download_outlined, color: AppColors.primary),
+                  icon: Icon(Icons.download_outlined,
+                      color: AppColors.primaryText),
                 ),
+          const SizedBox(width: 4),
         ],
       ),
       body: ListView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
         children: [
           _SummaryGrid(
             currency: currency,
@@ -136,12 +139,15 @@ class _SalaryRevisionDetailScreenState
             effectiveStr: effStr,
             payoutStr: payoutStr,
           ),
-          const SizedBox(height: 20),
-          const Text(
-            'Earnings & components',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          const SizedBox(height: 24),
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Text(
+              'Earnings & components',
+              style: AppTextStyles.headingSmall,
+            ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           for (final key in _componentOrder) ...[
             if (_monthly(prev, key) != null || _monthly(rev, key) != null)
               _ComponentCompare(
@@ -469,12 +475,14 @@ class _SummaryGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final approved = AppColors.statusStyle('approved');
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Column(
         children: [
@@ -484,7 +492,7 @@ class _SummaryGrid extends StatelessWidget {
             'Revised CTC',
             revCtc != null ? currency.format(revCtc!) : '—',
           ),
-          const Divider(height: 20),
+          const SizedBox(height: 8),
           _row2(
             'Difference',
             diff != null ? currency.format(diff!) : '—',
@@ -494,32 +502,34 @@ class _SummaryGrid extends StatelessWidget {
             value2ArrowUp: pct != null && pct! > 0,
             value2ArrowDown: pct != null && pct! < 0,
           ),
-          const Divider(height: 20),
+          const SizedBox(height: 8),
           _row2(
             'Effective From',
             effectiveStr,
             'Payout Month',
             payoutStr,
           ),
-          const Divider(height: 20),
+          const SizedBox(height: 16),
+          const Divider(height: 1),
+          const SizedBox(height: 16),
           Row(
             children: [
               Expanded(
                 child: Text(
                   'Status',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                  style: AppTextStyles.bodySmall,
                 ),
               ),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
-                  color: AppColors.success.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
+                  color: approved.bg,
+                  borderRadius: BorderRadius.circular(999),
                 ),
-                child: const Text(
+                child: Text(
                   'Approved',
                   style: TextStyle(
-                    color: AppColors.success,
+                    color: approved.fg,
                     fontWeight: FontWeight.w600,
                     fontSize: 12,
                   ),
@@ -545,6 +555,7 @@ class _SummaryGrid extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Expanded(child: _cell(l1, v1)),
+        const SizedBox(width: 8),
         Expanded(child: _cell(l2, v2, color: value2Color, up: value2ArrowUp, down: value2ArrowDown)),
       ],
     );
@@ -552,32 +563,31 @@ class _SummaryGrid extends StatelessWidget {
 
   Widget _cell(String label, String value, {Color? color, bool up = false, bool down = false}) {
     return Container(
-      padding: const EdgeInsets.all(8),
-      margin: const EdgeInsets.all(2),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             label,
-            style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
           ),
           const SizedBox(height: 4),
           Row(
             children: [
               if (up)
-                Icon(Icons.arrow_upward, size: 16, color: color ?? AppColors.textPrimary),
+                Icon(Icons.arrow_upward_rounded, size: 16, color: color ?? AppColors.textPrimary),
               if (down)
-                Icon(Icons.arrow_downward, size: 16, color: color ?? AppColors.textPrimary),
+                Icon(Icons.arrow_downward_rounded, size: 16, color: color ?? AppColors.textPrimary),
               Expanded(
                 child: Text(
                   value,
                   style: TextStyle(
                     fontWeight: FontWeight.w700,
-                    fontSize: 13,
+                    fontSize: 14,
                     color: color ?? AppColors.textPrimary,
                   ),
                 ),
@@ -625,31 +635,32 @@ class _ComponentCompare extends StatelessWidget {
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade200),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             title,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
                 child: _mini('Previous Amount', currency.format(p)),
               ),
+              const SizedBox(width: 12),
               Expanded(
                 child: _mini('Revised Amount', currency.format(r)),
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -661,6 +672,7 @@ class _ComponentCompare extends StatelessWidget {
                   down,
                 ),
               ),
+              const SizedBox(width: 12),
               Expanded(
                 child: _mini('Difference', currency.format(diff)),
               ),
@@ -675,9 +687,11 @@ class _ComponentCompare extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+        Text(label,
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
         const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+        Text(value,
+            style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600)),
       ],
     );
   }
@@ -692,17 +706,18 @@ class _ComponentCompare extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
+        Text(label,
+            style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
         const SizedBox(height: 2),
         Row(
           children: [
-            if (up) Icon(Icons.arrow_upward, size: 14, color: color),
-            if (down) Icon(Icons.arrow_downward, size: 14, color: color),
+            if (up) Icon(Icons.arrow_upward_rounded, size: 14, color: color),
+            if (down) Icon(Icons.arrow_downward_rounded, size: 14, color: color),
             Text(
               value,
               style: TextStyle(
                 fontWeight: FontWeight.w600,
-                fontSize: 13,
+                fontSize: 14,
                 color: color,
               ),
             ),

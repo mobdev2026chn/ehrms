@@ -96,23 +96,28 @@ class _InteractionShellScreenState extends State<InteractionShellScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F5F5),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: const Color(0xFF0F172A),
-        title: const Text('Interaction', style: TextStyle(fontWeight: FontWeight.w600)),
+        title: const Text('Interaction'),
         bottom: TabBar(
           controller: _tabController,
-          labelColor: AppColors.primary,
-          unselectedLabelColor: Colors.grey,
-          indicatorColor: AppColors.primary,
+          labelColor: AppColors.primaryText,
+          unselectedLabelColor: AppColors.textSecondary,
+          indicatorSize: TabBarIndicatorSize.label,
           tabs: const [
-            Tab(icon: Icon(Icons.chat_bubble_outline), text: 'Messages'),
-            Tab(icon: Icon(Icons.poll_outlined), text: 'Polls & Surveys'),
+            Tab(
+              height: 56,
+              iconMargin: EdgeInsets.only(bottom: 4),
+              icon: Icon(Icons.chat_bubble_outline_rounded, size: 20),
+              text: 'Messages',
+            ),
+            Tab(
+              height: 56,
+              iconMargin: EdgeInsets.only(bottom: 4),
+              icon: Icon(Icons.poll_outlined, size: 20),
+              text: 'Polls & Surveys',
+            ),
           ],
         ),
       ),

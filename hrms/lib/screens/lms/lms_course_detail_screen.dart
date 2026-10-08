@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../services/lms_service.dart';
 import '../../utils/snackbar_utils.dart' show SnackBarUtils;
@@ -244,8 +245,6 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Loading...'),
-          backgroundColor: AppColors.background,
-          foregroundColor: AppColors.textPrimary,
         ),
         body: const Center(child: AppTabLoader()),
       );
@@ -255,10 +254,10 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
       return Scaffold(
         appBar: AppBar(
           title: const Text('Course'),
-          backgroundColor: AppColors.background,
-          foregroundColor: AppColors.textPrimary,
         ),
-        body: const Center(child: Text('Course not found')),
+        body: const Center(
+          child: Text('Course not found', style: AppTextStyles.bodySmall),
+        ),
       );
     }
 
@@ -276,13 +275,12 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
           appBar: AppBar(
             leading: Builder(
               builder: (ctx) => IconButton(
-                icon: const Icon(Icons.menu),
+                icon: const Icon(Icons.menu_rounded),
+                tooltip: 'Menu',
                 onPressed: () => Scaffold.of(ctx).openDrawer(),
               ),
             ),
             title: const Text('Course'),
-            backgroundColor: AppColors.background,
-            foregroundColor: AppColors.textPrimary,
           ),
           drawer: const AppDrawer(),
           body: Column(
@@ -302,13 +300,16 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                         grouped,
                         completionPercent,
                       ),
-                      icon: const Icon(Icons.list_alt, size: 20),
+                      icon: const Icon(Icons.list_alt_rounded, size: 20),
                       label: const Text('Course content'),
                       style: TextButton.styleFrom(
-                        foregroundColor: AppColors.primary,
+                        backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
+                          horizontal: 14,
                           vertical: 8,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(999),
                         ),
                       ),
                     ),
@@ -330,7 +331,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                   children: [
                     const AppTabLoader(),
                     const SizedBox(height: 20),
-                    Text(
+                    const Text(
                       'Wait, your quiz is generating…',
                       style: TextStyle(
                         fontSize: 16,
@@ -373,14 +374,12 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                     children: [
                       const Text(
                         'Course content',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                       const Spacer(),
                       IconButton(
-                        icon: const Icon(Icons.close),
+                        icon: const Icon(Icons.close_rounded),
+                        tooltip: 'Close',
                         onPressed: () => Navigator.pop(ctx),
                       ),
                     ],
@@ -388,7 +387,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                   const SizedBox(height: 4),
                   Text(
                     _course['title'] ?? 'Course',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                    style: const TextStyle(fontSize: 14, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -429,15 +428,30 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
         children: [
           if (material == null)
             Card(
+              margin: EdgeInsets.zero,
               child: Padding(
-                padding: const EdgeInsets.all(48),
-                child: Center(
-                  child: Text(
-                    _allMaterials.isEmpty
-                        ? 'No learning material available for this lesson.'
-                        : 'Select content to view',
-                    style: TextStyle(color: Colors.grey[600]),
-                  ),
+                padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 24),
+                child: Column(
+                  children: [
+                    Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(Icons.menu_book_outlined,
+                          size: 28, color: AppColors.primaryText),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      _allMaterials.isEmpty
+                          ? 'No learning material available for this lesson.'
+                          : 'Select content to view',
+                      textAlign: TextAlign.center,
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ],
                 ),
               ),
             )
@@ -453,46 +467,41 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                         material['title'] ??
                             material['lessonTitle'] ??
                             'Content',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 2,
+                          horizontal: 10,
+                          vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(4),
+                          color: AppColors.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                         child: Text(
                           (material['type'] ?? 'URL').toString(),
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
-                            color: AppColors.primary,
+                            color: AppColors.primaryText,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 12),
                 OutlinedButton.icon(
                   onPressed: () => _openMaterial(material),
-                  icon: const Icon(Icons.open_in_new, size: 18),
+                  icon: const Icon(Icons.open_in_new_rounded, size: 18),
                   label: const Text('Open'),
                 ),
               ],
             ),
             const SizedBox(height: 16),
             Card(
-              elevation: 2,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
+              margin: EdgeInsets.zero,
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: LmsContentViewer(
@@ -534,43 +543,47 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
       children: [
         const Text(
           'Course content',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+          style: AppTextStyles.headingSmall,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         Text(
           '${grouped.length} sections • ${_allMaterials.length} items',
-          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          style: AppTextStyles.bodySmall.copyWith(fontSize: 12),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 16),
         Row(
           children: [
             const Text(
               'YOUR PROGRESS',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+              style: AppTextStyles.sectionLabel,
             ),
             const Spacer(),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(8),
+                color: AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
                 '$completionPercent% Completed',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.primary,
+                  color: AppColors.primaryText,
                 ),
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        LinearProgressIndicator(
-          value: completionPercent / 100,
-          backgroundColor: Colors.grey[200],
-          valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(999),
+          child: LinearProgressIndicator(
+            value: completionPercent / 100,
+            minHeight: 8,
+            backgroundColor: const Color(0xFFECEEF1),
+            valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+          ),
         ),
         const SizedBox(height: 24),
         ...lessonTitles.asMap().entries.map((entry) {
@@ -583,13 +596,21 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
           return Container(
             margin: const EdgeInsets.only(bottom: 12),
             decoration: BoxDecoration(
-              border: Border.all(color: AppColors.primary, width: 1),
-              borderRadius: BorderRadius.circular(12),
-              color: Colors.white,
+              border: Border.all(
+                color: isLocked
+                    ? const Color(0xFFECEEF1)
+                    : AppColors.primary.withValues(alpha: 0.45),
+              ),
+              borderRadius: BorderRadius.circular(16),
+              color: AppColors.surface,
             ),
+            clipBehavior: Clip.antiAlias,
             child: ExpansionTile(
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(11),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              collapsedShape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
               tilePadding: const EdgeInsets.symmetric(
                 horizontal: 16,
@@ -598,46 +619,46 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
               initiallyExpanded: i == 0,
               leading: Icon(
                 isLocked
-                    ? Icons.lock
+                    ? Icons.lock_outline_rounded
                     : (isCompleted
-                          ? Icons.check_circle
-                          : Icons.radio_button_unchecked),
+                          ? Icons.check_circle_rounded
+                          : Icons.radio_button_unchecked_rounded),
                 color: isLocked
-                    ? Colors.grey
-                    : (isCompleted ? Colors.green : AppColors.primary),
+                    ? AppColors.textCaption
+                    : (isCompleted ? AppColors.success : AppColors.primaryText),
                 size: 20,
               ),
               title: Text(
                 '${i + 1}. $title',
                 style: TextStyle(
                   fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: isLocked ? Colors.grey : null,
+                  fontWeight: FontWeight.w600,
+                  color: isLocked ? AppColors.textCaption : AppColors.textPrimary,
                 ),
               ),
               subtitle: Row(
                 children: [
                   Text(
                     '${materials.length} item(s)',
-                    style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary),
                   ),
                   if (isCompleted) ...[
                     const SizedBox(width: 8),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
+                        horizontal: 8,
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.2),
-                        borderRadius: BorderRadius.circular(4),
+                        color: AppColors.successBg,
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: const Text(
                         'Completed',
                         style: TextStyle(
-                          fontSize: 10,
+                          fontSize: 11,
                           fontWeight: FontWeight.w600,
-                          color: Colors.green,
+                          color: AppColors.success,
                         ),
                       ),
                     ),
@@ -656,15 +677,15 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                   return ListTile(
                     dense: true,
                     leading: Icon(
-                      viewed ? Icons.check_circle : Icons.play_circle_outline,
-                      size: 18,
-                      color: viewed ? Colors.green : Colors.grey,
+                      viewed ? Icons.check_circle_rounded : Icons.play_circle_outline_rounded,
+                      size: 20,
+                      color: viewed ? AppColors.success : AppColors.textSecondary,
                     ),
                     title: Text(
                       m['title'] ?? m['type'] ?? 'Content',
                       style: TextStyle(
-                        fontSize: 12,
-                        color: isLocked ? Colors.grey : null,
+                        fontSize: 13,
+                        color: isLocked ? AppColors.textCaption : AppColors.textPrimary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -672,18 +693,19 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                     trailing: (m['type'] ?? '').toString().isNotEmpty
                         ? Container(
                             padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
+                              horizontal: 8,
                               vertical: 2,
                             ),
                             decoration: BoxDecoration(
-                              color: Colors.grey[200],
-                              borderRadius: BorderRadius.circular(4),
+                              color: AppColors.inputFill,
+                              borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
                               (m['type'] ?? 'URL').toString(),
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey[700],
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.textSecondary,
                               ),
                             ),
                           )
@@ -709,11 +731,11 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                     child: OutlinedButton.icon(
                       onPressed: () =>
                           _showQuizModal(context, preSelected: [title]),
-                      icon: const Icon(Icons.quiz_outlined, size: 16),
+                      icon: const Icon(Icons.quiz_outlined, size: 18),
                       label: const Text('AI Quiz'),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: AppColors.primary,
-                        side: BorderSide(color: AppColors.primary),
+                        foregroundColor: AppColors.primaryText,
+                        side: BorderSide(color: AppColors.primary.withValues(alpha: 0.6), width: 1.2),
                       ),
                     ),
                   ),
@@ -727,12 +749,8 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                     ),
                     child: ElevatedButton.icon(
                       onPressed: () => _markLessonComplete(title),
-                      icon: const Icon(Icons.check_circle_outline, size: 16),
+                      icon: const Icon(Icons.check_circle_outline_rounded, size: 18),
                       label: const Text('Mark Done'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        foregroundColor: Colors.white,
-                      ),
                     ),
                   ),
                 ],
@@ -770,12 +788,12 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                           )
                           .then((_) => mounted ? _loadCourse() : null);
                     },
-                    icon: const Icon(Icons.emoji_events),
+                    icon: const Icon(Icons.emoji_events_outlined),
                     label: const Text('Start Final Assessment'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6366F1),
+                      backgroundColor: AppColors.indigo,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      minimumSize: const Size(0, 52),
                     ),
                   ),
                 );
@@ -792,12 +810,12 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                         'Live assessment request not yet supported in app',
                       );
                     },
-                    icon: const Icon(Icons.emoji_events),
+                    icon: const Icon(Icons.emoji_events_outlined),
                     label: const Text('Request Final Assessment'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF6366F1),
+                      backgroundColor: AppColors.indigo,
                       foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      minimumSize: const Size(0, 52),
                     ),
                   ),
                 );
@@ -810,8 +828,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
                   icon: const Icon(Icons.quiz_outlined),
                   label: const Text('Practice Quiz'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.primary,
-                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 52),
                   ),
                 ),
               );
@@ -822,7 +839,7 @@ class _LmsCourseDetailScreenState extends State<LmsCourseDetailScreen> {
     );
     if (compact) {
       return Container(
-        color: Colors.grey[100],
+        color: AppColors.background,
         constraints: const BoxConstraints(maxHeight: 280),
         child: content,
       );
@@ -950,18 +967,19 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
+                width: 44,
+                height: 44,
                 decoration: BoxDecoration(
-                  color: AppColors.primary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(Icons.quiz_outlined, color: AppColors.primary),
+                child: Icon(Icons.quiz_outlined, size: 22, color: AppColors.primaryText),
               ),
               const SizedBox(width: 12),
               const Expanded(
                 child: Text(
                   'AI Practice Quiz',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: AppTextStyles.headingMedium,
                 ),
               ),
             ],
@@ -969,12 +987,12 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
           const SizedBox(height: 8),
           Text(
             'Choose completed lessons and generate a quiz.',
-            style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+            style: AppTextStyles.bodySmall,
           ),
           const SizedBox(height: 20),
           const Text(
             'Select Lessons *',
-            style: TextStyle(fontWeight: FontWeight.w600),
+            style: AppTextStyles.label,
           ),
           const SizedBox(height: 8),
           ...widget.completedLessons.map((lesson) {
@@ -994,6 +1012,8 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
               },
               title: Text(lesson, style: const TextStyle(fontSize: 14)),
               controlAffinity: ListTileControlAffinity.leading,
+              contentPadding: EdgeInsets.zero,
+              dense: true,
             );
           }),
           const SizedBox(height: 16),
@@ -1005,13 +1025,12 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
                   children: [
                     const Text(
                       'Difficulty',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                      style: AppTextStyles.label,
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     DropdownButtonFormField<String>(
                       initialValue: _difficulty,
                       decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 8,
@@ -1035,9 +1054,9 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
                   children: [
                     const Text(
                       'Questions (1–10)',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                      style: AppTextStyles.label,
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     TextFormField(
                       controller: _questionCountController,
                       keyboardType: TextInputType.number,
@@ -1047,7 +1066,6 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
                       ],
                       decoration: const InputDecoration(
                         hintText: '5',
-                        border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.symmetric(
                           horizontal: 12,
                           vertical: 12,
@@ -1068,9 +1086,7 @@ class _AiQuizModalContentState extends State<_AiQuizModalContent> {
               widget.onGenerate(_selected, _difficulty, clampedCount);
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
+              minimumSize: const Size(0, 52),
             ),
             child: const Text('Generate Quiz'),
           ),

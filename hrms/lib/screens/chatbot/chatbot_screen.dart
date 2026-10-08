@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
+import '../../widgets/app_card.dart';
 import '../../services/chatbot_service.dart';
 import '../../widgets/app_drawer.dart';
 import '../../widgets/bottom_navigation_bar.dart';
@@ -85,16 +87,27 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                Icon(
-                                  Icons.chat_bubble_outline,
-                                  size: 64,
-                                  color: Colors.grey[300],
+                                Container(
+                                  width: 64,
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: AppColors.primary
+                                        .withValues(alpha: 0.12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: Icon(
+                                    Icons.chat_bubble_outline_rounded,
+                                    size: 28,
+                                    color: AppColors.primaryText,
+                                  ),
                                 ),
                                 const SizedBox(height: 16),
-                                const Text(
+                                Text(
                                   'Ask me about your leaves, holidays,\nor company info!',
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(color: Colors.grey, fontSize: 16),
+                                  style: AppTextStyles.bodyLarge.copyWith(
+                                    color: AppColors.textSecondary,
+                                  ),
                                 ),
                               ],
                             ),
@@ -117,22 +130,26 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                         child: Container(
                           margin: const EdgeInsets.symmetric(vertical: 4),
                           padding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
+                            horizontal: 14,
+                            vertical: 10,
                           ),
                           decoration: BoxDecoration(
                             color: isUser
                                 ? AppColors.primary
-                                : Colors.grey[200],
+                                : AppColors.surface,
+                            border: isUser
+                                ? null
+                                : Border.all(color: const Color(0xFFECEEF1)),
+                            boxShadow: isUser ? null : kSoftCardShadow,
                             borderRadius: BorderRadius.only(
-                              topLeft: const Radius.circular(12),
-                              topRight: const Radius.circular(12),
+                              topLeft: const Radius.circular(18),
+                              topRight: const Radius.circular(18),
                               bottomLeft: isUser
-                                  ? const Radius.circular(12)
-                                  : const Radius.circular(0),
+                                  ? const Radius.circular(18)
+                                  : const Radius.circular(4),
                               bottomRight: isUser
-                                  ? const Radius.circular(0)
-                                  : const Radius.circular(12),
+                                  ? const Radius.circular(4)
+                                  : const Radius.circular(18),
                             ),
                           ),
                           constraints: BoxConstraints(
@@ -140,9 +157,10 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                           ),
                           child: Text(
                             msg['text']!,
-                            style: TextStyle(
-                              color: isUser ? Colors.white : Colors.black87,
-                              fontSize: 15,
+                            style: AppTextStyles.bodyLarge.copyWith(
+                              color: isUser
+                                  ? AppColors.onPrimary
+                                  : AppColors.textPrimary,
                             ),
                           ),
                         ),
@@ -157,22 +175,21 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
               child: LinearProgressIndicator(),
             ),
           Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+            decoration: const BoxDecoration(
+              color: AppColors.surface,
+              border: Border(top: BorderSide(color: Color(0xFFECEEF1))),
+            ),
             child: Row(
               children: [
                 Expanded(
                   child: TextField(
                     controller: _controller,
                     onSubmitted: (_) => _sendMessage(),
-                    decoration: InputDecoration(
+                    decoration: const InputDecoration(
                       hintText: 'Type your question...',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                        borderSide: BorderSide(color: Colors.grey.shade300),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 20,
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 16,
                         vertical: 12,
                       ),
                     ),
@@ -181,9 +198,16 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                 const SizedBox(width: 8),
                 FloatingActionButton(
                   onPressed: _sendMessage,
+                  tooltip: 'Send',
                   backgroundColor: AppColors.primary,
+                  foregroundColor: AppColors.onPrimary,
+                  elevation: 0,
+                  highlightElevation: 0,
                   mini: true,
-                  child: const Icon(Icons.send, color: Colors.white),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.send_rounded, size: 20),
                 ),
               ],
             ),

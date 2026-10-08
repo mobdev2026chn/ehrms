@@ -7,8 +7,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../../../config/app_colors.dart';
 import '../../../services/staff_interaction_service.dart';
 import '../../../utils/snackbar_utils.dart';
+import '../../../widgets/app_card.dart';
 import '../../../widgets/app_drawer.dart';
 import '../../../widgets/bottom_navigation_bar.dart';
 import 'staff_chat_thread_screen.dart';
@@ -48,23 +50,18 @@ class _StaffInteractionScreenState extends State<StaffInteractionScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppColors.background,
       drawer: const AppDrawer(),
       appBar: AppBar(
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.transparent,
-        foregroundColor: kInteractionInk,
-        title: const Text('Interaction', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18)),
+        title: const Text('Interaction'),
         actions: [
           ValueListenableBuilder<bool>(
             valueListenable: StaffInteractionService.instance.connected,
             builder: (_, live, _) => Padding(
-              padding: const EdgeInsets.only(right: 14),
+              padding: const EdgeInsets.only(right: 16),
               child: Tooltip(
                 message: live ? 'Live' : 'Updating periodically',
-                child: Icon(Icons.circle, size: 9, color: live ? const Color(0xFF22C55E) : const Color(0xFFCBD5E1)),
+                child: Icon(Icons.circle, size: 9, color: live ? AppColors.success : AppColors.textHint),
               ),
             ),
           ),
@@ -73,10 +70,8 @@ class _StaffInteractionScreenState extends State<StaffInteractionScreen>
           controller: _tabs,
           labelColor: kInteractionInk,
           unselectedLabelColor: kInteractionMuted,
-          indicatorColor: kInteractionAccent,
-          indicatorWeight: 3,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
-          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14),
           tabs: const [
             Tab(text: 'Chats'),
             Tab(text: 'Polls & Surveys'),
@@ -201,34 +196,33 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
       floatingActionButton: FloatingActionButton(
         heroTag: 'staff-new-chat',
         onPressed: _newChat,
-        backgroundColor: kInteractionAccent,
-        foregroundColor: Colors.white,
+        backgroundColor: AppColors.primary,
+        foregroundColor: AppColors.onPrimary,
+        elevation: 2,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         tooltip: 'New chat',
-        child: const Icon(Icons.chat_rounded),
+        child: const Icon(Icons.add_comment_outlined),
       ),
       body: Column(
         children: [
           Container(
-            color: Colors.white,
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            decoration: const BoxDecoration(
+              color: Colors.white,
+              border: Border(bottom: BorderSide(color: kInteractionLine)),
+            ),
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
             child: Column(
               children: [
                 TextField(
                   onChanged: (v) => setState(() => _query = v),
-                  decoration: InputDecoration(
+                  decoration: const InputDecoration(
                     hintText: 'Search chats',
-                    prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                    prefixIcon: Icon(Icons.search_rounded, size: 20),
                     isDense: true,
-                    filled: true,
-                    fillColor: const Color(0xFFF1F5F9),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide.none,
-                    ),
+                    contentPadding: EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   child: Row(
@@ -260,14 +254,14 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
         onSelected: (_) => setState(() => _filter = key),
         showCheckmark: false,
         labelStyle: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: sel ? Colors.white : kInteractionMuted,
+          fontSize: 13,
+          fontWeight: sel ? FontWeight.w600 : FontWeight.w500,
+          color: sel ? AppColors.onPrimary : kInteractionMuted,
         ),
-        selectedColor: kInteractionInk,
-        backgroundColor: const Color(0xFFF1F5F9),
-        side: BorderSide.none,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        selectedColor: AppColors.primary,
+        backgroundColor: AppColors.background,
+        side: BorderSide(color: sel ? Colors.transparent : const Color(0xFFE2E5EA)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
         visualDensity: VisualDensity.compact,
       ),
     );
@@ -306,9 +300,9 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
       onRefresh: _load,
       child: ListView.separated(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.only(bottom: 90),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
         itemCount: list.length,
-        separatorBuilder: (_, _) => const Divider(height: 1, indent: 76, color: kInteractionLine),
+        separatorBuilder: (_, _) => const SizedBox(height: 8),
         itemBuilder: (_, i) => _tile(list[i]),
       ),
     );
@@ -319,10 +313,15 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
     final icon = c.isBroadcast ? Icons.campaign_rounded : (c.isGroup ? Icons.groups_rounded : null);
     return Material(
       color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: kInteractionLine),
+      ),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: () => _open(c),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           child: Row(
             children: [
               InteractionAvatar(
@@ -344,21 +343,25 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
                             c.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: kInteractionInk),
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: unread ? FontWeight.w700 : FontWeight.w600,
+                              color: kInteractionInk,
+                            ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         Text(
                           chatListTime(c.lastMessageAt),
                           style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: unread ? FontWeight.w800 : FontWeight.w500,
-                            color: unread ? kInteractionAccent : kInteractionMuted,
+                            fontSize: 12,
+                            fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
+                            color: unread ? AppColors.primaryText : kInteractionMuted,
                           ),
                         ),
                       ],
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
                         if (c.isBroadcast)
@@ -376,7 +379,7 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
                             style: TextStyle(
                               fontSize: 13,
                               color: unread ? kInteractionInk : kInteractionMuted,
-                              fontWeight: unread ? FontWeight.w700 : FontWeight.w500,
+                              fontWeight: unread ? FontWeight.w600 : FontWeight.w400,
                             ),
                           ),
                         ),
@@ -384,15 +387,15 @@ class _ChatsTabState extends State<_ChatsTab> with AutomaticKeepAliveClientMixin
                           const SizedBox(width: 8),
                           Container(
                             constraints: const BoxConstraints(minWidth: 20),
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                             decoration: BoxDecoration(
-                              color: kInteractionAccent,
-                              borderRadius: BorderRadius.circular(10),
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(999),
                             ),
                             child: Text(
                               c.unreadCount > 99 ? '99+' : '${c.unreadCount}',
                               textAlign: TextAlign.center,
-                              style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w800),
+                              style: TextStyle(fontSize: 11, color: AppColors.onPrimary, fontWeight: FontWeight.w700),
                             ),
                           ),
                         ],
@@ -477,9 +480,12 @@ class _PollsTabState extends State<_PollsTab> with AutomaticKeepAliveClientMixin
     return Column(
       children: [
         Container(
-          color: Colors.white,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            border: Border(bottom: BorderSide(color: kInteractionLine)),
+          ),
           width: double.infinity,
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
           child: SegmentedButton<String>(
             segments: [
               ButtonSegment(value: 'active', label: Text(pending > 0 ? 'Active ($pending)' : 'Active')),
@@ -490,8 +496,15 @@ class _PollsTabState extends State<_PollsTab> with AutomaticKeepAliveClientMixin
             showSelectedIcon: false,
             onSelectionChanged: (s) => setState(() => _filter = s.first),
             style: ButtonStyle(
-              textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+              textStyle: WidgetStateProperty.all(const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               visualDensity: VisualDensity.compact,
+              backgroundColor: WidgetStateProperty.resolveWith(
+                (s) => s.contains(WidgetState.selected) ? AppColors.primary : Colors.white,
+              ),
+              foregroundColor: WidgetStateProperty.resolveWith(
+                (s) => s.contains(WidgetState.selected) ? AppColors.onPrimary : kInteractionMuted,
+              ),
+              side: WidgetStateProperty.all(const BorderSide(color: Color(0xFFE2E5EA))),
             ),
           ),
         ),
@@ -583,54 +596,48 @@ class _PollCardState extends State<_PollCard> {
       statusColor = kInteractionMuted;
     } else if (p.hasVoted) {
       statusLabel = 'VOTED';
-      statusColor = const Color(0xFF059669);
+      statusColor = AppColors.success;
     } else {
       statusLabel = 'ACTIVE';
-      statusColor = kInteractionAccent;
+      statusColor = AppColors.primaryText;
     }
 
-    return Container(
+    return AppCard(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: kInteractionLine),
-        boxShadow: const [BoxShadow(color: Color(0x08000000), blurRadius: 10, offset: Offset(0, 3))],
-      ),
+      border: Border.all(color: kInteractionLine),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
                   color: statusColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(20),
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Text(
                   statusLabel,
-                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: statusColor, letterSpacing: 0.4),
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: statusColor, letterSpacing: 0.4),
                 ),
               ),
               const SizedBox(width: 8),
               Text(
                 p.multiple ? 'Multiple choice' : 'Single choice',
-                style: const TextStyle(fontSize: 11, color: kInteractionMuted, fontWeight: FontWeight.w600),
+                style: const TextStyle(fontSize: 12, color: kInteractionMuted, fontWeight: FontWeight.w500),
               ),
               if (p.anonymous) ...[
-                const SizedBox(width: 6),
-                const Icon(Icons.visibility_off_outlined, size: 13, color: kInteractionMuted),
-                const SizedBox(width: 2),
-                const Text('Anonymous', style: TextStyle(fontSize: 11, color: kInteractionMuted)),
+                const SizedBox(width: 8),
+                const Icon(Icons.visibility_off_outlined, size: 14, color: kInteractionMuted),
+                const SizedBox(width: 4),
+                const Text('Anonymous', style: TextStyle(fontSize: 12, color: kInteractionMuted)),
               ],
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Text(
             p.question,
-            style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: kInteractionInk, height: 1.3),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk, height: 1.35),
           ),
           if (p.description.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -641,22 +648,26 @@ class _PollCardState extends State<_PollCard> {
             showResults
                 ? _resultRow(o, maxVotes)
                 : _choiceRow(o),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
           Row(
             children: [
-              Icon(Icons.how_to_vote_outlined, size: 14, color: Colors.grey.shade500),
+              const Icon(Icons.how_to_vote_outlined, size: 16, color: AppColors.textCaption),
               const SizedBox(width: 4),
               Text(
                 '${p.totalVotes} vote${p.totalVotes == 1 ? '' : 's'}',
-                style: const TextStyle(fontSize: 12, color: kInteractionMuted, fontWeight: FontWeight.w600),
+                style: const TextStyle(fontSize: 12, color: kInteractionMuted, fontWeight: FontWeight.w500),
               ),
               if (p.endDate != null) ...[
                 const SizedBox(width: 12),
-                Icon(Icons.event_outlined, size: 14, color: Colors.grey.shade500),
+                const Icon(Icons.event_outlined, size: 16, color: AppColors.textCaption),
                 const SizedBox(width: 4),
-                Text(
+                Flexible(
+                  child: Text(
                   '${p.isClosed ? 'Ended' : 'Ends'} ${DateFormat('d MMM yyyy').format(p.endDate!)}',
-                  style: const TextStyle(fontSize: 12, color: kInteractionMuted, fontWeight: FontWeight.w600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: kInteractionMuted, fontWeight: FontWeight.w500),
+                  ),
                 ),
               ],
               const Spacer(),
@@ -664,13 +675,12 @@ class _PollCardState extends State<_PollCard> {
                 FilledButton(
                   onPressed: _selected.isEmpty || _submitting ? null : _submit,
                   style: FilledButton.styleFrom(
-                    backgroundColor: kInteractionAccent,
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    minimumSize: const Size(0, 40),
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
                   ),
                   child: _submitting
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Text('Vote', style: TextStyle(fontWeight: FontWeight.w800)),
+                      ? SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary))
+                      : const Text('Vote'),
                 ),
             ],
           ),
@@ -696,11 +706,11 @@ class _PollCardState extends State<_PollCard> {
         }),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
-            color: sel ? kInteractionAccent.withValues(alpha: 0.08) : const Color(0xFFF8FAFC),
+            color: sel ? AppColors.primary.withValues(alpha: 0.08) : AppColors.background,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: sel ? kInteractionAccent : const Color(0xFFE2E8F0), width: sel ? 1.5 : 1),
+            border: Border.all(color: sel ? AppColors.primary : const Color(0xFFE2E5EA), width: sel ? 1.5 : 1),
           ),
           child: Row(
             children: [
@@ -709,13 +719,13 @@ class _PollCardState extends State<_PollCard> {
                     ? (sel ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded)
                     : (sel ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded),
                 size: 20,
-                color: sel ? kInteractionAccent : const Color(0xFF94A3B8),
+                color: sel ? AppColors.primaryText : AppColors.textCaption,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   o.text,
-                  style: TextStyle(fontSize: 14, fontWeight: sel ? FontWeight.w700 : FontWeight.w500, color: kInteractionInk),
+                  style: TextStyle(fontSize: 14, fontWeight: sel ? FontWeight.w600 : FontWeight.w500, color: kInteractionInk),
                 ),
               ),
             ],
@@ -737,7 +747,7 @@ class _PollCardState extends State<_PollCard> {
         child: Stack(
           children: [
             Positioned.fill(
-              child: Container(color: const Color(0xFFF8FAFC)),
+              child: Container(color: AppColors.background),
             ),
             Positioned.fill(
               child: TweenAnimationBuilder<double>(
@@ -748,29 +758,29 @@ class _PollCardState extends State<_PollCard> {
                   alignment: Alignment.centerLeft,
                   widthFactor: v.clamp(0.0, 1.0),
                   child: Container(
-                    color: (leading ? kInteractionAccent : const Color(0xFFCBD5E1)).withValues(alpha: 0.28),
+                    color: (leading ? AppColors.primary : const Color(0xFFCBD5E1)).withValues(alpha: 0.28),
                   ),
                 ),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
                       o.text,
-                      style: TextStyle(fontSize: 14, fontWeight: leading ? FontWeight.w800 : FontWeight.w600, color: kInteractionInk),
+                      style: TextStyle(fontSize: 14, fontWeight: leading ? FontWeight.w700 : FontWeight.w500, color: kInteractionInk),
                     ),
                   ),
                   if (mine)
                     const Padding(
                       padding: EdgeInsets.only(right: 6),
-                      child: Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF059669)),
+                      child: Icon(Icons.check_circle_rounded, size: 16, color: AppColors.success),
                     ),
                   Text(
                     '${(share * 100).round()}%',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: kInteractionInk),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kInteractionInk),
                   ),
                 ],
               ),

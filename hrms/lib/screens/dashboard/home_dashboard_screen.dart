@@ -995,19 +995,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ? null
                   : () => _handlePermissionStamp(isOutAction),
               icon: _isPermissionStamping
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 16,
                       height: 16,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: AppColors.onPrimary,
                       ),
                     )
                   : Icon(buttonIcon, size: 18),
               label: Text(buttonLabel),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
+                foregroundColor: AppColors.onPrimary,
                 elevation: 0,
                 padding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
@@ -2474,7 +2474,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           children: FadeSlideIn.staggered([
             // 1. Welcome Card (Web styled)
             _buildWebWelcomeCard(),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
             // Phone settings blocking punch-in tracking (shown only while it is).
             _buildTrackingHealthBanner(),
@@ -2484,19 +2484,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
             // 2. Quick Actions Card (Web styled 5 actions)
             _buildWebQuickActionsCard(),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
             // 3. Today's Punch Status Banner (Web styled)
             _buildWebTodayPunchBanner(),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
             // 4. Summary Metric Cards (Pending Leaves, Net, Attendance, Celebrations, My Tasks)
             _buildWebKpiCards(mtdDisplay),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
             // 5. Info Cards Row (Recent Leaves, Celebrations, Announcements, Active Tasks, Worked Today)
             _buildWebInfoCardsRow(),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
 
             // 6. Salary Overview Card (Gross, Net, CTC)
             _buildWebSalaryOverviewCard(),
@@ -2528,7 +2528,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     if (widget.embeddedInDashboard) {
       return Scaffold(
         key: _dashboardScaffoldKey,
-        backgroundColor: const Color(0xFFF5F7FA),
+        backgroundColor: AppColors.background,
         appBar: appBar,
         drawer: AppDrawer(
           currentIndex: widget.dashboardTabIndex ?? 0,
@@ -2539,7 +2539,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     }
     return Scaffold(
       key: _dashboardScaffoldKey,
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppColors.background,
       appBar: appBar,
       drawer: const AppDrawer(),
       body: bodyChild,
@@ -2726,7 +2726,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               Icon(
                 Icons.chevron_right,
                 size: 14,
-                color: AppColors.indigo,
+                color: AppColors.primary,
               ),
             ],
           ),
@@ -2849,8 +2849,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           _buildHeaderIconButton(
             icon: Icons.menu_rounded,
             tooltip: 'Menu',
-            iconColor: const Color(0xFF1E293B),
-            bgColor: const Color(0xFFF1F5F9),
+            iconColor: AppColors.textPrimary,
+            bgColor: AppColors.inputFill,
             onTap: () => _dashboardScaffoldKey.currentState?.openDrawer(),
           ),
           const SizedBox(width: 12),
@@ -2859,39 +2859,36 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
+                Text(
                   'Welcome back,',
-                  style: TextStyle(
-                    fontSize: 12,
+                  style: AppTextStyles.caption.copyWith(
                     fontWeight: FontWeight.w500,
-                    color: Color(0xFF64748B),
+                    color: AppColors.textSecondary,
                   ),
                 ),
+                const SizedBox(height: 2),
                 Text(
                   '$_userName!',
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
+                  style: AppTextStyles.headingMedium.copyWith(
+                    fontWeight: FontWeight.w700,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     const Icon(
-                      Icons.calendar_today_rounded,
-                      size: 11,
-                      color: Color(0xFF94A3B8),
+                      Icons.calendar_today_outlined,
+                      size: 12,
+                      color: AppColors.textSecondary,
                     ),
                     const SizedBox(width: 4),
                     Text(
                       dateStr,
-                      style: const TextStyle(
-                        fontSize: 11,
+                      style: AppTextStyles.caption.copyWith(
                         fontWeight: FontWeight.w500,
-                        color: Color(0xFF94A3B8),
+                        color: AppColors.textSecondary,
                       ),
                     ),
                   ],
@@ -2905,8 +2902,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               child: _buildHeaderIconButton(
                 icon: Icons.gps_fixed,
                 tooltip: 'Live tracking active',
-                iconColor: const Color(0xFF1E293B),
-                bgColor: const Color(0xFFF1F5F9),
+                iconColor: AppColors.textPrimary,
+                bgColor: AppColors.inputFill,
                 onTap: _openLiveTracking,
               ),
             ),
@@ -2914,8 +2911,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             icon: Icons.notifications_none_rounded,
             tooltip: 'Notifications',
             badgeCount: _fcmNotificationCount,
-            iconColor: const Color(0xFF1E293B),
-            bgColor: const Color(0xFFF1F5F9),
+            iconColor: AppColors.textPrimary,
+            bgColor: AppColors.inputFill,
             onTap: _openNotifications,
           ),
           const SizedBox(width: 8),
@@ -2930,16 +2927,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               child: Container(
                 width: 44,
                 height: 44,
-                decoration: const BoxDecoration(
-                  color: Color(0xFFFEF3C7),
+                decoration: BoxDecoration(
+                  color: AppColors.brandLight,
                   shape: BoxShape.circle,
+                  border: Border.all(color: AppColors.brandBorder),
                 ),
                 alignment: Alignment.center,
                 child: Text(
                   initial,
                   style: const TextStyle(
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w700,
                     color: AppColors.brandDark,
                   ),
                 ),
@@ -2958,24 +2956,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       builder: (context, issues, _) {
         if (issues.isEmpty) return const SizedBox.shrink();
         return Container(
-          margin: const EdgeInsets.only(bottom: 14),
-          padding: const EdgeInsets.all(14),
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: const Color(0xFFFEF2F2),
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFFCA5A5)),
+            border: Border.all(color: AppColors.error.withValues(alpha: 0.25)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Row(
                 children: [
-                  Icon(Icons.location_off_rounded, color: Color(0xFFDC2626), size: 20),
+                  Icon(Icons.location_off_outlined, color: AppColors.error, size: 20),
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       'Your route is not being tracked',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF991B1B)),
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF991B1B)),
                     ),
                   ),
                 ],
@@ -2995,13 +2993,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       TextButton(
                         onPressed: () => TrackingHealthService.fix(issue),
                         style: TextButton.styleFrom(
-                          backgroundColor: const Color(0xFFDC2626),
+                          backgroundColor: AppColors.error,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                          minimumSize: Size.zero,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          minimumSize: const Size(0, 36),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
                         ),
-                        child: const Text('Fix', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                        child: const Text('Fix', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                       ),
                     ],
                   ),
@@ -3021,43 +3019,41 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         children: [
           const Text(
             'QUICK ACTIONS',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF94A3B8),
-              letterSpacing: 0.8,
-            ),
+            style: AppTextStyles.sectionLabel,
           ),
-          const SizedBox(height: 14),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _buildWebQuickActionItem(
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _buildWebQuickActionItem(
                   icon: Icons.calendar_month_outlined,
-                  label: 'Apply Leave',
+                  label: 'Apply\nLeave',
                   onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
                 ),
-                const SizedBox(width: 14),
-                _buildWebQuickActionItem(
+              ),
+              Expanded(
+                child: _buildWebQuickActionItem(
                   icon: Icons.assignment_turned_in_outlined,
                   label: 'Request\nPermission',
                   onTap: () => widget.onNavigate?.call(1, subTabIndex: 1),
                 ),
-                const SizedBox(width: 14),
-                _buildWebQuickActionItem(
+              ),
+              Expanded(
+                child: _buildWebQuickActionItem(
                   icon: Icons.receipt_long_outlined,
                   label: 'Claim\nExpense',
                   onTap: () => widget.onNavigate?.call(1, subTabIndex: 2),
                 ),
-                const SizedBox(width: 14),
-                _buildWebQuickActionItem(
+              ),
+              Expanded(
+                child: _buildWebQuickActionItem(
                   icon: Icons.monetization_on_outlined,
-                  label: 'Request Payslip',
+                  label: 'Request\nPayslip',
                   onTap: () => widget.onNavigate?.call(1, subTabIndex: 3),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
@@ -3074,30 +3070,38 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       behavior: HitTestBehavior.opaque,
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Container(
             width: 48,
             height: 48,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFEF3C7),
-              shape: BoxShape.circle,
+            decoration: BoxDecoration(
+              color: AppColors.brandLight,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.brandBorder.withValues(alpha: 0.6)),
             ),
             alignment: Alignment.center,
-            child: Icon(icon, color: AppColors.brandDark, size: 20),
+            child: Icon(icon, color: AppColors.primary, size: 22),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
+          // Full-width, fixed-height, top-aligned label so every item is the same
+          // height and the four icons line up in one row (no odd man out).
           SizedBox(
-            width: 72,
-            child: Text(
-              label,
-              textAlign: TextAlign.center,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF475569),
-                height: 1.2,
+            width: double.infinity,
+            height: 32,
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w500,
+                  color: AppColors.textPrimary,
+                  height: 1.25,
+                ),
               ),
             ),
           ),
@@ -3179,20 +3183,20 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         ? DateFormat('hh:mm a').format(breakStart)
         : '--:--';
     String badgeLabel = 'WORKING DAY';
-    Color badgeColor = const Color(0xFF10B981);
-    Color badgeBg = const Color(0xFFD1FAE5);
+    Color badgeColor = AppColors.success;
+    Color badgeBg = AppColors.successBg;
     if (isOnBreak) {
       badgeLabel = 'ON BREAK';
-      badgeColor = AppColors.brand;
-      badgeBg = const Color(0xFFFEF3C7);
+      badgeColor = AppColors.brandDark;
+      badgeBg = AppColors.brandLight;
     } else if (isWeekOff) {
       badgeLabel = 'WEEK OFF';
-      badgeColor = const Color(0xFF3B82F6);
-      badgeBg = const Color(0xFFDBEAFE);
+      badgeColor = AppColors.info;
+      badgeBg = AppColors.infoBg;
     } else if (isHoliday) {
       badgeLabel = 'HOLIDAY';
-      badgeColor = AppColors.brand;
-      badgeBg = const Color(0xFFFEF3C7);
+      badgeColor = AppColors.brandDark;
+      badgeBg = AppColors.brandLight;
     }
 
     String actionLabel = isOnBreak
@@ -3208,8 +3212,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     VoidCallback? actionCallback = isOnBreak
         ? (widget.onEndBreakTap ?? () => widget.onNavigate?.call(2))
         : (isWeekOff ? null : () => widget.onNavigate?.call(4));
-    Color btnBg = isOnBreak ? const Color(0xFFFEF3C7) : const Color(0xFFF1F5F9);
-    Color btnFg = isOnBreak ? AppColors.brandDark : const Color(0xFF64748B);
+    Color btnBg = isOnBreak ? AppColors.brandLight : AppColors.inputFill;
+    Color btnFg = isOnBreak ? AppColors.brandDark : AppColors.textPrimary;
 
     return AppCard(
       padding: const EdgeInsets.all(16),
@@ -3226,27 +3230,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     Flexible(
                       child: Text(
                         'Today ($dateStr)',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF0F172A),
-                        ),
+                        style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: badgeBg,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         badgeLabel,
                         style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w800,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.4,
                           color: badgeColor,
                         ),
                       ),
@@ -3257,31 +3258,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               const SizedBox(width: 8),
               ElevatedButton.icon(
                 onPressed: actionCallback,
-                icon: Icon(actionIcon, size: 13),
+                icon: Icon(actionIcon, size: 16),
                 label: Text(
                   actionLabel,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: btnBg,
                   foregroundColor: btnFg,
-                  disabledBackgroundColor: const Color(0xFFF1F5F9),
-                  disabledForegroundColor: const Color(0xFF94A3B8),
+                  disabledBackgroundColor: AppColors.inputFill,
+                  disabledForegroundColor: AppColors.textCaption,
                   elevation: 0,
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                  minimumSize: Size.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  minimumSize: const Size(0, 36),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
             ],
           ),
           if (shiftLine != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.schedule_rounded, size: 13, color: Color(0xFF94A3B8)),
-                const SizedBox(width: 4),
+                const Icon(Icons.schedule_outlined, size: 14, color: AppColors.textSecondary),
+                const SizedBox(width: 6),
                 Expanded(
                   child: Text(
                     shiftLine,
@@ -3289,8 +3290,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 12,
-                      color: Color(0xFF64748B),
-                      fontWeight: FontWeight.w600,
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w500,
                     ),
                   ),
                 ),
@@ -3302,11 +3303,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Padding(
-                  padding: EdgeInsets.only(top: 1),
-                  child: Icon(Icons.location_on_outlined, size: 13, color: Color(0xFFEFAA1F)),
+                Padding(
+                  padding: const EdgeInsets.only(top: 1),
+                  child: Icon(Icons.location_on_outlined, size: 14, color: AppColors.primary),
                 ),
-                const SizedBox(width: 4),
+                const SizedBox(width: 6),
                 Expanded(
                   // "Punched in 01:48 PM · <full punch-in address>" (web: MapPin + location).
                   child: Text.rich(
@@ -3316,8 +3317,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           TextSpan(
                             text: 'Punched in $inTime · ',
                             style: const TextStyle(
-                              color: Color(0xFF0F172A),
-                              fontWeight: FontWeight.w700,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         TextSpan(text: locationText),
@@ -3327,7 +3328,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       fontSize: 12,
-                      color: Color(0xFF64748B),
+                      color: AppColors.textSecondary,
                       fontWeight: FontWeight.w500,
                       height: 1.35,
                     ),
@@ -3336,9 +3337,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ],
             ),
           ],
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: Color(0xFFECEEF1)),
           const SizedBox(height: 12),
-          const Divider(height: 1, color: Color(0xFFF1F5F9)),
-          const SizedBox(height: 10),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -3351,7 +3352,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 _buildWebPunchTimeCol(
                   'Break Start',
                   breakStartStr,
-                  valueColor: AppColors.brand,
+                  valueColor: AppColors.brandDark,
                 ),
               _buildWebPunchTimeCol(
                 'Punch Out',
@@ -3366,50 +3367,51 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         ? 'On Break'
                         : (dayStatus?.$1 ?? (isPunchedIn ? 'Present' : 'Not Punched'))),
                 valueColor: isWeekOff
-                    ? const Color(0xFF3B82F6)
+                    ? AppColors.info
                     : (isOnBreak
-                        ? AppColors.brand
-                        : (dayStatus?.$2 ?? (isPunchedIn ? const Color(0xFF10B981) : null))),
+                        ? AppColors.brandDark
+                        : (dayStatus?.$2 ?? (isPunchedIn ? AppColors.success : null))),
               ),
             ],
           ),
           if (breakAllowance != null) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Row(
               children: [
-                const Icon(Icons.free_breakfast_outlined, size: 15, color: Color(0xFF64748B)),
+                const Icon(Icons.free_breakfast_outlined, size: 16, color: AppColors.textSecondary),
                 const SizedBox(width: 6),
-                const Text('Break', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
+                const Text('Break', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
                 const Spacer(),
                 Text(
                   '${breakAllowance.used} / ${breakAllowance.allowed} min'
                   '${breakAllowance.excess > 0 ? ' (+${breakAllowance.excess} over)' : ''}',
                   style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w800,
-                    color: breakAllowance.excess > 0 ? AppColors.error : const Color(0xFF0F172A),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: breakAllowance.excess > 0 ? AppColors.error : AppColors.textPrimary,
                   ),
                 ),
               ],
             ),
           ],
           if (otAmount > 0) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: AppColors.successBg,
-                borderRadius: BorderRadius.circular(10),
+                color: AppColors.successBg.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.success.withValues(alpha: 0.18)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.more_time_rounded, size: 15, color: AppColors.success),
+                  const Icon(Icons.more_time_rounded, size: 16, color: AppColors.success),
                   const SizedBox(width: 6),
-                  const Text('OT Pay', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.success)),
+                  const Text('OT Pay', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success)),
                   const Spacer(),
                   Text(
                     '₹ ${otAmount.toStringAsFixed(2)}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.success),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.success),
                   ),
                 ],
               ),
@@ -3418,21 +3420,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           // Today's fine as the backend calculated it (today-punch `totalFine`,
           // late + early + break) — same row as the web Today card, only when > 0.
           if (todayFine > 0) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
                 color: const Color(0xFFFFF1F2),
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: const Color(0xFFFECDD3)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.gavel_rounded, size: 15, color: Color(0xFFE11D48)),
+                  const Icon(Icons.gavel_rounded, size: 16, color: Color(0xFFE11D48)),
                   const SizedBox(width: 6),
                   const Text(
                     'Fine',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFFF43F5E)),
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFE11D48)),
                   ),
                   if (todayFineParts.isNotEmpty) ...[
                     const SizedBox(width: 6),
@@ -3448,7 +3450,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     const Spacer(),
                   Text(
                     '₹ ${todayFine.toStringAsFixed(2)}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Color(0xFFE11D48)),
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFE11D48)),
                   ),
                 ],
               ),
@@ -3469,9 +3471,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFFBEB),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFFDE68A)),
+                color: AppColors.brandLight.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.brandBorder),
               ),
               child: Row(
                 children: [
@@ -3500,7 +3502,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         const Text(
                           'You are on break. Tap End Break when done.',
                           style: TextStyle(
-                            fontSize: 10.5,
+                            fontSize: 11.5,
                             color: Color(0xFF92400E),
                             fontWeight: FontWeight.w500,
                           ),
@@ -3508,22 +3510,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 8),
                   ElevatedButton.icon(
                     onPressed: actionCallback,
-                    icon: const Icon(Icons.timer_off_rounded, size: 12),
+                    icon: const Icon(Icons.timer_off_rounded, size: 15),
                     label: const Text(
                       'End Break',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                     ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.brand,
-                      foregroundColor: Colors.white,
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: AppColors.onPrimary,
                       elevation: 0,
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      minimumSize: Size.zero,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      minimumSize: const Size(0, 36),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
                   ),
                 ],
@@ -3685,78 +3687,78 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 }
 
                 return Padding(
-                  padding: const EdgeInsets.only(top: 10),
+                  padding: const EdgeInsets.only(top: 12),
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      color: const Color(0xFFF8F9FB),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFECEEF1)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.coffee_rounded, size: 14, color: Color(0xFF64748B)),
+                            const Icon(Icons.coffee_outlined, size: 16, color: AppColors.textSecondary),
                             const SizedBox(width: 6),
                             Text(
                               'Breaks Today: $breakCount',
                               style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: Color(0xFF334155),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: AppColors.textPrimary,
                               ),
                             ),
                             const Spacer(),
                             Text(
                               'Total ${breakMin}m',
                               style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: Color(0xFF1E293B),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary,
                               ),
                             ),
                           ],
                         ),
                         if (sessions.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          const Divider(height: 1, color: Color(0xFFE2E8F0)),
-                          const SizedBox(height: 6),
+                          const SizedBox(height: 8),
+                          const Divider(height: 1, color: Color(0xFFECEEF1)),
+                          const SizedBox(height: 8),
                           for (int i = 0; i < sessions.length; i++) ...[
-                            if (i > 0) const SizedBox(height: 4),
+                            if (i > 0) const SizedBox(height: 6),
                             Row(
                               children: [
                                 Container(
-                                  width: 4,
-                                  height: 4,
+                                  width: 5,
+                                  height: 5,
                                   decoration: const BoxDecoration(
-                                    color: Color(0xFF94A3B8),
+                                    color: AppColors.textCaption,
                                     shape: BoxShape.circle,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 8),
                                 Text(
                                   '${sessions[i]['from']}  -  ${sessions[i]['to']}',
                                   style: const TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF475569),
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                    color: AppColors.textSecondary,
                                   ),
                                 ),
                                 const Spacer(),
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFFF1F5F9),
-                                    borderRadius: BorderRadius.circular(4),
+                                    color: AppColors.inputFill,
+                                    borderRadius: BorderRadius.circular(999),
                                   ),
                                   child: Text(
                                     '${sessions[i]['mins']}m taken',
                                     style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w700,
-                                      color: Color(0xFF475569),
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: AppColors.textSecondary,
                                     ),
                                   ),
                                 ),
@@ -3793,19 +3795,19 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
               fontSize: 11,
-              color: Color(0xFF94A3B8),
+              color: AppColors.textSecondary,
               fontWeight: FontWeight.w500,
             ),
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 4),
           Text(
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 14,
               fontWeight: FontWeight.w700,
-              color: valueColor ?? const Color(0xFF0F172A),
+              color: valueColor ?? AppColors.textPrimary,
             ),
           ),
           if (sub != null) ...[
@@ -3815,8 +3817,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
-                fontSize: 10,
-                color: Color(0xFF94A3B8),
+                fontSize: 10.5,
+                color: AppColors.textCaption,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -3857,7 +3859,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 ),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: _buildWebKpiItem(
                 title: 'ATTENDANCE',
@@ -3869,7 +3871,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
@@ -3881,7 +3883,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
               ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: _buildWebKpiItem(
                 title: 'MY TASKS',
@@ -3906,17 +3908,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     required String subtitle,
     VoidCallback? onTap,
   }) {
-    return Material(
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: kSoftCardShadow,
+      ),
+      child: Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Ink(
+          padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFF1F5F9)),
+            border: Border.all(color: const Color(0xFFECEEF1)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -3927,47 +3934,51 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   Expanded(
                     child: Text(
                       title,
-                      style: const TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF94A3B8),
-                        letterSpacing: 0.4,
+                      style: AppTextStyles.sectionLabel.copyWith(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.6,
+                        color: AppColors.textSecondary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  const SizedBox(width: 6),
                   Container(
-                    padding: const EdgeInsets.all(4),
+                    width: 30,
+                    height: 30,
+                    alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFFEF3C7),
-                      borderRadius: BorderRadius.circular(6),
+                      color: AppColors.brandLight,
+                      borderRadius: BorderRadius.circular(9),
                     ),
-                    child: Icon(icon, size: 13, color: AppColors.brandDark),
+                    child: Icon(icon, size: 16, color: AppColors.primary),
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
                   value,
                   style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
+                    fontSize: 20,
+                    height: 1.2,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
                   ),
                   maxLines: 1,
                 ),
               ),
-              const SizedBox(height: 3),
+              const SizedBox(height: 4),
               Text(
                 subtitle,
                 style: const TextStyle(
-                  fontSize: 10,
+                  fontSize: 11,
                   fontWeight: FontWeight.w500,
-                  color: Color(0xFF64748B),
+                  color: AppColors.textSecondary,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -3976,6 +3987,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
         ),
       ),
+      ),
+    );
+  }
+
+  /// Small tinted icon tile used in the header row of the home info cards.
+  Widget _infoCardIconTile(IconData icon, Color fg, Color bg) {
+    return Container(
+      width: 30,
+      height: 30,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(9),
+      ),
+      child: Icon(icon, color: fg, size: 16),
     );
   }
 
@@ -3994,26 +4020,34 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   child: InkWell(
                     onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
                     borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
+                    child: Ink(
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: AppColors.brand,
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [AppColors.primary, AppColors.primaryDark],
+                        ),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
-                            children: const [
-                              Icon(Icons.calendar_month_rounded, color: Colors.white, size: 15),
-                              SizedBox(width: 6),
+                            children: [
+                              _infoCardIconTile(
+                                Icons.calendar_month_outlined,
+                                AppColors.onPrimary,
+                                AppColors.onPrimary.withValues(alpha: 0.12),
+                              ),
+                              const SizedBox(width: 8),
                               Expanded(
                                 child: Text(
                                   'Recent Leaves',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppColors.onPrimary,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4034,18 +4068,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 padding: const EdgeInsets.only(bottom: 4),
                                 child: Text(
                                   '• $title$when ($status)',
-                                  style: const TextStyle(fontSize: 10.5, color: Colors.white),
+                                  style: TextStyle(fontSize: 11.5, height: 1.35, color: AppColors.onPrimary),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               );
                             }))
                           else
-                            const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 4),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
                               child: Text(
                                 'No recent leave requests',
-                                style: TextStyle(fontSize: 11, color: Colors.white70),
+                                style: TextStyle(fontSize: 12, color: AppColors.onPrimary.withValues(alpha: 0.75)),
                               ),
                             ),
                         ],
@@ -4054,7 +4088,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
 
               // 2. Celebrations (Dark Card)
               Expanded(
@@ -4063,26 +4097,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   child: InkWell(
                     onTap: _openCelebrationsSheet,
                     borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
+                    child: Ink(
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
+                        color: AppColors.surfaceDark,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
-                            children: const [
-                              Icon(Icons.cake_outlined, color: AppColors.brand, size: 15),
-                              SizedBox(width: 6),
-                              Expanded(
+                            children: [
+                              _infoCardIconTile(
+                                Icons.cake_outlined,
+                                AppColors.primary,
+                                AppColors.primary.withValues(alpha: 0.16),
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
                                 child: Text(
                                   'Celebrations',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.brand,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4096,7 +4134,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   padding: const EdgeInsets.only(bottom: 4),
                                   child: Text(
                                     '• ${c['name'] ?? ''} – ${c['type'] ?? 'Work Anniversary'}',
-                                    style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                    style: const TextStyle(fontSize: 11.5, height: 1.35, color: Colors.white70),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -4106,7 +4144,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   padding: const EdgeInsets.only(bottom: 4),
                                   child: Text(
                                     '• ${c['name'] ?? ''} – ${c['type'] ?? 'Birthday'}',
-                                    style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                    style: const TextStyle(fontSize: 11.5, height: 1.35, color: Colors.white70),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -4116,7 +4154,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               padding: EdgeInsets.symmetric(vertical: 4),
                               child: Text(
                                 'No celebrations today',
-                                style: TextStyle(fontSize: 11, color: Colors.white70),
+                                style: TextStyle(fontSize: 12, color: Colors.white60),
                               ),
                             ),
                         ],
@@ -4128,7 +4166,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             ],
           ),
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: 12),
 
         // Row 2: Announcements & Active Tasks
         IntrinsicHeight(
@@ -4146,26 +4184,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       ),
                     ),
                     borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
+                    child: Ink(
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
+                        color: AppColors.surfaceDark,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
-                            children: const [
-                              Icon(Icons.campaign_outlined, color: AppColors.brand, size: 15),
-                              SizedBox(width: 6),
-                              Expanded(
+                            children: [
+                              _infoCardIconTile(
+                                Icons.campaign_outlined,
+                                AppColors.primary,
+                                AppColors.primary.withValues(alpha: 0.16),
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
                                 child: Text(
                                   'Announcements',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.brand,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4182,7 +4224,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                 padding: const EdgeInsets.only(bottom: 4),
                                 child: Text(
                                   '• $title',
-                                  style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                  style: const TextStyle(fontSize: 11.5, height: 1.35, color: Colors.white70),
                                   maxLines: 2,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -4193,7 +4235,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               padding: EdgeInsets.symmetric(vertical: 4),
                               child: Text(
                                 'No announcements',
-                                style: TextStyle(fontSize: 11, color: Colors.white54),
+                                style: TextStyle(fontSize: 12, color: Colors.white60),
                               ),
                             ),
                         ],
@@ -4202,7 +4244,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 12),
 
               // 4. Active Tasks (Dark Card)
               Expanded(
@@ -4211,26 +4253,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   child: InkWell(
                     onTap: _showAllAssignedTasksModal,
                     borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.all(14),
+                    child: Ink(
+                      padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
+                        color: AppColors.surfaceDark,
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Row(
-                            children: const [
-                              Icon(Icons.checklist_rounded, color: AppColors.brand, size: 15),
-                              SizedBox(width: 6),
-                              Expanded(
+                            children: [
+                              _infoCardIconTile(
+                                Icons.checklist_rounded,
+                                AppColors.primary,
+                                AppColors.primary.withValues(alpha: 0.16),
+                              ),
+                              const SizedBox(width: 8),
+                              const Expanded(
                                 child: Text(
                                   'Active Tasks',
                                   style: TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.brand,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Colors.white,
                                   ),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -4238,14 +4284,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 12),
                           if (_tasks.isNotEmpty)
                             ...(_tasks.take(2).map((t) {
                               return Padding(
-                                padding: const EdgeInsets.only(bottom: 3),
+                                padding: const EdgeInsets.only(bottom: 4),
                                 child: Text(
                                   '• ${t.taskTitle}',
-                                  style: const TextStyle(fontSize: 10.5, color: Colors.white70),
+                                  style: const TextStyle(fontSize: 11.5, height: 1.35, color: Colors.white70),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -4256,10 +4302,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                               padding: EdgeInsets.symmetric(vertical: 4),
                               child: Text(
                                 'No tasks today',
-                                style: TextStyle(fontSize: 11, color: Colors.white54),
+                                style: TextStyle(fontSize: 12, color: Colors.white60),
                               ),
                             ),
                           const Spacer(),
+                          const SizedBox(height: 8),
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
@@ -4268,7 +4315,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   '${_tasks.length} task${_tasks.length == 1 ? '' : 's'} today',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 9.5, color: Colors.white54),
+                                  style: const TextStyle(fontSize: 11, color: Colors.white60),
                                 ),
                               ),
                               const Flexible(
@@ -4276,7 +4323,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                                   'Show More',
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(fontSize: 10.5, color: AppColors.brand, fontWeight: FontWeight.w700),
+                                  style: TextStyle(fontSize: 11.5, color: AppColors.brand, fontWeight: FontWeight.w600),
                                 ),
                               ),
                             ],
@@ -4334,14 +4381,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Row(
-                        children: const [
-                          Icon(Icons.checklist_rounded, color: Color(0xFFEFAA1F), size: 22),
-                          SizedBox(width: 10),
-                          Text(
+                        children: [
+                          Icon(Icons.checklist_rounded, color: AppColors.primary, size: 22),
+                          const SizedBox(width: 10),
+                          const Text(
                             "Today's Tasks",
                             style: TextStyle(
                               fontSize: 16,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w700,
                               color: Colors.white,
                               letterSpacing: -0.2,
                             ),
@@ -4350,9 +4397,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       ),
                       IconButton(
                         onPressed: () => Navigator.of(dialogCtx).pop(),
+                        tooltip: 'Close',
                         icon: const Icon(Icons.close_rounded, size: 20, color: Color(0xFF94A3B8)),
                         padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(),
+                        constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                       ),
                     ],
                   ),
@@ -4361,15 +4409,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
                 // Tasks List
                 if (displayTasks.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16, vertical: 32),
-                    child: Text(
-                      'No tasks for today.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: Color(0xFF94A3B8),
-                      ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 64,
+                          height: 64,
+                          decoration: BoxDecoration(
+                            color: AppColors.primary.withValues(alpha: 0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.task_alt_rounded, color: AppColors.primary, size: 28),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'No tasks for today.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            color: Color(0xFF94A3B8),
+                          ),
+                        ),
+                      ],
                     ),
                   )
                 else
@@ -4428,10 +4491,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       ElevatedButton(
                         onPressed: () => Navigator.of(dialogCtx).pop(),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFEFAA1F),
-                          foregroundColor: const Color(0xFF181818),
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: AppColors.onPrimary,
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12),
                           ),
@@ -4439,8 +4503,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                         child: const Text(
                           'Close',
                           style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
@@ -4483,35 +4547,42 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(6),
+                width: 36,
+                height: 36,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
+                  color: AppColors.brandLight,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                child: const Icon(Icons.currency_rupee_rounded, size: 16, color: AppColors.brandDark),
+                child: Icon(Icons.currency_rupee_rounded, size: 18, color: AppColors.primary),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'Salary Overview — $periodStr',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
+                  style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                 ),
               ),
+              const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.textCaption),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           if (!_hasSalaryStructure)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                'No salary structure assigned yet',
-                style: TextStyle(fontSize: 12.5, color: Color(0xFF64748B)),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline_rounded, size: 16, color: AppColors.textCaption),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'No salary structure assigned yet',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ),
+                ],
               ),
             )
           else
@@ -4522,11 +4593,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   Expanded(
                     child: _buildSalaryItemBox('Gross', gross),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: _buildSalaryItemBox('Net', net),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: _buildSalaryItemBox('CTC', ctc),
                   ),
@@ -4541,22 +4612,22 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Widget _buildSalaryItemBox(String label, String amount) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        color: const Color(0xFFF8F9FB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       clipBehavior: Clip.antiAlias,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            width: 3.5,
+            width: 3,
             color: AppColors.brand,
           ),
           Expanded(
             child: Padding(
               // Compact: these three cards were taller than their two lines need.
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -4567,11 +4638,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                     softWrap: false,
                     style: const TextStyle(
                       fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                      color: Color(0xFF94A3B8),
+                      fontWeight: FontWeight.w500,
+                      color: AppColors.textSecondary,
                     ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 4),
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
@@ -4583,9 +4654,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       maxLines: 1,
                       softWrap: false,
                       style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textPrimary,
                       ),
                     ),
                   ),
@@ -4643,15 +4714,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           ),
           if (badgeCount > 0)
             Positioned(
-              top: -2,
-              right: -2,
+              top: -3,
+              right: -3,
               child: Container(
                 padding: const EdgeInsets.all(2),
-                constraints: const BoxConstraints(minWidth: 17, minHeight: 17),
+                constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
                 decoration: BoxDecoration(
                   color: AppColors.error,
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 1.5),
+                  border: Border.all(color: Colors.white, width: 2),
                 ),
                 alignment: Alignment.center,
                 child: Text(
@@ -4659,7 +4730,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 9,
-                    fontWeight: FontWeight.bold,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -4674,14 +4745,11 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => Scaffold(
-          backgroundColor: Colors.white,
+          backgroundColor: AppColors.background,
           appBar: AppBar(
             leading: const MenuIconButton(),
             title: const Text('Attendance Calendar'),
             centerTitle: true,
-            backgroundColor: Colors.white,
-            foregroundColor: AppColors.primary,
-            elevation: 0,
           ),
           drawer: widget.onNavigateToIndex != null
               ? AppDrawer(
@@ -4760,10 +4828,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.celebration,
                 size: 20,
-                color: AppColors.brand, // gold
+                color: AppColors.primary, // gold
               ),
               const SizedBox(width: 6),
               const Text(
@@ -4941,25 +5009,31 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                       height: 4,
                       margin: const EdgeInsets.only(bottom: 16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFCBD5E1),
-                        borderRadius: BorderRadius.circular(2),
+                        color: const Color(0xFFD1D5DB),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                     ),
                   ),
                   Row(
                     children: [
-                      Icon(
-                        Icons.celebration_outlined,
-                        color: AppColors.primary,
-                        size: 22,
+                      Container(
+                        width: 40,
+                        height: 40,
+                        alignment: Alignment.center,
+                        decoration: BoxDecoration(
+                          color: AppColors.brandLight,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          Icons.celebration_outlined,
+                          color: AppColors.primary,
+                          size: 22,
+                        ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       const Text(
                         'Celebrations',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
+                        style: AppTextStyles.headingMedium,
                       ),
                     ],
                   ),
@@ -4988,16 +5062,30 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                             (!_isAdminLike ||
                                 _upcomingCelebrations.isEmpty))
                           Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 24),
+                            padding: const EdgeInsets.symmetric(vertical: 32),
                             child: Center(
-                              child: Text(
-                                'No celebrations',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: const Color(0xFF475569).withValues(
-                                    alpha: 0.8,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Container(
+                                    width: 64,
+                                    height: 64,
+                                    decoration: const BoxDecoration(
+                                      color: AppColors.brandLight,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: Icon(
+                                      Icons.cake_outlined,
+                                      color: AppColors.primary,
+                                      size: 28,
+                                    ),
                                   ),
-                                ),
+                                  const SizedBox(height: 12),
+                                  const Text(
+                                    'No celebrations',
+                                    style: AppTextStyles.headingSmall,
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -5084,12 +5172,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         ),
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF334155),
-            letterSpacing: 0.2,
-          ),
+          style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
         ),
         if (count != null) ...[
           const SizedBox(width: 6),
@@ -5097,8 +5180,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             '($count)',
             style: const TextStyle(
               fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF94A3B8),
+              fontWeight: FontWeight.w500,
+              color: AppColors.textSecondary,
             ),
           ),
         ],
@@ -5163,26 +5246,35 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final subtitle = isToday
         ? typeLabel
         : '$typeLabel · ${daysLeft == 1 ? '1 day left' : '$daysLeft days left'}';
-    final accentColor = AppColors.primary;
+    final accentColor = AppColors.primaryText;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: null,
-        boxShadow: [
-          BoxShadow(
-            color: accentColor.withValues(alpha: 0.12),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFECEEF1)),
+        boxShadow: kSoftCardShadow,
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
+          Container(
+            width: 40,
+            height: 40,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: AppColors.brandLight,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              isAnniversary ? Icons.workspace_premium_outlined : Icons.cake_outlined,
+              color: AppColors.primary,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -5192,21 +5284,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   name,
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
-                    color: accentColor,
-                  ),
+                  style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   subtitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    color: Color(0xFF475569),
-                  ),
+                  style: AppTextStyles.bodySmall,
                 ),
               ],
             ),
@@ -5220,8 +5305,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 13,
-                  color: accentColor.withValues(alpha: 0.9),
-                  fontWeight: FontWeight.w500,
+                  color: accentColor,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
@@ -7563,7 +7648,7 @@ class _LiveWorkClock extends StatefulWidget {
 
 class _LiveWorkClockState extends State<_LiveWorkClock>
     with SingleTickerProviderStateMixin {
-  static const _amber = Color(0xFFEFAA1F);
+  static const _amber = Color(0xFFF9B824);
   static const double _dial = 76;
 
   Timer? _timer;
@@ -7643,9 +7728,9 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFF1F5F9)),
+        color: const Color(0xFFF8F9FB),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFECEEF1)),
       ),
       child: Row(
         children: [
@@ -7728,9 +7813,9 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
                   Text(
                     hasTarget ? '${(progress * 100).round()}%' : '--',
                     style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF94A3B8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textSecondary,
                       fontFeatures: [FontFeature.tabularFigures()],
                     ),
                   ),
@@ -7767,10 +7852,10 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
                       : 'Worked today',
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
                     color: widget.onBreak && _running
                         ? AppColors.brandDark
-                        : const Color(0xFF64748B),
+                        : AppColors.textSecondary,
                   ),
                 ),
                 if (hasTarget) ...[
@@ -7779,7 +7864,7 @@ class _LiveWorkClockState extends State<_LiveWorkClock>
                     'of ${_fmtHours(target)} hrs shift',
                     style: const TextStyle(
                       fontSize: 11,
-                      color: Color(0xFF94A3B8),
+                      color: AppColors.textCaption,
                     ),
                   ),
                 ],
@@ -7803,8 +7888,8 @@ class _RollingChar extends StatelessWidget {
 
   static const style = TextStyle(
     fontSize: 22,
-    fontWeight: FontWeight.w900,
-    color: Color(0xFF0F172A),
+    fontWeight: FontWeight.w700,
+    color: AppColors.textPrimary,
     height: 1,
     fontFeatures: [FontFeature.tabularFigures()],
   );
@@ -7862,7 +7947,7 @@ class _WorkDialPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
-        ..color = const Color(0xFFF1F5F9),
+        ..color = const Color(0xFFE9ECF0),
     );
     if (!showArc || progress <= 0) return;
     canvas.drawArc(
@@ -7874,7 +7959,7 @@ class _WorkDialPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
         ..strokeCap = StrokeCap.round
-        ..color = const Color(0xFFEFAA1F),
+        ..color = const Color(0xFFF9B824),
     );
   }
 

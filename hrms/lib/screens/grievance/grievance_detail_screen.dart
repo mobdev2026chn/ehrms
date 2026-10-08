@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_colors.dart';
+import '../../config/app_text_styles.dart';
 import '../../services/grievance_service.dart';
 import '../../utils/error_message_utils.dart';
 import '../../utils/snackbar_utils.dart';
@@ -143,7 +144,7 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
       case 'Escalated':
       case 'Rejected': return AppColors.error;
       case 'Closed': return AppColors.success;
-      default: return Colors.grey;
+      default: return AppColors.textSecondary;
     }
   }
 
@@ -151,15 +152,14 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: colorScheme.surface,
+      backgroundColor: AppColors.background,
       appBar: AppBar(
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
+          icon: const Icon(Icons.arrow_back_rounded),
+          tooltip: 'Back',
           onPressed: () => Navigator.of(context).pop(),
         ),
-        title: const Text('Grievance Detail', style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: AppColors.surface,
-        foregroundColor: AppColors.textPrimary,
+        title: const Text('Grievance Detail'),
       ),
       drawer: const AppDrawer(),
       body: _buildBody(colorScheme),
@@ -175,7 +175,7 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
           children: [
             const AppTabLoader(),
             const SizedBox(height: 16),
-            Text('Loading...', style: TextStyle(color: colorScheme.onSurfaceVariant)),
+            const Text('Loading...', style: AppTextStyles.bodySmall),
           ],
         ),
       );
@@ -187,9 +187,14 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.error_outline, size: 48, color: colorScheme.error),
+              Container(
+                width: 64,
+                height: 64,
+                decoration: const BoxDecoration(color: AppColors.errorBg, shape: BoxShape.circle),
+                child: const Icon(Icons.error_outline_rounded, size: 30, color: AppColors.error),
+              ),
               const SizedBox(height: 16),
-              Text(_error ?? 'Grievance not found', textAlign: TextAlign.center),
+              Text(_error ?? 'Grievance not found', textAlign: TextAlign.center, style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary)),
             ],
           ),
         ),
@@ -209,30 +214,32 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
           _buildHeader(g, colorScheme),
           if (canSubmitFeedback)
             Padding(
-              padding: const EdgeInsets.only(top: 20, bottom: 16),
+              padding: const EdgeInsets.only(top: 16),
               child: Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.icon(
                   onPressed: _showFeedbackBottomSheet,
-                  icon: const Icon(Icons.star, size: 18),
+                  icon: const Icon(Icons.star_rounded, size: 18),
                   label: const Text('Submit Feedback'),
                   style: FilledButton.styleFrom(
-                    backgroundColor: Colors.black,
+                    backgroundColor: AppColors.ink,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                   ),
                 ),
               ),
             ),
+          const SizedBox(height: 12),
           _buildDetails(g, colorScheme),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildAttachments(colorScheme),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildNotes(colorScheme),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildTimeline(colorScheme),
-          const SizedBox(height: 16),
+          const SizedBox(height: 12),
           _buildFeedback(colorScheme),
+          const SizedBox(height: 12),
         ],
       ),
     );
@@ -243,20 +250,21 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     final title = g['title']?.toString() ?? '';
     final status = g['status']?.toString() ?? 'Submitted';
     final slaBreached = g['slaBreached'] == true;
+    final onHero = AppColors.onPrimary;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: AppColors.primary.withValues(alpha: 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -265,32 +273,57 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
         children: [
             Row(
               children: [
-                Expanded(child: Text(ticketId, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'monospace', color: Colors.white))),
+                Expanded(child: Text(ticketId, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, fontFamily: 'monospace', color: onHero.withValues(alpha: 0.8)))),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.25),
-                    borderRadius: BorderRadius.circular(8),
+                    color: Colors.white.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(999),
                   ),
-                  child: Text(status, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.white)),
+                  child: Text(status, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: onHero)),
                 ),
                 if (slaBreached) ...[
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                    decoration: BoxDecoration(color: Colors.white.withOpacity(0.25), borderRadius: BorderRadius.circular(8)),
-                    child: const Text('SLA Breached', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(color: AppColors.errorBg, borderRadius: BorderRadius.circular(999)),
+                    child: const Text('SLA Breached', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.error)),
                   ),
                 ],
               ],
             ),
-            const SizedBox(height: 8),
-            Text(title, style: const TextStyle(fontSize: 16, color: Colors.white)),
+            const SizedBox(height: 12),
+            Text(title, style: TextStyle(fontSize: 20, height: 1.3, fontWeight: FontWeight.w700, color: onHero)),
         ],
       ),
     );
   }
+
+  /// Section header used by the detail cards: tinted icon tile + title.
+  Widget _sectionHeader(IconData icon, String title, {Widget? trailing}) {
+    return Row(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 20, color: AppColors.primaryText),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: Text(title, style: AppTextStyles.headingSmall)),
+        if (trailing != null) trailing,
+      ],
+    );
+  }
+
+  Widget _fieldLabel(String text) => Text(
+        text,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textSecondary),
+      );
 
   Widget _buildDetails(Map<String, dynamic> g, ColorScheme colorScheme) {
     final category = (g['categoryId'] is Map ? (g['categoryId'] as Map)['name'] : null) ?? g['category']?.toString() ?? '';
@@ -318,43 +351,48 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     }
 
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Details', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: colorScheme.onSurface)),
-            const SizedBox(height: 12),
+            _sectionHeader(Icons.info_outline_rounded, 'Details'),
+            const SizedBox(height: 16),
             _detailRow('Category', category, colorScheme),
             _detailRow('Priority', priority, colorScheme),
             if (created != null) _detailRow('Created', DateFormat('MMM d, yyyy h:mm a').format(created), colorScheme),
             if (incDate != null) _detailRow('Incident Date', DateFormat('MMM d, yyyy').format(incDate), colorScheme),
-            const SizedBox(height: 12),
-            Text('Description', style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 4),
-            Text(description, style: TextStyle(color: colorScheme.onSurface, height: 1.4)),
+            const SizedBox(height: 8),
+            const Divider(height: 1),
+            const SizedBox(height: 16),
+            _fieldLabel('Description'),
+            const SizedBox(height: 6),
+            Text(description, style: AppTextStyles.bodyMedium.copyWith(height: 1.5)),
             if (people.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text('People Involved', style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 4),
+              const SizedBox(height: 16),
+              _fieldLabel('People Involved'),
+              const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
-                runSpacing: 4,
-                children: people.map((p) => Chip(label: Text(p))).toList(),
+                runSpacing: 8,
+                children: people.map((p) => Chip(
+                  avatar: Icon(Icons.person_outline_rounded, size: 18, color: AppColors.primaryText),
+                  label: Text(p),
+                )).toList(),
               ),
             ],
             if (resolutionSummary != null && resolutionSummary.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text('Resolution Summary', style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 4),
-              Text(resolutionSummary, style: TextStyle(color: colorScheme.onSurface)),
+              const SizedBox(height: 16),
+              _fieldLabel('Resolution Summary'),
+              const SizedBox(height: 6),
+              Text(resolutionSummary, style: AppTextStyles.bodyMedium.copyWith(height: 1.5)),
             ],
             if (actionTaken != null && actionTaken.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Text('Action Taken', style: TextStyle(fontWeight: FontWeight.w600, color: colorScheme.onSurfaceVariant)),
-              const SizedBox(height: 4),
-              Text(actionTaken, style: TextStyle(color: colorScheme.onSurface)),
+              const SizedBox(height: 16),
+              _fieldLabel('Action Taken'),
+              const SizedBox(height: 6),
+              Text(actionTaken, style: AppTextStyles.bodyMedium.copyWith(height: 1.5)),
             ],
           ],
         ),
@@ -365,12 +403,12 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
   Widget _detailRow(String label, String value, ColorScheme colorScheme) {
     if (value.isEmpty) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 120, child: Text(label, style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 14))),
-          Expanded(child: Text(value, style: TextStyle(color: colorScheme.onSurface, fontSize: 14))),
+          SizedBox(width: 120, child: Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14))),
+          Expanded(child: Text(value, style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w500))),
         ],
       ),
     );
@@ -402,38 +440,44 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
 
   Widget _buildAttachments(ColorScheme colorScheme) {
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.attach_file, color: AppColors.primary),
-                const SizedBox(width: 8),
-                Text('Attachments', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _pickAndUploadFile,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add'),
-                ),
-              ],
+            _sectionHeader(
+              Icons.attach_file_rounded,
+              'Attachments',
+              trailing: TextButton.icon(
+                onPressed: _pickAndUploadFile,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('Add'),
+              ),
             ),
             const SizedBox(height: 12),
             if (_attachments.isEmpty)
-              Text('No attachments', style: TextStyle(color: colorScheme.onSurfaceVariant))
+              const Text('No attachments', style: AppTextStyles.bodySmall)
             else
               ..._attachments.map((a) {
                 final name = (a is Map ? a['originalName'] ?? a['filename'] : '')?.toString() ?? 'File';
                 final path = (a is Map ? a['fileUrl'] ?? a['filePath'] : null)?.toString();
                 return ListTile(
-                  leading: const Icon(Icons.insert_drive_file),
-                  title: Text(name, overflow: TextOverflow.ellipsis),
+                  contentPadding: EdgeInsets.zero,
+                  leading: Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: AppColors.infoBg,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.insert_drive_file_outlined, size: 20, color: AppColors.info),
+                  ),
+                  title: Text(name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: AppColors.textPrimary)),
                   trailing: path != null
                       ? IconButton(
-                          icon: const Icon(Icons.download),
+                          icon: Icon(Icons.download_rounded, color: AppColors.primaryText),
+                          tooltip: 'Download',
                           onPressed: () => _openAttachment(path),
                         )
                       : null,
@@ -447,44 +491,39 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
 
   Widget _buildNotes(ColorScheme colorScheme) {
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                Icon(Icons.comment, color: AppColors.primary),
-                const SizedBox(width: 8),
-                Text('Notes & Updates', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: () => setState(() => _showAddNote = !_showAddNote),
-                  icon: Icon(_showAddNote ? Icons.close : Icons.add, size: 18),
-                  label: Text(_showAddNote ? 'Cancel' : 'Add Note'),
-                ),
-              ],
+            _sectionHeader(
+              Icons.chat_bubble_outline_rounded,
+              'Notes & Updates',
+              trailing: TextButton.icon(
+                onPressed: () => setState(() => _showAddNote = !_showAddNote),
+                icon: Icon(_showAddNote ? Icons.close_rounded : Icons.add_rounded, size: 18),
+                label: Text(_showAddNote ? 'Cancel' : 'Add Note'),
+              ),
             ),
+            const SizedBox(height: 12),
             if (_showAddNote) ...[
-              const SizedBox(height: 12),
               TextField(
                 controller: _noteController,
                 maxLines: 4,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   hintText: 'Enter your note...',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               FilledButton(
                 onPressed: _isAddingNote ? null : _addNote,
-                child: _isAddingNote ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Add Note'),
+                child: _isAddingNote ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary)) : const Text('Add Note'),
               ),
               const SizedBox(height: 16),
             ],
             if (_notes.isEmpty && !_showAddNote)
-              Text('No notes yet', style: TextStyle(color: colorScheme.onSurfaceVariant))
+              const Text('No notes yet', style: AppTextStyles.bodySmall)
             else
               ..._notes.map((n) {
                 final content = (n is Map ? n['content'] : '')?.toString() ?? '';
@@ -501,21 +540,22 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest.withOpacity(0.5),
-                    borderRadius: BorderRadius.circular(8),
+                    color: AppColors.background,
+                    border: Border.all(color: const Color(0xFFECEEF1)),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          Expanded(child: Text(author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w600))),
+                          Expanded(child: Text(author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary))),
                           const SizedBox(width: 8),
-                          if (dt != null) Text(DateFormat('MMM d, h:mm a').format(dt), style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                          if (dt != null) Text(DateFormat('MMM d, h:mm a').format(dt), style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                         ],
                       ),
-                      const SizedBox(height: 4),
-                      Text(content),
+                      const SizedBox(height: 6),
+                      Text(content, style: AppTextStyles.bodyMedium),
                     ],
                   ),
                 );
@@ -529,14 +569,14 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
   Widget _buildTimeline(ColorScheme colorScheme) {
     if (_statusHistory.isEmpty) return const SizedBox.shrink();
     return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      margin: EdgeInsets.zero,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Status Timeline', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
+            _sectionHeader(Icons.timeline_rounded, 'Status Timeline'),
+            const SizedBox(height: 16),
             Stack(
               alignment: Alignment.centerLeft,
               children: [
@@ -546,9 +586,9 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                   top: 0,
                   bottom: 0,
                   child: Container(
-                    width: 3,
+                    width: 2,
                     decoration: BoxDecoration(
-                      color: AppColors.primary.withOpacity(0.6),
+                      color: AppColors.primary.withValues(alpha: 0.35),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -590,14 +630,15 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   if (fromStatus != null && fromStatus.isNotEmpty)
-                                    Text('$fromStatus → $toStatus', style: TextStyle(fontWeight: FontWeight.w600)),
-                                  if (fromStatus == null || fromStatus.isEmpty) Text(toStatus, style: TextStyle(fontWeight: FontWeight.w600)),
-                                  Text('By $changedBy', style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
-                                  if (dt != null) Text(DateFormat('MMM d, h:mm a').format(dt), style: TextStyle(fontSize: 12, color: colorScheme.onSurfaceVariant)),
+                                    Text('$fromStatus → $toStatus', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                                  if (fromStatus == null || fromStatus.isEmpty) Text(toStatus, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                                  const SizedBox(height: 2),
+                                  Text('By $changedBy', style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+                                  if (dt != null) Text(DateFormat('MMM d, h:mm a').format(dt), style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
                                   if (reason != null && reason.isNotEmpty)
                                     Padding(
-                                      padding: const EdgeInsets.only(top: 4),
-                                      child: Text(reason, style: TextStyle(fontSize: 13, color: colorScheme.onSurfaceVariant)),
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Text(reason, style: AppTextStyles.bodySmall),
                                     ),
                                 ],
                               ),
@@ -614,7 +655,7 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                           width: 12,
                           height: 12,
                           decoration: BoxDecoration(
-                            color: AppColors.primary.withOpacity(0.6),
+                            color: AppColors.primary.withValues(alpha: 0.35),
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white, width: 2),
                           ),
@@ -636,33 +677,34 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
     final f = _feedback!;
     final rating = (f['rating'] ?? 0) as int;
     final feedback = f['feedback']?.toString() ?? '';
+    final onHero = AppColors.onPrimary;
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [AppColors.primary, AppColors.primaryDark],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withOpacity(0.3),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: AppColors.primary.withValues(alpha: 0.12),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Your Feedback', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
-          const SizedBox(height: 8),
+          Text('Your Feedback', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: onHero)),
+          const SizedBox(height: 10),
           Row(
-            children: List.generate(5, (i) => Icon(i < rating ? Icons.star : Icons.star_border, color: Colors.white, size: 24)),
+            children: List.generate(5, (i) => Icon(i < rating ? Icons.star_rounded : Icons.star_border_rounded, color: onHero, size: 24)),
           ),
-          const SizedBox(height: 8),
-          Text(feedback, style: const TextStyle(color: Colors.white)),
+          const SizedBox(height: 10),
+          Text(feedback, style: TextStyle(fontSize: 14, height: 1.5, color: onHero)),
         ],
       ),
     );
@@ -684,14 +726,15 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const Text('Submit Feedback', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 16),
-                const Text('Rating'),
+                const Text('Submit Feedback', style: AppTextStyles.headingMedium),
+                const SizedBox(height: 20),
+                Text('Rating', style: AppTextStyles.label.copyWith(color: AppColors.textSecondary)),
+                const SizedBox(height: 4),
                 Row(
                   children: List.generate(5, (i) {
                     final star = i + 1;
                     return IconButton(
-                      icon: Icon(star <= feedbackRating ? Icons.star : Icons.star_border, color: AppColors.primary, size: 36),
+                      icon: Icon(star <= feedbackRating ? Icons.star_rounded : Icons.star_border_rounded, color: AppColors.primary, size: 36),
                       onPressed: () => rating.value = star,
                     );
                   }),
@@ -703,10 +746,10 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Feedback',
                     hintText: 'Share your feedback about the resolution...',
-                    border: OutlineInputBorder(),
+                    alignLabelWithHint: true,
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 StatefulBuilder(
                   builder: (ctx2, setModalState) => FilledButton(
                     onPressed: _isSubmittingFeedback ? null : () async {
@@ -740,7 +783,7 @@ class _GrievanceDetailScreenState extends State<GrievanceDetailScreen> {
                       if (mounted) setState(() => _isSubmittingFeedback = false);
                     },
                     child: _isSubmittingFeedback
-                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        ? SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary))
                         : const Text('Submit'),
                   ),
                 ),

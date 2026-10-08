@@ -424,7 +424,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       // Header
                       Row(
                         children: [
-                          Icon(Icons.filter_alt_rounded, color: AppColors.primary, size: 22),
+                          Icon(Icons.filter_alt_rounded, color: AppColors.primaryText, size: 22),
                           const SizedBox(width: 8),
                           const Expanded(
                             child: Text(
@@ -433,13 +433,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 16,
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w700,
                                 letterSpacing: 0.5,
                                 color: AppColors.textPrimary,
                               ),
                             ),
                           ),
                           IconButton(
+                            tooltip: 'Close',
                             onPressed: () => Navigator.of(ctx).pop(),
                             icon: const Icon(Icons.close, size: 20),
                             visualDensity: VisualDensity.compact,
@@ -462,15 +463,15 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14),
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey.shade300),
+                          color: AppColors.inputFill,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E5EA)),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String?>(
                             isExpanded: true,
                             value: tempStatus,
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(12),
                             items: _statusFilterOptions
                                 .map((o) => DropdownMenuItem<String?>(
                                       value: o.group,
@@ -499,15 +500,15 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14),
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey.shade300),
+                          color: AppColors.inputFill,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E5EA)),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String?>(
                             isExpanded: true,
                             value: tempType,
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(12),
                             items: _employeeTypeOptions
                                 .map((o) => DropdownMenuItem<String?>(
                                       value: o.type,
@@ -536,15 +537,15 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 14),
                         decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey.shade300),
+                          color: AppColors.inputFill,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E5EA)),
                         ),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String>(
                             isExpanded: true,
                             value: tempDateRange,
-                            borderRadius: BorderRadius.circular(10),
+                            borderRadius: BorderRadius.circular(12),
                             items: _dateRangeOptions
                                 .map((o) => DropdownMenuItem<String>(
                                       value: o,
@@ -561,7 +562,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         const SizedBox(height: 6),
                         Text(
                           'Selected: ${DateFormat('dd MMM yyyy').format(tempStart!)} - ${DateFormat('dd MMM yyyy').format(tempEnd!)}',
-                          style: TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600),
+                          style: TextStyle(fontSize: 12, color: AppColors.primaryText, fontWeight: FontWeight.w600),
                         ),
                       ],
                       const SizedBox(height: 24),
@@ -590,10 +591,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                 Navigator.of(ctx).pop();
                               },
                               style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                minimumSize: const Size.fromHeight(48),
                               ),
-                              child: const Text('Reset', style: TextStyle(fontWeight: FontWeight.bold)),
+                              child: const Text('Reset', style: TextStyle(fontWeight: FontWeight.w600)),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -611,14 +611,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                 Navigator.of(ctx).pop();
                               },
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: AppColors.primary,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                elevation: 0,
+                                minimumSize: const Size.fromHeight(48),
                               ),
                               child: const Text(
                                 'Apply',
-                                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                                style: TextStyle(fontWeight: FontWeight.w600),
                               ),
                             ),
                           ),
@@ -639,7 +636,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     // Same page background, width and corner radius as the cards below it.
     const soft = OutlineInputBorder(
       borderRadius: BorderRadius.all(Radius.circular(_kHeaderRadius)),
-      borderSide: BorderSide(color: Color(0xFFE2E8F0)),
+      borderSide: BorderSide(color: Color(0xFFE2E5EA)),
     );
     return Padding(
       padding: const EdgeInsets.fromLTRB(_kHeaderHPad, _kHeaderGap, _kHeaderHPad, 0),
@@ -647,8 +644,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         controller: _searchController,
         decoration: InputDecoration(
           hintText: 'Customer name, task name, task ID',
-          hintStyle: const TextStyle(fontSize: 14, color: Color(0xFF94A3B8)),
-          prefixIcon: const Icon(Icons.search, size: 20, color: Color(0xFF94A3B8)),
+          hintStyle: const TextStyle(fontSize: 14, color: AppColors.textCaption),
+          prefixIcon: const Icon(Icons.search_rounded, size: 20, color: AppColors.textSecondary),
           isDense: true,
           // 48px tall, same as the status filter.
           constraints: const BoxConstraints(minHeight: _kHeaderControlHeight),
@@ -659,10 +656,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           border: soft,
           enabledBorder: soft,
           focusedBorder: soft.copyWith(
-            borderSide: BorderSide(color: AppColors.primary, width: 1.5),
+            borderSide: BorderSide(color: AppColors.primary, width: 1.6),
           ),
           filled: true,
-          fillColor: Colors.white,
+          fillColor: AppColors.surface,
         ),
         onChanged: (_) {
           // Filtering is client-side, so the list updates as the user types
@@ -914,9 +911,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         return PopScope(
           canPop: false,
           child: Dialog(
-            backgroundColor: Colors.white,
-            elevation: 8,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            backgroundColor: AppColors.surface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
               child: Row(
@@ -934,13 +930,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade900,
+                            color: AppColors.textPrimary,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           'Validating location & starting live tracking...',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -1066,9 +1062,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         return PopScope(
           canPop: false,
           child: Dialog(
-            backgroundColor: Colors.white,
-            elevation: 8,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            backgroundColor: AppColors.surface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
               child: Row(
@@ -1086,13 +1081,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                           style: TextStyle(
                             fontSize: 15,
                             fontWeight: FontWeight.bold,
-                            color: Colors.grey.shade900,
+                            color: AppColors.textPrimary,
                           ),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           'Validating location & updating allowance...',
-                          style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                         ),
                       ],
                     ),
@@ -1398,7 +1393,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       ),
       child: Row(
         children: [
-          Icon(Icons.filter_list_rounded, size: 18, color: AppColors.primary),
+          Icon(Icons.filter_list_rounded, size: 18, color: AppColors.primaryText),
           const SizedBox(width: 8),
           Expanded(
             child: DropdownButtonHideUnderline(
@@ -1408,7 +1403,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 borderRadius: BorderRadius.circular(12),
                 icon: Icon(
                   Icons.keyboard_arrow_down_rounded,
-                  color: AppColors.primary,
+                  color: AppColors.primaryText,
                 ),
                 style: const TextStyle(
                   fontSize: 14,
@@ -1439,15 +1434,15 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     required IconData icon,
     required bool filled,
   }) {
-    final bg = filled ? AppColors.primary : Colors.white;
+    final bg = filled ? AppColors.primary : AppColors.surface;
     final labelColor = filled
-        ? Colors.white.withValues(alpha: 0.9)
+        ? AppColors.onPrimary.withValues(alpha: 0.75)
         : AppColors.textSecondary;
-    final valueColor = filled ? Colors.white : AppColors.textPrimary;
+    final valueColor = filled ? AppColors.onPrimary : AppColors.textPrimary;
     final iconBg = filled
-        ? Colors.white.withValues(alpha: 0.2)
+        ? AppColors.onPrimary.withValues(alpha: 0.12)
         : AppColors.primary.withValues(alpha: 0.12);
-    final iconColor = filled ? Colors.white : AppColors.primary;
+    final iconColor = filled ? AppColors.onPrimary : AppColors.primaryText;
 
     // Compact: icon tile on the left, label + count beside it (no empty space).
     return Container(
@@ -1455,12 +1450,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       decoration: BoxDecoration(
         color: bg,
         borderRadius: BorderRadius.circular(_kHeaderRadius),
-        border: filled ? null : Border.all(color: const Color(0xFFF1F5F9)),
+        border: filled ? null : Border.all(color: const Color(0xFFECEEF1)),
         boxShadow: [
           BoxShadow(
             color: filled
-                ? AppColors.primary.withValues(alpha: 0.25)
-                : Colors.black.withValues(alpha: 0.04),
+                ? AppColors.primary.withValues(alpha: 0.12)
+                : Colors.black.withValues(alpha: 0.06),
             blurRadius: 10,
             offset: const Offset(0, 3),
           ),
@@ -1475,9 +1470,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               color: iconBg,
               borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 21, color: iconColor),
+            child: Icon(icon, size: 20, color: iconColor),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -1488,7 +1483,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: 10.5,
+                    fontSize: 11,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 0.5,
                     color: labelColor,
@@ -1501,8 +1496,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     Text(
                       value,
                       style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w800,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w700,
                         color: valueColor,
                         height: 1,
                       ),
@@ -1558,8 +1553,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           tooltip: tip,
           visualDensity: VisualDensity.compact,
           iconSize: 22,
-          color: AppColors.primary,
-          disabledColor: const Color(0xFFCBD5E1),
+          color: AppColors.primaryText,
+          disabledColor: AppColors.textHint,
           icon: Icon(icon),
         );
 
@@ -1582,8 +1577,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               '$p',
               style: TextStyle(
                 fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: selected ? Colors.white : const Color(0xFF334155),
+                fontWeight: FontWeight.w700,
+                color: selected ? AppColors.onPrimary : AppColors.textPrimary,
               ),
             ),
           ),
@@ -1596,9 +1591,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         margin: const EdgeInsets.symmetric(vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: AppColors.surface,
           borderRadius: BorderRadius.circular(28),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          border: Border.all(color: const Color(0xFFECEEF1)),
           boxShadow: const [BoxShadow(color: Color(0x0F000000), blurRadius: 6, offset: Offset(0, 2))],
         ),
         child: Row(
@@ -1668,7 +1663,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     height: 4,
                     margin: const EdgeInsets.only(bottom: 16),
                     decoration: BoxDecoration(
-                      color: colorScheme.outlineVariant,
+                      color: AppColors.divider,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -1677,11 +1672,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   children: [
                     CircleAvatar(
                       radius: 24,
-                      backgroundColor: colorScheme.primary.withOpacity(0.1),
+                      backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                       child: Icon(
-                        Icons.person,
-                        color: colorScheme.primary,
-                        size: 28,
+                        Icons.person_outline_rounded,
+                        color: AppColors.primaryText,
+                        size: 24,
                       ),
                     ),
                     const SizedBox(width: 12),
@@ -1693,7 +1688,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                             customer.customerName,
                             style: const TextStyle(
                               fontSize: 18,
-                              fontWeight: FontWeight.bold,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                           if (customer.companyName != null &&
@@ -1702,7 +1697,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               customer.companyName!.trim(),
                               style: TextStyle(
                                 fontSize: 13,
-                                color: colorScheme.onSurfaceVariant,
+                                color: AppColors.textSecondary,
                               ),
                             ),
                         ],
@@ -1760,13 +1755,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   Widget _buildCustomerDetailRow(IconData icon, String label, String? value) {
     final text = value?.trim() ?? '';
     if (text.isEmpty) return const SizedBox.shrink();
-    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 20, color: colorScheme.primary),
+          Icon(icon, size: 20, color: AppColors.primaryText),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -1776,7 +1770,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   label,
                   style: TextStyle(
                     fontSize: 12,
-                    color: colorScheme.onSurfaceVariant,
+                    color: AppColors.textSecondary,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -1811,45 +1805,45 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   Color _getStatusChipColor(TaskStatus status) {
     switch (status) {
       case TaskStatus.pending:
-        return AppColors.brand;
+        return AppColors.warning;
       case TaskStatus.inProgress:
-        return Colors.blue.shade600;
+        return AppColors.info;
       case TaskStatus.arrived:
-        return Colors.indigo.shade600;
+        return AppColors.indigo;
       case TaskStatus.exited:
-        return AppColors.brandDark;
+        return AppColors.warning;
       case TaskStatus.exitedOnArrival:
-        return AppColors.brandDark;
+        return AppColors.warning;
       case TaskStatus.hold:
       case TaskStatus.holdOnArrival:
-        return AppColors.brandDark;
+        return AppColors.warning;
       case TaskStatus.reopenedOnArrival:
         return Colors.teal.shade600;
       case TaskStatus.completed:
-        return Colors.green.shade600;
+        return AppColors.success;
       case TaskStatus.waitingForApproval:
-        return AppColors.brand;
+        return AppColors.warning;
       case TaskStatus.assigned:
-        return Colors.green.shade600;
+        return AppColors.success;
       case TaskStatus.scheduled:
-        return Colors.blue.shade600;
+        return AppColors.info;
       case TaskStatus.approved:
       case TaskStatus.staffapproved:
         return Colors.teal.shade600;
       case TaskStatus.rejected:
-        return Colors.red.shade600;
+        return AppColors.error;
       case TaskStatus.reopened:
         return Colors.teal.shade600;
       case TaskStatus.requested:
         return Colors.purple.shade600;
       case TaskStatus.expired:
-        return Colors.red.shade700;
+        return AppColors.error;
       case TaskStatus.cancelled:
-        return Colors.grey.shade600;
+        return AppColors.textSecondary;
       case TaskStatus.onlineReady:
-        return Colors.grey.shade600;
+        return AppColors.textSecondary;
       default:
-        return Colors.grey.shade600;
+        return AppColors.textSecondary;
     }
   }
 
@@ -1901,18 +1895,18 @@ class _MyTasksScreenState extends State<MyTasksScreen>
 
   Widget _buildRequirementChip(String label, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color, width: 0.5),
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.3), width: 0.8),
       ),
       child: Text(
         label,
         style: TextStyle(
           color: color,
-          fontSize: 10,
-          fontWeight: FontWeight.w500,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
         ),
         overflow: TextOverflow.ellipsis,
       ),
@@ -1924,19 +1918,18 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     required String label,
     required String value,
   }) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+          Icon(icon, size: 14, color: AppColors.textSecondary),
           const SizedBox(width: 6),
           Text(
             '$label: ',
             style: TextStyle(
               fontSize: 11,
-              color: colorScheme.onSurfaceVariant,
+              color: AppColors.textSecondary,
               fontWeight: FontWeight.w500,
             ),
           ),
@@ -1945,7 +1938,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               value,
               style: TextStyle(
                 fontSize: 12,
-                color: colorScheme.onSurface,
+                color: AppColors.textPrimary,
                 fontWeight: FontWeight.w600,
               ),
               maxLines: 1,
@@ -1983,11 +1976,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           final visibleTasks = _filteredTasks;
           return Scaffold(
             drawer: const AppDrawer(),
-            backgroundColor: colorScheme.surfaceContainerHighest,
+            backgroundColor: AppColors.background,
             appBar: AppBar(
               leading: _isSelectionMode
                   ? IconButton(
-                      icon: const Icon(Icons.close),
+                      tooltip: 'Cancel selection',
+                      icon: const Icon(Icons.close_rounded),
                       onPressed: () => setState(() {
                         _isSelectionMode = false;
                         _selectedTaskIds.clear();
@@ -1995,6 +1989,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     )
                   : Builder(
                       builder: (ctx) => IconButton(
+                        tooltip: 'Menu',
                         icon: const Icon(Icons.menu_rounded),
                         onPressed: () => Scaffold.of(ctx).openDrawer(),
                       ),
@@ -2003,17 +1998,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 _isSelectionMode
                     ? 'Select tasks to export (${_selectedTaskIds.length})'
                     : 'Tasks',
-                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              centerTitle: true,
-              elevation: 0,
               bottom: _isSelectionMode
                   ? null
                   : TabBar(
                       controller: _mainTabController,
-                      labelColor: colorScheme.primary,
-                      unselectedLabelColor: colorScheme.onSurfaceVariant,
-                      indicatorColor: colorScheme.primary,
                       labelPadding: const EdgeInsets.symmetric(horizontal: 8),
                       tabs: _isInternalStaff
                           ? const [
@@ -2033,34 +2022,25 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 // Field employees only (the backend refuses anyone else).
                 if (!_isSelectionMode && _isFieldEmployee)
                   IconButton(
-                    icon: Icon(Icons.route_rounded, color: AppColors.primary, size: 24),
+                    icon: Icon(Icons.route_rounded, color: AppColors.primaryText, size: 24),
                     tooltip: 'My Route',
                     onPressed: () => Navigator.push(
                       context,
                       MaterialPageRoute(builder: (_) => const MyDayRouteScreen()),
                     ),
                   ),
-                if (!_isSelectionMode && !_isInternalStaff && (_mainTabController.index == 0 || _mainTabController.index == 1))
+                // Add Customer only; tasks are not added from the app bar.
+                if (!_isSelectionMode && !_isInternalStaff && _mainTabController.index == 1)
                   IconButton(
-                    icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 26),
-                    tooltip: _mainTabController.index == 0 ? 'Add Task' : 'Add Customer',
+                    icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primaryText, size: 24),
+                    tooltip: 'Add Customer',
                     onPressed: () {
-                      if (_mainTabController.index == 0) {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                AddTaskScreen(staffId: _loggedInStaffId ?? ''),
-                          ),
-                        ).then((_) => _fetchTasks());
-                      } else {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const AddCustomerScreen(),
-                          ),
-                        ).then((_) => _fetchCustomers());
-                      }
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AddCustomerScreen(),
+                        ),
+                      ).then((_) => _fetchCustomers());
                     },
                   ),
                 if (!_isSelectionMode && _mainTabController.index == 0)
@@ -2069,7 +2049,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       _hasAnyFilters
                           ? Icons.filter_alt
                           : Icons.filter_alt_outlined,
-                      color: _hasAnyFilters ? colorScheme.primary : null,
+                      color: _hasAnyFilters ? AppColors.primaryText : null,
                     ),
                     tooltip: 'Filter tasks',
                     onPressed: _openTaskFilterBottomSheet,
@@ -2118,17 +2098,25 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(
-                                        Icons.info_outline_rounded,
-                                        size: 64,
-                                        color: colorScheme.onSurfaceVariant,
+                                      Container(
+                                        width: 64,
+                                        height: 64,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.error.withValues(alpha: 0.12),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Icon(
+                                          Icons.info_outline_rounded,
+                                          size: 28,
+                                          color: AppColors.error,
+                                        ),
                                       ),
                                       const SizedBox(height: 12),
                                       Text(
                                         _errorMessage!,
                                         style: TextStyle(
-                                          fontSize: 15,
-                                          color: colorScheme.onSurfaceVariant,
+                                          fontSize: 14,
+                                          color: AppColors.textSecondary,
                                         ),
                                       ),
                                       const SizedBox(height: 12),
@@ -2148,19 +2136,28 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                   child: Column(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Icon(
-                                        Icons.assignment_turned_in_rounded,
-                                        size: 80,
-                                        color: colorScheme.onSurfaceVariant,
+                                      Container(
+                                        width: 64,
+                                        height: 64,
+                                        decoration: BoxDecoration(
+                                          color: AppColors.primary.withValues(alpha: 0.12),
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: Icon(
+                                          Icons.assignment_turned_in_outlined,
+                                          size: 28,
+                                          color: AppColors.primaryText,
+                                        ),
                                       ),
-                                      const SizedBox(height: 12),
+                                      const SizedBox(height: 16),
                                       Text(
                                         _hasAnyFilters
                                             ? 'No tasks match filters'
                                             : 'No tasks assigned yet',
                                         style: TextStyle(
                                           fontSize: 16,
-                                          color: colorScheme.onSurfaceVariant,
+                                          color: AppColors.textPrimary,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                     ],
@@ -2318,33 +2315,33 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                 }
                                               }
                                             },
-                                      borderRadius: BorderRadius.circular(14),
+                                      borderRadius: BorderRadius.circular(16),
                                       child: Container(
                                         margin: const EdgeInsets.only(
-                                          bottom: 8,
+                                          bottom: 12,
                                         ),
                                         decoration: BoxDecoration(
                                           color: colorScheme.surface,
                                           borderRadius: BorderRadius.circular(
-                                            14,
+                                            16,
                                           ),
                                           border: Border.all(
                                             color: isSelected
                                                 ? colorScheme.primary
-                                                : colorScheme.outline,
-                                            width: isSelected ? 2 : 1,
+                                                : const Color(0xFFECEEF1),
+                                            width: isSelected ? 1.6 : 1,
                                           ),
                                           boxShadow: [
                                             BoxShadow(
                                               color: colorScheme.shadow
-                                                  .withOpacity(0.08),
-                                              blurRadius: 6,
-                                              offset: const Offset(0, 2),
+                                                  .withValues(alpha: 0.06),
+                                              blurRadius: 10,
+                                              offset: const Offset(0, 3),
                                             ),
                                           ],
                                         ),
                                         child: Padding(
-                                          padding: const EdgeInsets.all(12),
+                                          padding: const EdgeInsets.all(16),
                                           child: Opacity(
                                             opacity: isCompleted ? 0.7 : 1.0,
                                             child: Row(
@@ -2354,7 +2351,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                 Padding(
                                                   padding:
                                                       const EdgeInsets.only(
-                                                        right: 10,
+                                                        right: 12,
                                                         top: 2,
                                                       ),
                                                   child: Icon(
@@ -2368,11 +2365,11 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                               .assignment_rounded,
                                                     color: _isSelectionMode
                                                         ? (isSelected
-                                                              ? colorScheme
-                                                                    .primary
+                                                              ? AppColors
+                                                                    .primaryText
                                                               : colorScheme
                                                                     .onSurfaceVariant)
-                                                        : colorScheme.primary,
+                                                        : AppColors.primaryText,
                                                     size: _isSelectionMode
                                                         ? 22
                                                         : 20,
@@ -2393,12 +2390,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                             child: Text(
                                                               'Task #${task.taskId}',
                                                               style: TextStyle(
-                                                                fontSize: 14,
+                                                                fontSize: 12,
                                                                 fontWeight:
                                                                     FontWeight
-                                                                        .bold,
-                                                                color: colorScheme
-                                                                    .onSurface,
+                                                                        .w600,
+                                                                color: AppColors
+                                                                    .textSecondary,
                                                               ),
                                                               maxLines: 1,
                                                               overflow:
@@ -2414,10 +2411,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                               _taskCardDateTime(task),
                                                             ),
                                                             style: TextStyle(
-                                                              fontSize: 10,
-                                                              color: Colors
-                                                                  .grey
-                                                                  .shade700,
+                                                              fontSize: 11,
+                                                              color: AppColors.textSecondary,
                                                               fontWeight:
                                                                   FontWeight
                                                                       .w500,
@@ -2429,10 +2424,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                       Text(
                                                         task.taskTitle,
                                                         style: const TextStyle(
-                                                          fontSize: 15,
+                                                          fontSize: 16,
                                                           fontWeight:
-                                                              FontWeight.bold,
-                                                          color: Colors.black,
+                                                              FontWeight.w600,
+                                                          color: AppColors.textPrimary,
                                                         ),
                                                         maxLines: 1,
                                                         overflow: TextOverflow
@@ -2453,9 +2448,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                               Icons
                                                                   .calendar_today_outlined,
                                                               size: 12,
-                                                              color: Colors
-                                                                  .grey
-                                                                  .shade600,
+                                                              color: AppColors.textSecondary,
                                                             ),
                                                             const SizedBox(
                                                               width: 4,
@@ -2465,9 +2458,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                                 'Completed: ${DateDisplayUtil.formatShortDate(task.completedDate!)}',
                                                                 style: TextStyle(
                                                                   fontSize: 11,
-                                                                  color: Colors
-                                                                      .grey
-                                                                      .shade800,
+                                                                  color: AppColors.textPrimary,
                                                                   fontWeight:
                                                                       FontWeight
                                                                           .w500,
@@ -2528,7 +2519,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                                     .isOtpRequired)
                                                                   _buildRequirementChip(
                                                                     'OTP',
-                                                                    Colors.blue,
+                                                                    AppColors.info,
                                                                   ),
                                                                 if (task
                                                                     .isGeoFenceRequired)
@@ -2541,8 +2532,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                                     .isPhotoRequired)
                                                                   _buildRequirementChip(
                                                                     'Photo',
-                                                                    Colors
-                                                                        .orange,
+                                                                    AppColors
+                                                                        .warning,
                                                                   ),
                                                                 if (task
                                                                     .isFormRequired)
@@ -2556,17 +2547,17 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                           Container(
                                                             padding:
                                                                 const EdgeInsets.symmetric(
-                                                                  horizontal: 8,
+                                                                  horizontal: 10,
                                                                   vertical: 4,
                                                                 ),
                                                             decoration: BoxDecoration(
                                                               color: statusColor
-                                                                  .withOpacity(
-                                                                    0.1,
+                                                                  .withValues(
+                                                                    alpha: 0.12,
                                                                   ),
                                                               borderRadius:
                                                                   BorderRadius.circular(
-                                                                    12,
+                                                                    999,
                                                                   ),
                                                             ),
                                                             child: Text(
@@ -2574,7 +2565,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                                 task.status,
                                                               ),
                                                               style: TextStyle(
-                                                                fontSize: 11,
+                                                                fontSize: 12,
                                                                 fontWeight:
                                                                     FontWeight
                                                                         .w600,
@@ -2616,24 +2607,34 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                 child: Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(
-                                      Icons.people_outline,
-                                      size: 64,
-                                      color: Colors.grey.shade400,
+                                    Container(
+                                      width: 64,
+                                      height: 64,
+                                      decoration: BoxDecoration(
+                                        color: AppColors.primary.withValues(alpha: 0.12),
+                                        shape: BoxShape.circle,
+                                      ),
+                                      child: Icon(
+                                        Icons.people_outline_rounded,
+                                        size: 28,
+                                        color: AppColors.primaryText,
+                                      ),
                                     ),
                                     const SizedBox(height: 16),
                                     Text(
                                       'No customers found',
                                       style: TextStyle(
-                                        color: Colors.grey.shade600,
+                                        color: AppColors.textPrimary,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600,
                                       ),
                                     ),
                                     const SizedBox(height: 8),
                                     Text(
                                       'Pull to refresh or tap Add Customer',
                                       style: TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.grey.shade500,
+                                        fontSize: 13,
+                                        color: AppColors.textSecondary,
                                       ),
                                     ),
                                   ],
@@ -2646,41 +2647,42 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                           onRefresh: _fetchCustomers,
                           child: ListView.builder(
                             // Room below the last card for the Add Customer button.
-                            padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
+                            padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
                             itemCount: _pagedCustomers.length,
                             itemBuilder: (context, index) {
                               final customer = _pagedCustomers[index];
                               return Card(
-                                elevation: 1,
-                                margin: const EdgeInsets.only(bottom: 8),
+                                elevation: 0,
+                                margin: const EdgeInsets.only(bottom: 12),
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(16),
                                 ),
                                 child: ListTile(
                                   onTap: () => _showCustomerDetails(customer),
                                   leading: CircleAvatar(
-                                    backgroundColor: colorScheme.primary
-                                        .withOpacity(0.1),
+                                    backgroundColor: AppColors.primary
+                                        .withValues(alpha: 0.12),
                                     child: Icon(
-                                      Icons.person,
-                                      color: colorScheme.primary,
+                                      Icons.person_outline_rounded,
+                                      color: AppColors.primaryText,
                                     ),
                                   ),
                                   title: Text(
                                     customer.customerName,
                                     style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                   subtitle: (customer.companyName != null &&
                                           customer.companyName!.trim().isNotEmpty)
                                       ? Text(
                                           customer.companyName!.trim(),
-                                          style: const TextStyle(fontSize: 12),
+                                          style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                                         )
                                       : null,
                                   trailing: const Icon(
                                     Icons.chevron_right_rounded,
+                                    color: AppColors.textCaption,
                                   ),
                                 ),
                               );
@@ -2715,7 +2717,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 : SizedBox(
                     height: 44,
                     child: FloatingActionButton.extended(
-                      foregroundColor: Colors.white,
+                      foregroundColor: _mainTabController.index == 0
+                          ? AppColors.onPrimary
+                          : Colors.white,
                       backgroundColor: _mainTabController.index == 0
                           ? AppColors.primary
                           : colorScheme.secondary,
@@ -2741,7 +2745,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         _mainTabController.index == 0 ? 'Add Task' : 'Add Customer',
                         style: const TextStyle(
                           fontSize: 13,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                       icon: Icon(
@@ -2762,12 +2766,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     final hasActive = _activeJourney != null;
     return Container(
       margin: const EdgeInsets.fromLTRB(_kHeaderHPad, _kHeaderGap, _kHeaderHPad, 0),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: hasActive ? Colors.green.shade50 : Colors.blue.shade50,
+        color: hasActive ? AppColors.successBg.withValues(alpha: 0.6) : AppColors.infoBg.withValues(alpha: 0.6),
         borderRadius: BorderRadius.circular(_kHeaderRadius),
         border: Border.all(
-          color: hasActive ? Colors.green.shade200 : Colors.blue.shade200,
+          color: hasActive ? AppColors.success.withValues(alpha: 0.25) : AppColors.info.withValues(alpha: 0.25),
         ),
       ),
       child: Row(
@@ -2777,16 +2781,16 @@ class _MyTasksScreenState extends State<MyTasksScreen>
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: hasActive ? Colors.green.shade100 : Colors.blue.shade100,
+              color: hasActive ? AppColors.success.withValues(alpha: 0.12) : AppColors.info.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
               hasActive ? Icons.directions_walk_rounded : Icons.explore_outlined,
-              color: hasActive ? Colors.green.shade800 : AppColors.primary,
-              size: 22,
+              color: hasActive ? AppColors.success : AppColors.info,
+              size: 20,
             ),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2794,9 +2798,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 Text(
                   hasActive ? 'At client' : 'Field Visit',
                   style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: hasActive ? Colors.green.shade900 : Colors.blue.shade900,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: hasActive ? AppColors.textPrimary : AppColors.textPrimary,
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -2808,8 +2812,8 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       ? 'Field In at ${_activeJourney!['fieldInTime'] ?? _activeJourney!['startTime'] ?? '—'} • Tap Field Out when you leave'
                       : 'Field In when you reach a client · Field Out when you leave',
                   style: TextStyle(
-                    fontSize: 11.5,
-                    color: hasActive ? Colors.green.shade800 : Colors.blue.shade800,
+                    fontSize: 12,
+                    color: hasActive ? AppColors.success : AppColors.info,
                   ),
                 ),
               ],
@@ -2826,16 +2830,16 @@ class _MyTasksScreenState extends State<MyTasksScreen>
             ElevatedButton(
               onPressed: hasActive ? _handleJourneyFieldOut : _handleJourneyFieldIn,
               style: ElevatedButton.styleFrom(
-                backgroundColor: hasActive ? Colors.green.shade700 : AppColors.primary,
-                foregroundColor: Colors.white,
+                backgroundColor: hasActive ? AppColors.success : AppColors.primary,
+                foregroundColor: hasActive ? Colors.white : AppColors.onPrimary,
                 padding: const EdgeInsets.symmetric(horizontal: 14),
-                minimumSize: const Size(0, 38),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                minimumSize: const Size(0, 40),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 elevation: 0,
               ),
               child: Text(
                 hasActive ? 'Field Out' : 'Field In',
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
             ),
         ],
@@ -2858,16 +2862,24 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.payments_outlined, size: 64, color: Colors.grey.shade400),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.payments_outlined, size: 28, color: AppColors.primaryText),
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     'No travel allowances recorded yet',
-                    style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                    style: const TextStyle(fontSize: 16, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Complete tasks or field journeys to earn allowances',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -2879,7 +2891,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     return RefreshIndicator(
       onRefresh: _fetchAllowances,
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         itemCount: _allowances.length,
         itemBuilder: (context, index) {
           final item = _allowances[index];
@@ -2890,19 +2902,22 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           final rate = item['ratePerKm'] ?? item['transport']?['rate'];
           final transportName = item['transport']?['name']?.toString();
 
-          Color statusColor = AppColors.brandDark;
+          Color statusColor = AppColors.warning;
           if (status.toLowerCase() == 'approved') {
-            statusColor = Colors.green.shade700;
+            statusColor = AppColors.success;
           } else if (status.toLowerCase() == 'rejected') {
-            statusColor = Colors.red.shade700;
+            statusColor = AppColors.error;
           }
 
           return Card(
-            elevation: 1,
-            margin: const EdgeInsets.only(bottom: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            elevation: 0,
+            margin: const EdgeInsets.only(bottom: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFFECEEF1)),
+            ),
             child: Padding(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2912,14 +2927,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       Expanded(
                         child: Row(
                           children: [
-                            Icon(Icons.calendar_today_outlined, size: 14, color: colorScheme.onSurfaceVariant),
+                            Icon(Icons.calendar_today_outlined, size: 14, color: AppColors.textSecondary),
                             const SizedBox(width: 6),
                             Flexible(
                               child: Text(
                                 dateStr.isNotEmpty ? dateStr : 'Today',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
                               ),
                             ),
                           ],
@@ -2927,15 +2942,15 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       ),
                       const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: statusColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: statusColor, width: 0.6),
+                          color: statusColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: statusColor.withValues(alpha: 0.3), width: 0.6),
                         ),
                         child: Text(
                           status,
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: statusColor),
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: statusColor),
                         ),
                       ),
                     ],
@@ -2952,14 +2967,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               'Total Distance',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                             const SizedBox(height: 2),
                             Text(
                               '${distance.toStringAsFixed(2)} km',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                             ),
                           ],
                         ),
@@ -2973,7 +2988,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                 transportName ?? 'Rate/Km',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                                style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                               ),
                               const SizedBox(height: 2),
                               Text(
@@ -2993,14 +3008,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                               'Allowance',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 11, color: colorScheme.onSurfaceVariant),
+                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                             ),
                             const SizedBox(height: 2),
                             Text(
                               '₹ ${amount.toStringAsFixed(2)}',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.primary),
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
                             ),
                           ],
                         ),
@@ -3031,16 +3046,24 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.history_rounded, size: 64, color: Colors.grey.shade400),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(Icons.history_rounded, size: 28, color: AppColors.primaryText),
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     'No task history found',
-                    style: TextStyle(fontSize: 15, color: Colors.grey.shade600, fontWeight: FontWeight.w500),
+                    style: const TextStyle(fontSize: 16, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Completed branch and customer visits will appear here',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade500),
+                    style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ],
               ),
@@ -3052,7 +3075,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     return RefreshIndicator(
       onRefresh: _fetchHistory,
       child: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         itemCount: _historyTasks.length,
         itemBuilder: (context, index) {
           final task = _historyTasks[index];
@@ -3063,11 +3086,13 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   : 'Past Task');
 
           return Card(
-            elevation: 1,
-            margin: const EdgeInsets.only(bottom: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(12),
+            elevation: 0,
+            margin: const EdgeInsets.only(bottom: 12),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: Color(0xFFECEEF1)),
+            ),
+            child: InkWell(              borderRadius: BorderRadius.circular(16),
               onTap: () {
                 Navigator.push(
                   context,
@@ -3077,7 +3102,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 );
               },
               child: Padding(
-                padding: const EdgeInsets.all(14),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -3087,21 +3112,20 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         Expanded(
                           child: Text(
                             task.taskTitle.isNotEmpty ? task.taskTitle : task.taskId,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: Colors.green.shade50,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: Colors.green.shade400, width: 0.6),
+                            color: AppColors.successBg,
+                            borderRadius: BorderRadius.circular(999),
                           ),
                           child: Text(
                             _statusLabel(task.status),
-                            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Colors.green.shade700),
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.success),
                           ),
                         ),
                       ],
@@ -3110,12 +3134,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     if (task.customer?.customerName != null) ...[
                       Row(
                         children: [
-                          Icon(Icons.person_outline, size: 14, color: colorScheme.onSurfaceVariant),
+                          Icon(Icons.person_outline, size: 14, color: AppColors.textSecondary),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
                               task.customer!.customerName,
-                              style: TextStyle(fontSize: 12, color: colorScheme.onSurface),
+                              style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3128,12 +3152,12 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.place_outlined, size: 14, color: colorScheme.onSurfaceVariant),
+                          Icon(Icons.place_outlined, size: 14, color: AppColors.textSecondary),
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
                               task.destinationLocation!.displayAddress!,
-                              style: TextStyle(fontSize: 11.5, color: colorScheme.onSurfaceVariant),
+                              style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -3144,21 +3168,21 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     ],
                     Row(
                       children: [
-                        Icon(Icons.check_circle_outline, size: 14, color: Colors.green.shade600),
+                        Icon(Icons.check_circle_outline, size: 14, color: AppColors.success),
                         const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             completedStr,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11.5, color: colorScheme.onSurfaceVariant),
+                            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
                           ),
                         ),
                         Text(
                           'View Report',
-                          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: AppColors.primary),
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppColors.primaryText),
                         ),
-                        Icon(Icons.chevron_right, size: 16, color: AppColors.primary),
+                        Icon(Icons.chevron_right, size: 16, color: AppColors.primaryText),
                       ],
                     ),
                   ],
