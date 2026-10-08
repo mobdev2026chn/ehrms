@@ -2955,6 +2955,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
       valueListenable: TrackingHealthService.instance.issues,
       builder: (context, issues, _) {
         if (issues.isEmpty) return const SizedBox.shrink();
+        final onlyOffline = issues.length == 1 && issues.first == TrackingIssue.noNetwork;
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.all(16),
@@ -2966,14 +2967,17 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Row(
                 children: [
-                  Icon(Icons.location_off_outlined, color: AppColors.error, size: 20),
-                  SizedBox(width: 8),
+                  Icon(onlyOffline ? Icons.cloud_off_outlined : Icons.location_off_outlined,
+                      color: AppColors.error, size: 20),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Your route is not being tracked',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF991B1B)),
+                      onlyOffline
+                          ? "You're offline — your route will sync when you're back online"
+                          : 'Your route is not being tracked',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF991B1B)),
                     ),
                   ),
                 ],
@@ -2989,18 +2993,21 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           style: const TextStyle(fontSize: 12.5, color: Color(0xFF7F1D1D)),
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      TextButton(
-                        onPressed: () => TrackingHealthService.fix(issue),
-                        style: TextButton.styleFrom(
-                          backgroundColor: AppColors.error,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          minimumSize: const Size(0, 36),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                      // No settings screen fixes "offline", so that row gets no dead button.
+                      if (issue != TrackingIssue.noNetwork) ...[
+                        const SizedBox(width: 8),
+                        TextButton(
+                          onPressed: () => TrackingHealthService.fix(issue),
+                          style: TextButton.styleFrom(
+                            backgroundColor: AppColors.error,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            minimumSize: const Size(0, 36),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                          ),
+                          child: const Text('Fix', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
                         ),
-                        child: const Text('Fix', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-                      ),
+                      ],
                     ],
                   ),
                 ),

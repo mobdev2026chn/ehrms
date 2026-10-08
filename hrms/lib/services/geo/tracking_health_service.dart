@@ -40,6 +40,14 @@ enum TrackingIssue {
     'Set ektaHr battery usage to "Unrestricted" so tracking keeps running.',
     'Battery saver is stopping tracking. Please set EktaHR battery usage to unrestricted.',
     critical: true,
+  ),
+  noNetwork(
+    'No internet connection',
+    'Your phone is offline. Location is still being recorded and will sync once you are back online.',
+    'No internet connection. Your location is saved and will sync when you are back online.',
+    // Not critical: GPS still records; points are buffered and replayed when online, so this
+    // informs (notification + banner) without the voice/vibration alarm.
+    critical: false,
   );
 
   const TrackingIssue(this.title, this.fix, this.spoken, {required this.critical});
@@ -71,6 +79,9 @@ class TrackingHealthService {
   bool _checking = false;
   DateTime? _lastAlertAt;
   Set<TrackingIssue> _lastAlerted = {};
+  // True while the last check saw no internet. Used to tell the admin, once the connection
+  // is back, about the outage we could not report while it was happening.
+  bool _wasOffline = false;
   StreamSubscription<gl.ServiceStatus>? _gpsSub;
   Timer? _timer;
 
@@ -97,6 +108,7 @@ class TrackingHealthService {
     _gpsSub = null;
     _lastAlerted = {};
     _lastAlertAt = null;
+    _wasOffline = false;
     issues.value = const [];
     await _cancelNotification();
   }
@@ -112,6 +124,12 @@ class TrackingHealthService {
       final changed = !setEquals(found.toSet(), issues.value.toSet());
       issues.value = found;
       if (changed) unawaited(LocationService.syncLocationPermissionStatusToBackend());
+
+      // The connection just came back: we could not reach the server while offline, so tell the
+      // admin now about the interruption that just ended.
+      final offlineNow = found.contains(TrackingIssue.noNetwork);
+      if (_wasOffline && !offlineNow) unawaited(_reportReasonToAdmin('no_network'));
+      _wasOffline = offlineNow;
 
       if (found.isEmpty) {
         if (_lastAlerted.isNotEmpty) await _cancelNotification();
@@ -149,6 +167,9 @@ class TrackingHealthService {
       case TrackingIssue.locationNotAlways:
       case TrackingIssue.preciseOff:
         await openAppSettings();
+      case TrackingIssue.noNetwork:
+        // Nothing to open — the phone just needs to regain signal/data.
+        break;
     }
   }
 
@@ -190,7 +211,14 @@ class TrackingHealthService {
       TrackingIssue.locationNotAlways => 'permission',
       TrackingIssue.preciseOff => 'permission',
       TrackingIssue.batteryRestricted => 'service_stopped',
+      TrackingIssue.noNetwork => 'no_network',
     };
+    await _reportReasonToAdmin(reason);
+  }
+
+  /// Posts a tracking interruption to the employee's admin. The server records an admin
+  /// notification and throttles repeats, so this is safe to call on every alert.
+  static Future<void> _reportReasonToAdmin(String reason) async {
     try {
       await ApiClient().dio.post<dynamic>(
         '/staff/geo-task/tracking-alert',
@@ -220,7 +248,25 @@ class TrackingHealthService {
     if (Platform.isAndroid && !await Permission.ignoreBatteryOptimizations.isGranted) {
       found.add(TrackingIssue.batteryRestricted);
     }
+
+    if (!await _hasNetwork()) found.add(TrackingIssue.noNetwork);
     return found;
+  }
+
+  /// A quick reachability probe (no extra plugin): a DNS lookup needs a working connection.
+  /// Unknown or unexpected errors are treated as "online" so tracking never false-alarms.
+  static Future<bool> _hasNetwork() async {
+    try {
+      final r = await InternetAddress.lookup('one.one.one.one')
+          .timeout(const Duration(seconds: 4));
+      return r.isNotEmpty && r.first.rawAddress.isNotEmpty;
+    } on SocketException {
+      return false;
+    } on TimeoutException {
+      return false;
+    } catch (_) {
+      return true;
+    }
   }
 
   static Future<void> _notify(List<TrackingIssue> found) async {

@@ -1365,8 +1365,28 @@ class PresenceTrackingService {
     }
   }
 
+  /// The signed-in user's id from the stored auth payload (prefs 'user' / 'staff'),
+  /// or null when logged out / not readable. Queued offline rows are stamped with it,
+  /// and replay refuses rows stamped by anyone else — see [flushPendingPresenceQueue].
+  static Future<String?> _currentUserId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      for (final key in const ['user', 'staff']) {
+        final raw = prefs.getString(key);
+        if (raw == null || raw.isEmpty) continue;
+        final decoded = jsonDecode(raw);
+        if (decoded is! Map) continue;
+        final s = (decoded['_id'] ?? decoded['id'])?.toString() ?? '';
+        if (s.isNotEmpty) return s;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   /// Offline points live in a file, not SharedPreferences: the queue can hold a full day
   /// (thousands of rows), and the background isolate and the app both read/write it.
+  /// NOTE: prefs.clear() on logout does NOT delete this file — ownership is enforced by
+  /// the 'ownerId' stamp on each row instead.
   static Future<File> _pendingQueueFile() async {
     final dir = await getApplicationSupportDirectory();
     return File('${dir.path}/$_kPresencePendingQueue.json');
@@ -1461,7 +1481,11 @@ class PresenceTrackingService {
         'queue_before=$queueBefore',
       );
     }
+    // Stamped so replay can refuse to upload this row under anyone else's login —
+    // one phone passed between accounts must never mix two people's routes.
+    final ownerId = await _currentUserId();
     list.add({
+      if (ownerId != null) 'ownerId': ownerId,
       'lat': lat,
       'lng': lng,
       'presenceStatus': presenceStatus,
@@ -1513,6 +1537,24 @@ class PresenceTrackingService {
     if (_flushInProgress) return;
     _flushInProgress = true;
     try {
+      // One phone, two accounts: only rows queued by THIS signed-in user may go out.
+      // Anyone else's rows — and rows from a build too old to carry an owner stamp —
+      // are dropped for good: losing a point is recoverable, uploading it into another
+      // person's route is not (the server files points under the TOKEN's staffId).
+      final ownerId = await _currentUserId();
+      if (ownerId == null) return; // token without a readable user: do not guess
+      final mine = list.where((m) => m['ownerId'] == ownerId).toList();
+      if (mine.length != list.length) {
+        if (kDebugMode && AppConstants.logTrackingsToConsole) {
+          debugPrint(
+            '[Trackings] presence_offline dropped ${list.length - mine.length} row(s) from another login',
+          );
+        }
+        await _savePendingQueue(mine);
+        if (mine.isEmpty) return;
+        list = mine;
+      }
+
       // Queued rows were already outlier-filtered before being queued; replay them in
       // one request (POST /staff/geo-task/live-tracking/batch, no taskId).
       String keyOf(Map<String, dynamic> m) =>
