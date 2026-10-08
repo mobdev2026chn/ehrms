@@ -795,11 +795,9 @@ class PresenceTrackingService {
     final day = int.tryParse(parts[2]);
     if (year == null || month == null || day == null) return false;
 
-    // Tracking started on the punch-in day ends at noon the next day: an overnight
-    // shift is still tracked past midnight, but a shift left open (no punch-out) no
-    // longer keeps tracking for days. (Was disabled "for testing", so open shifts
-    // tracked indefinitely.)
-    final trackingEndsAt = DateTime(year, month, day + 1, 12);
+    // A shift left open (no punch-out) stops tracking at 12 AM (midnight) the next day,
+    // so it never keeps tracking for days. Punch-out stops it earlier as normal.
+    final trackingEndsAt = DateTime(year, month, day + 1); // 00:00 of the next day
     if (DateTime.now().isAfter(trackingEndsAt)) {
       await prefs.remove(_kPresenceTrackingDate);
       return false;
