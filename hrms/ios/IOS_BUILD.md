@@ -60,5 +60,6 @@ Or archive from Xcode: **Product → Archive → Distribute App**.
   `google_mlkit_face_detection`) — the iOS Simulator has no camera.
 - `background_location_tracker` is vendored at `packages/` via a `dependency_override`;
   make sure that folder came across or `flutter pub get` fails.
-- Default API base is production (`https://ehrms.askeva.net/api`) — no flags needed for a
-  prod build. The Google Maps iOS key is already set in `Runner/AppDelegate.swift`.
+- API base is set in `lib/config/constants.dart` (`baseUrl` / `webBaseUrl`), currently the
+  UAT host `https://uat.ektahr.com/api`. Switch it to production before an App Store build.
+  The Google Maps iOS key is already set in `Runner/AppDelegate.swift`.

@@ -22,6 +22,8 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>
@@ -50,9 +52,9 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Location is used to verify your check-in and check-out for attendance.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Background location is used for live task tracking when you are in the field.</string>
+	<string>If your employer has enabled location tracking, EktaHR records your location in the background between punch-in and punch-out so field visits and travel distance are logged. Tracking stops when you punch out.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
-	<string>Background location is used for live task tracking when you are in the field.</string>
+	<string>If your employer has enabled location tracking, EktaHR records your location in the background between punch-in and punch-out so field visits and travel distance are logged. Tracking stops when you punch out.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Motion and fitness data is used to accurately detect walking, driving, or standing for task tracking.</string>
 	<key>NSMicrophoneUsageDescription</key>

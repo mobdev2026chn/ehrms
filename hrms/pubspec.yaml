@@ -110,6 +110,8 @@ dev_dependencies:
 # Run: dart run flutter_launcher_icons
 flutter_launcher_icons:
   android: true
+  ios: true
+  remove_alpha_ios: true
   image_path: "assets/ekta_logo.jpeg"
 
 # Pin webview_flutter_android to avoid 4.10.13 build errors (missing Pigeon-generated Java classes).

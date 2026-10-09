@@ -1,0 +1,54 @@
+# Codemagic CI — builds the EktaHR iOS app (hrms/) on a cloud Mac and uploads it to
+# TestFlight / App Store Connect. Lets you ship iOS without owning a Mac.
+# One-time setup is described in hrms/ios/APP_STORE_PUBLISHING_GUIDE.md (Part C).
+workflows:
+  ios-release:
+    name: EktaHR iOS → TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: hrms
+    integrations:
+      # Name you give the App Store Connect API key in Codemagic → Team settings → Integrations.
+      app_store_connect: EktaHR ASC Key
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: io.askeva.ektahr
+      groups:
+        # Environment group holding GOOGLE_SERVICE_INFO_PLIST (base64 of GoogleService-Info.plist).
+        - firebase_ios
+      vars:
+        # App Store Connect → your app → App Information → Apple ID (numeric).
+        APP_STORE_APPLE_ID: "0000000000"
+    triggering:
+      events: []   # manual "Start new build" only
+    scripts:
+      - name: Add Firebase iOS config
+        script: |
+          echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > ios/Runner/GoogleService-Info.plist
+      - name: Flutter packages + codegen
+        script: |
+          flutter pub get
+          dart run build_runner build --delete-conflicting-outputs
+      - name: CocoaPods
+        script: |
+          cd ios && pod install --repo-update
+      - name: Apply signing profiles
+        script: |
+          xcode-project use-profiles
+      - name: Build IPA
+        script: |
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" 2>/dev/null || echo 14)
+          flutter build ipa --release \
+            --build-number=$((LATEST + 1)) \
+            --export-options-plist=/Users/builder/export_options.plist
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
