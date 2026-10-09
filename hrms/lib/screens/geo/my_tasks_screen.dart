@@ -1981,7 +1981,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
               leading: _isSelectionMode
                   ? IconButton(
                       tooltip: 'Cancel selection',
-                      icon: const Icon(Icons.close_rounded),
+                      icon: Icon(Icons.close_rounded, color: AppColors.primary),
                       onPressed: () => setState(() {
                         _isSelectionMode = false;
                         _selectedTaskIds.clear();
@@ -1990,7 +1990,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                   : Builder(
                       builder: (ctx) => IconButton(
                         tooltip: 'Menu',
-                        icon: const Icon(Icons.menu_rounded),
+                        icon: Icon(Icons.menu_rounded, color: AppColors.primary),
                         onPressed: () => Scaffold.of(ctx).openDrawer(),
                       ),
                     ),
@@ -2022,7 +2022,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 // Field employees only (the backend refuses anyone else).
                 if (!_isSelectionMode && _isFieldEmployee)
                   IconButton(
-                    icon: Icon(Icons.route_rounded, color: AppColors.primaryText, size: 24),
+                    icon: Icon(Icons.route_rounded, color: AppColors.primary, size: 24),
                     tooltip: 'My Route',
                     onPressed: () => Navigator.push(
                       context,
@@ -2032,7 +2032,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                 // Add Customer only; tasks are not added from the app bar.
                 if (!_isSelectionMode && !_isInternalStaff && _mainTabController.index == 1)
                   IconButton(
-                    icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primaryText, size: 24),
+                    icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 24),
                     tooltip: 'Add Customer',
                     onPressed: () {
                       Navigator.push(
@@ -2049,14 +2049,14 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       _hasAnyFilters
                           ? Icons.filter_alt
                           : Icons.filter_alt_outlined,
-                      color: _hasAnyFilters ? AppColors.primaryText : null,
+                      color: AppColors.primary,
                     ),
                     tooltip: 'Filter tasks',
                     onPressed: _openTaskFilterBottomSheet,
                   ),
                 if (!_isSelectionMode && ((_isInternalStaff && _mainTabController.index > 0) || (!_isInternalStaff && _mainTabController.index >= 2)))
                   IconButton(
-                    icon: const Icon(Icons.refresh_rounded),
+                    icon: Icon(Icons.refresh_rounded, color: AppColors.primary),
                     tooltip: 'Refresh',
                     onPressed: () {
                       final isAllowance = (_isInternalStaff && _mainTabController.index == 1) || (!_isInternalStaff && _mainTabController.index == 2);

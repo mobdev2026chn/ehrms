@@ -105,9 +105,8 @@ class ThemeProvider with ChangeNotifier {
         ThemeData.estimateBrightnessForColor(_primaryColor) == Brightness.dark
         ? Colors.white
         : AppColors.ink;
-    // Primary darkened enough to read as text/icons on white.
-    final primaryText =
-        Color.lerp(_primaryColor, Colors.black, 0.38) ?? _primaryColor;
+    // Use primary color directly for icons, accents, and theme elements.
+    final primaryText = _primaryColor;
     const fieldFill = Color(0xFFF7F8FA);
     const fieldBorder = Color(0xFFE2E5EA);
     const hairline = Color(0xFFECEEF1);

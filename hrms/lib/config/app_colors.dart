@@ -71,16 +71,13 @@ class AppColors {
   // ── Theme helpers ──────────────────────────────────────────────────────
   static void updateTheme(Color color) {
     primary      = color;
-    primaryDark  = _darker(color);
+    primaryDark  = color;
     primaryLight = color.withValues(alpha: 0.12);
+    primaryText  = color;
   }
 
   static void updateForBrightness(bool isDark) {}
 
-  static Color _darker(Color c) {
-    final h = HSLColor.fromColor(c);
-    return h.withLightness((h.lightness - 0.1).clamp(0.0, 1.0)).toColor();
-  }
 
   // ── Utility ────────────────────────────────────────────────────────────
   /// Returns status badge foreground + background for a status string.
