@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:background_location_tracker/background_location_tracker.dart';
 import 'package:flutter/foundation.dart';
@@ -9,6 +10,7 @@ import '../../config/constants.dart';
 import 'address_resolution_service.dart';
 import 'movement_classification_service.dart';
 import 'tracking_outlier_filter_service.dart';
+import '../task_service.dart';
 
 /// Persists active live tracking state and sends tracking in background.
 /// Used so tracking continues when app is closed or in background.
@@ -559,7 +561,7 @@ class LiveTrackingService {
         body['pincode'] = resolvedAddress['pincode'];
       }
 
-      http.Response response;
+      http.Response? response;
       try {
         response = await http.post(
           liveRecordUri,
@@ -580,16 +582,18 @@ class LiveTrackingService {
           );
         }
       } catch (_) {
-        response = await http.post(
-          fallbackUri,
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer $token',
-          },
-          body: jsonEncode(body),
-        );
+        try {
+          response = await http.post(
+            fallbackUri,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(body),
+          );
+        } catch (_) {}
       }
-      if (response.statusCode >= 200 && response.statusCode < 300) {
+      if (response != null && response.statusCode >= 200 && response.statusCode < 300) {
         if (kDebugMode && AppConstants.logTrackingsToConsole) {
           debugPrint(
             '[Trackings] task_store OK taskId=$taskMongoId '
@@ -615,11 +619,17 @@ class LiveTrackingService {
           movementType: resolvedMovementType,
           accuracyM: accuracyM,
         );
-      } else if (kDebugMode && AppConstants.logTrackingsToConsole) {
-        debugPrint(
-          '[Trackings] task_store FAIL ${response.statusCode} taskId=$taskMongoId '
-          'appStatus=$appStatus body=${response.body.length > 200 ? "${response.body.substring(0, 200)}..." : response.body}',
-        );
+        // Flush any previously queued offline task points now that connection is active
+        unawaited(TaskService.syncOfflineQueueBatch());
+      } else {
+        // Offline / server unreachable: store coordinate in offline queue so it is synced once back online
+        await TaskService.enqueueOfflineTracking(body);
+        if (kDebugMode && AppConstants.logTrackingsToConsole) {
+          debugPrint(
+            '[Trackings] task_store queued_offline (bg) taskId=$taskMongoId '
+            'status=${response?.statusCode ?? "no_connection"}',
+          );
+        }
       }
     } catch (e) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {

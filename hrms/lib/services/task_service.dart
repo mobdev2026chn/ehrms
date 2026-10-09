@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
 import 'package:hrms/services/geo/tracking_outlier_filter_service.dart';
+import 'package:hrms/services/geo/tracking_incident_log_service.dart';
 import 'api_client.dart';
 
 class TaskService {
@@ -85,6 +86,14 @@ class TaskService {
     }
   }
 
+  static Future<void> enqueueOfflineTracking(Map<String, dynamic> body) =>
+      _enqueueOfflineTracking(body);
+
+  static Future<void> syncOfflineQueueBatch() => _syncOfflineQueueBatch();
+
+  static Future<int> getOfflineQueueCount() async =>
+      (await _loadOfflineQueue()).length;
+
   static Future<void> _startOfflineSyncTimerIfNeeded() async {
     final queue = await _loadOfflineQueue();
     if (queue.isEmpty) {
@@ -95,10 +104,10 @@ class TaskService {
     if (_offlineSyncTimer != null) return;
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
-        '[Trackings] offline_sync timer_started pending=${queue.length} interval=1m',
+        '[Trackings] offline_sync timer_started pending=${queue.length} interval=25s',
       );
     }
-    _offlineSyncTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+    _offlineSyncTimer = Timer.periodic(const Duration(seconds: 25), (_) {
       _syncOfflineQueueBatch();
     });
   }
@@ -127,6 +136,7 @@ class TaskService {
     }
     queue.add(offlineItem);
     await _saveOfflineQueue(queue);
+    unawaited(TrackingIncidentLogService.logOfflineQueue(queue.length, source: 'Task'));
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] offline_store local_insert_done '
@@ -218,6 +228,7 @@ class TaskService {
           return id == null || !syncedIds.contains(id);
         }).toList();
         await _saveOfflineQueue(remaining);
+        unawaited(TrackingIncidentLogService.logSync(syncedIds.length, source: 'Task'));
         if (kDebugMode && AppConstants.logTrackingsToConsole) {
           debugPrint(
             '[Trackings] offline_sync cycle_done sent=${syncedIds.length} remaining=${remaining.length}',
@@ -229,6 +240,11 @@ class TaskService {
           if (kDebugMode && AppConstants.logTrackingsToConsole) {
             debugPrint('[Trackings] offline_sync timer_stopped pending=0');
           }
+        } else if (!hadNetworkFailure) {
+          // Continue draining remaining queue immediately without waiting for next timer tick
+          _syncInProgress = false;
+          unawaited(_syncOfflineQueueBatch());
+          return;
         }
       } else if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
@@ -1002,6 +1018,14 @@ class TaskService {
         debugPrint(
           '[Trackings] task_store FAIL (fg) queued_offline taskId=$taskMongoId '
           '${e.response?.statusCode} ${e.response?.data}',
+        );
+      }
+      return false;
+    } catch (e) {
+      await _enqueueOfflineTracking(body);
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint(
+          '[Trackings] task_store FAIL (fg) error queued_offline taskId=$taskMongoId $e',
         );
       }
       return false;

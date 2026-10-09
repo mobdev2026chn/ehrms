@@ -35,7 +35,9 @@ import 'package:hrms/services/geo/accurate_location_helper.dart';
 import 'package:hrms/services/geo/live_tracking_service.dart';
 import 'package:hrms/services/geo/movement_classification_service.dart';
 import 'package:hrms/services/geo/tracking_health_service.dart';
+import 'package:hrms/services/geo/tracking_incident_log_service.dart';
 import 'package:hrms/services/geo/tracking_outlier_filter_service.dart';
+import 'package:hrms/services/task_service.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
 
@@ -101,7 +103,65 @@ class PresenceTrackingService {
       PresenceTrackingService._internal();
   factory PresenceTrackingService() => _instance;
 
-  PresenceTrackingService._internal();
+  static bool _networkRestoredHooked = false;
+  static Timer? _offlinePresenceSyncTimer;
+
+  PresenceTrackingService._internal() {
+    _registerNetworkRestoredHook();
+    unawaited(_startOfflinePresenceSyncTimerIfNeeded());
+  }
+
+  void _registerNetworkRestoredHook() {
+    if (_networkRestoredHooked) return;
+    _networkRestoredHooked = true;
+    TrackingHealthService.instance.onNetworkRestored.add(() async {
+      if (kDebugMode && AppConstants.logTrackingsToConsole) {
+        debugPrint('[PresenceTracking] network restored event -> trigger queue flushes');
+      }
+      await flushPendingPresenceQueue();
+      await TaskService.syncOfflineQueueBatch();
+    });
+  }
+
+  Future<int> getPendingPresenceCount() async {
+    try {
+      final list = await _loadPendingQueue();
+      return list.length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<void> _startOfflinePresenceSyncTimerIfNeeded() async {
+    final list = await _loadPendingQueue();
+    if (list.isEmpty) {
+      _offlinePresenceSyncTimer?.cancel();
+      _offlinePresenceSyncTimer = null;
+      return;
+    }
+    if (_offlinePresenceSyncTimer != null) return;
+    if (kDebugMode && AppConstants.logTrackingsToConsole) {
+      debugPrint(
+        '[PresenceTracking] offline_presence_sync timer_started pending=${list.length} interval=25s',
+      );
+    }
+    _offlinePresenceSyncTimer = Timer.periodic(const Duration(seconds: 25), (_) async {
+      final pending = await _loadPendingQueue();
+      if (pending.isEmpty) {
+        _offlinePresenceSyncTimer?.cancel();
+        _offlinePresenceSyncTimer = null;
+        if (kDebugMode && AppConstants.logTrackingsToConsole) {
+          debugPrint('[PresenceTracking] offline_presence_sync timer_stopped pending=0');
+        }
+        return;
+      }
+      final hasNet = await _hasInternetConnection();
+      if (hasNet) {
+        await flushPendingPresenceQueue();
+        await TaskService.syncOfflineQueueBatch();
+      }
+    });
+  }
 
   final ApiClient _api = ApiClient();
 
@@ -825,6 +885,10 @@ class PresenceTrackingService {
   }
 
   Future<void> _ensureTrackingImpl(bool isPunchedInToday) async {
+    unawaited(flushPendingPresenceQueue());
+    unawaited(TaskService.syncOfflineQueueBatch());
+    unawaited(_startOfflinePresenceSyncTimerIfNeeded());
+
     if (!isPunchedInToday) {
       await stopTracking();
       return;
@@ -1507,6 +1571,8 @@ class PresenceTrackingService {
       list = list.sublist(list.length - _maxPendingPresence);
     }
     await _savePendingQueue(list);
+    unawaited(TrackingIncidentLogService.logOfflineQueue(list.length, source: 'Presence'));
+    unawaited(_startOfflinePresenceSyncTimerIfNeeded());
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] presence_offline local_insert_done '
@@ -1619,6 +1685,7 @@ class PresenceTrackingService {
         }
       }
       if (sentKeys.isNotEmpty) {
+        unawaited(TrackingIncidentLogService.logSync(sentKeys.length, source: 'Presence'));
         // Re-read: rows queued while the request was in flight must survive.
         final current = await _loadPendingQueue();
         final remaining = current
@@ -1631,6 +1698,11 @@ class PresenceTrackingService {
             )
             .toList();
         await _savePendingQueue(remaining);
+        if (remaining.isEmpty) {
+          _offlinePresenceSyncTimer?.cancel();
+          _offlinePresenceSyncTimer = null;
+        }
+        unawaited(TaskService.syncOfflineQueueBatch());
       }
     } finally {
       _flushInProgress = false;
@@ -1775,6 +1847,7 @@ class PresenceTrackingService {
       );
       // If internet just recovered, flush older offline rows immediately.
       await flushPendingPresenceQueue();
+      unawaited(TaskService.syncOfflineQueueBatch());
     }
   }
 
@@ -1814,6 +1887,9 @@ class PresenceTrackingService {
       // instead of forcing an extra GPS fix + upload.
       await _ensureBackgroundPresenceTracking();
       unawaited(TrackingHealthService.instance.start());
+      unawaited(flushPendingPresenceQueue());
+      unawaited(TaskService.syncOfflineQueueBatch());
+      unawaited(_startOfflinePresenceSyncTimerIfNeeded());
       return;
     }
 
@@ -1822,6 +1898,8 @@ class PresenceTrackingService {
     unawaited(TrackingHealthService.instance.start());
     await MovementClassificationService().start();
     await flushPendingPresenceQueue();
+    unawaited(TaskService.syncOfflineQueueBatch());
+    unawaited(_startOfflinePresenceSyncTimerIfNeeded());
     await _ensureBackgroundPresenceTracking();
     try {
       final status = await getPresenceStatus();
@@ -1892,6 +1970,24 @@ class PresenceTrackingService {
         area: addr['area'],
         pincode: addr['pincode'],
       );
+      if (outcome.result == _PresenceSendResult.failed) {
+        await _enqueueFailedPeriodicPresence(
+          lat: position.latitude,
+          lng: position.longitude,
+          presenceStatus: presenceStatus,
+          status: 'active',
+          appStatus: 'active',
+          movementType: outcome.movementType,
+          accuracy: position.accuracy,
+          batteryPercent: batteryPercent,
+          address: addr['address'],
+          fullAddress: addr['fullAddress'],
+          city: addr['city'],
+          area: addr['area'],
+          pincode: addr['pincode'],
+          capturedAtUtc: DateTime.now().toUtc(),
+        );
+      }
       if (kDebugMode) {
         debugPrint(
           '[PresenceTracking] recordAppOpened: active, presence=$presenceStatus '
@@ -1913,9 +2009,13 @@ class PresenceTrackingService {
               : 0,
         );
       }
+      unawaited(flushPendingPresenceQueue());
+      unawaited(TaskService.syncOfflineQueueBatch());
+      unawaited(_startOfflinePresenceSyncTimerIfNeeded());
     } catch (e) {
-      if (kDebugMode)
+      if (kDebugMode) {
         debugPrint('[PresenceTracking] recordAppOpened failed: $e');
+      }
     }
   }
 
@@ -1994,12 +2094,15 @@ class PresenceTrackingService {
     // Points left over from a shift that ended while offline upload here too.
     if (!await isTrackingAllowed()) {
       await flushPendingPresenceQueue();
+      unawaited(TaskService.syncOfflineQueueBatch());
       return;
     }
     _isTracking = true;
     // Back from settings: clear or re-raise the tracking alert right away.
     unawaited(TrackingHealthService.instance.start());
     await flushPendingPresenceQueue();
+    unawaited(TaskService.syncOfflineQueueBatch());
+    unawaited(_startOfflinePresenceSyncTimerIfNeeded());
     await _periodicTick();
     _trackingTimer?.cancel();
     _trackingTimer = Timer.periodic(trackingInterval, (_) {
@@ -2016,6 +2119,7 @@ class PresenceTrackingService {
     // Best effort: upload offline-queued points now.
     try {
       await flushPendingPresenceQueue();
+      await TaskService.syncOfflineQueueBatch();
     } catch (_) {}
     _isTracking = false;
     _taskInProgress = false;

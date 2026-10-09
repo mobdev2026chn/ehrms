@@ -15,6 +15,7 @@ import 'package:hrms/services/api_client.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'location_service.dart';
+import 'tracking_incident_log_service.dart';
 
 enum TrackingIssue {
   gpsOff(
@@ -85,19 +86,30 @@ class TrackingHealthService {
   StreamSubscription<gl.ServiceStatus>? _gpsSub;
   Timer? _timer;
 
+  /// Callbacks to execute as soon as network is restored from an offline state.
+  final List<Future<void> Function()> onNetworkRestored = [];
+
   /// Punch-in: start watching. Safe to call repeatedly.
   Future<void> start() async {
     if (!_active) {
       _active = true;
       // GPS switched off/on reaches us immediately, not only on the next tick.
       _gpsSub ??= gl.Geolocator.getServiceStatusStream().listen(
-        (_) => check(),
+        (status) {
+          unawaited(TrackingIncidentLogService.logGpsStatus(status == gl.ServiceStatus.enabled));
+          check();
+        },
         onError: (_) {},
       );
       _timer ??= Timer.periodic(_checkEvery, (_) => check());
     }
     await check();
   }
+
+  bool? _lastGpsOff;
+  bool? _lastPermIssue;
+  bool? _lastOffline;
+  bool? _lastBatteryIssue;
 
   /// Punch-out / tracking stopped: stop watching and clear any alert.
   Future<void> stop() async {
@@ -109,6 +121,10 @@ class TrackingHealthService {
     _lastAlerted = {};
     _lastAlertAt = null;
     _wasOffline = false;
+    _lastGpsOff = null;
+    _lastPermIssue = null;
+    _lastOffline = null;
+    _lastBatteryIssue = null;
     issues.value = const [];
     await _cancelNotification();
   }
@@ -125,10 +141,49 @@ class TrackingHealthService {
       issues.value = found;
       if (changed) unawaited(LocationService.syncLocationPermissionStatusToBackend());
 
-      // The connection just came back: we could not reach the server while offline, so tell the
-      // admin now about the interruption that just ended.
+      // Log transitions into TrackingIncidentLogService
+      final gpsOff = found.contains(TrackingIssue.gpsOff);
+      if (gpsOff != _lastGpsOff) {
+        if (_lastGpsOff != null || gpsOff) {
+          unawaited(TrackingIncidentLogService.logGpsStatus(!gpsOff));
+        }
+        _lastGpsOff = gpsOff;
+      }
+
+      final permIssue = found.contains(TrackingIssue.locationNotAlways);
+      if (permIssue != _lastPermIssue) {
+        if (_lastPermIssue != null || permIssue) {
+          unawaited(TrackingIncidentLogService.logPermissionStatus(!permIssue));
+        }
+        _lastPermIssue = permIssue;
+      }
+
       final offlineNow = found.contains(TrackingIssue.noNetwork);
-      if (_wasOffline && !offlineNow) unawaited(_reportReasonToAdmin('no_network'));
+      if (offlineNow != _lastOffline) {
+        if (_lastOffline != null || offlineNow) {
+          unawaited(TrackingIncidentLogService.logNetworkStatus(!offlineNow));
+        }
+        _lastOffline = offlineNow;
+      }
+
+      final batteryIssue = found.contains(TrackingIssue.batteryRestricted);
+      if (batteryIssue != _lastBatteryIssue) {
+        if (_lastBatteryIssue != null || batteryIssue) {
+          unawaited(TrackingIncidentLogService.logBatteryOptimization(!batteryIssue));
+        }
+        _lastBatteryIssue = batteryIssue;
+      }
+
+      // The connection just came back: we could not reach the server while offline, so tell the
+      // admin now about the interruption that just ended, and trigger immediate sync of all offline data!
+      if (_wasOffline && !offlineNow) {
+        unawaited(_reportReasonToAdmin('no_network'));
+        for (final callback in onNetworkRestored) {
+          try {
+            unawaited(callback());
+          } catch (_) {}
+        }
+      }
       _wasOffline = offlineNow;
 
       if (found.isEmpty) {

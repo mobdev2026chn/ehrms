@@ -5,6 +5,9 @@
 // Distances are measured by the backend from the GPS trail and are only shown
 // when tracking is enabled for the employee.
 
+import 'package:flutter/services.dart';
+import 'package:geolocator/geolocator.dart' as gl;
+import 'package:permission_handler/permission_handler.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/config/app_text_styles.dart';
 import 'dart:async';
@@ -15,6 +18,9 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 
 import '../../services/geo/route_snapping_service.dart';
+import '../../services/geo/tracking_health_service.dart';
+import '../../services/geo/tracking_incident_log_service.dart';
+import '../../services/presence_tracking_service.dart';
 import '../../services/task_service.dart';
 import '../../services/admin_geo_service.dart';
 import '../../utils/error_message_utils.dart';
@@ -50,7 +56,7 @@ class _Flag {
 }
 
 class _Leg {
-  _Leg(this.index, this.fromLabel, this.toLabel, this.fromAt, this.toAt, this.km, this.path);
+  _Leg(this.index, this.fromLabel, this.toLabel, this.fromAt, this.toAt, this.km, this.path, {this.rawPoints = const []});
   final int index;
   final String fromLabel;
   final String toLabel;
@@ -58,6 +64,7 @@ class _Leg {
   final DateTime toAt;
   final double? km;
   final List<LatLng> path;
+  final List<Map<String, dynamic>> rawPoints;
 
   /// [path] snapped to the roads (continuous line); falls back to [path].
   List<LatLng> display = const [];
@@ -103,6 +110,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   bool _punchedOut = false;
   List<_Flag> _flags = [];
   List<_Leg> _legs = [];
+  Map<String, dynamic>? _rawRouteData;
   int? _selectedLeg;
   GoogleMapController? _map;
 
@@ -159,6 +167,10 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 
   /// [silent]: periodic refresh — keep the map, camera and selected leg as they are.
   Future<void> _load({bool silent = false}) async {
+    if (widget.staffId == null) {
+      unawaited(PresenceTrackingService().flushPendingPresenceQueue());
+      unawaited(TaskService.syncOfflineQueueBatch());
+    }
     if (!silent) {
       setState(() {
         _loading = true;
@@ -227,6 +239,10 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
               if (p is Map && p['lat'] is num && p['lng'] is num)
                 LatLng((p['lat'] as num).toDouble(), (p['lng'] as num).toDouble()),
           ],
+          rawPoints: [
+            for (final p in (raw['path'] as List? ?? const []))
+              if (p is Map) Map<String, dynamic>.from(p),
+          ],
         ));
       }
       // Whole-day points with their times, so the route can be cut at each flag.
@@ -256,6 +272,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       if (!mounted) return;
       setState(() {
         _loading = false;
+        _rawRouteData = data;
         _trackingOn = data['trackingEnabled'] == true;
         _totalKm = (data['totalKm'] as num?)?.toDouble();
         _trailKm = (data['trailKm'] as num?)?.toDouble();
@@ -600,6 +617,11 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       appBar: AppBar(
         title: Text(widget.staffName != null ? '${widget.staffName}’s Route' : 'My Route'),
         actions: [
+          IconButton(
+            onPressed: _loading ? null : _showRouteLogsSheet,
+            icon: const Icon(Icons.receipt_long_rounded),
+            tooltip: 'Tracking Logs & Diagnostics',
+          ),
           IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded), tooltip: 'Refresh'),
         ],
       ),
@@ -1067,4 +1089,1281 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     final m = d.inMinutes % 60;
     return h > 0 ? '${h}h ${m}m' : '${m}m';
   }
+
+  Future<void> _showRouteLogsSheet() async {
+    gl.ServiceStatus? gpsStatus;
+    try {
+      final enabled = await gl.Geolocator.isLocationServiceEnabled();
+      gpsStatus = enabled ? gl.ServiceStatus.enabled : gl.ServiceStatus.disabled;
+    } catch (_) {}
+
+    PermissionStatus? locAlways;
+    PermissionStatus? locWhenInUse;
+    try {
+      locAlways = await Permission.locationAlways.status;
+      locWhenInUse = await Permission.locationWhenInUse.status;
+    } catch (_) {}
+
+    int pendingOfflinePoints = 0;
+    try {
+      final presenceCount = await PresenceTrackingService().getPendingPresenceCount();
+      final taskCount = await TaskService.getOfflineQueueCount();
+      pendingOfflinePoints = presenceCount + taskCount;
+    } catch (_) {}
+
+    final issues = TrackingHealthService.instance.issues.value;
+
+    if (!mounted) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _RouteLogsBottomSheet(
+        day: _day,
+        staffName: widget.staffName,
+        trackingOn: _trackingOn,
+        totalKm: _totalKm,
+        trailKm: _trailKm,
+        flags: _flags,
+        legs: _legs,
+        rawRouteData: _rawRouteData,
+        gpsStatus: gpsStatus,
+        locAlways: locAlways,
+        locWhenInUse: locWhenInUse,
+        pendingOfflineCount: pendingOfflinePoints,
+        healthIssues: issues,
+      ),
+    );
+  }
 }
+
+class _RouteLogsBottomSheet extends StatefulWidget {
+  const _RouteLogsBottomSheet({
+    required this.day,
+    this.staffName,
+    required this.trackingOn,
+    this.totalKm,
+    this.trailKm,
+    required this.flags,
+    required this.legs,
+    this.rawRouteData,
+    this.gpsStatus,
+    this.locAlways,
+    this.locWhenInUse,
+    required this.pendingOfflineCount,
+    required this.healthIssues,
+  });
+
+  final DateTime day;
+  final String? staffName;
+  final bool trackingOn;
+  final double? totalKm;
+  final double? trailKm;
+  final List<_Flag> flags;
+  final List<_Leg> legs;
+  final Map<String, dynamic>? rawRouteData;
+  final gl.ServiceStatus? gpsStatus;
+  final PermissionStatus? locAlways;
+  final PermissionStatus? locWhenInUse;
+  final int pendingOfflineCount;
+  final List<TrackingIssue> healthIssues;
+
+  @override
+  State<_RouteLogsBottomSheet> createState() => _RouteLogsBottomSheetState();
+}
+
+enum _LogFilter {
+  all,
+  gps,
+  network,
+  permission,
+  rawTrail,
+}
+
+class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
+  _LogFilter _activeFilter = _LogFilter.all;
+  bool _showMilestones = false;
+  bool _loadingIncidents = true;
+  bool _syncingNow = false;
+  late int _currentPendingCount;
+  List<TrackingIncident> _incidents = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _currentPendingCount = widget.pendingOfflineCount;
+    _loadIncidents();
+  }
+
+  Future<void> _manualSyncOffline() async {
+    if (_syncingNow) return;
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+    setState(() => _syncingNow = true);
+    try {
+      await PresenceTrackingService().flushPendingPresenceQueue();
+      await TaskService.syncOfflineQueueBatch();
+      final p = await PresenceTrackingService().getPendingPresenceCount();
+      final t = await TaskService.getOfflineQueueCount();
+      if (!mounted) return;
+      setState(() {
+        _currentPendingCount = p + t;
+      });
+      await _loadIncidents();
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            _currentPendingCount == 0
+                ? 'All offline tracking points synced successfully!'
+                : 'Sync completed: $_currentPendingCount points remaining in queue.',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Offline sync failed: $e'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _syncingNow = false);
+    }
+  }
+
+  Future<void> _loadIncidents() async {
+    final list = await TrackingIncidentLogService.getIncidentsForDay(widget.day);
+    final merged = <TrackingIncident>[...list];
+
+    // Synthesize gap incidents from legs if straight lines occurred
+    for (final s in _straightLineLegs) {
+      final exists = merged.any(
+        (i) => i.type == 'gap' && i.at.difference(s.leg.fromAt).inMinutes.abs() < 5,
+      );
+      if (!exists) {
+        merged.add(TrackingIncident(
+          id: 'gap_leg_${s.leg.index}',
+          type: 'gap',
+          title: 'Straight-Line Gap: Leg ${s.leg.index} (${s.km.toStringAsFixed(1)} km)',
+          description: s.reason,
+          at: s.leg.fromAt,
+          severity: 'critical',
+        ));
+      }
+    }
+
+    // If day is today, reflect current sensor status if not already logged
+    final isToday = DateTime.now().year == widget.day.year &&
+        DateTime.now().month == widget.day.month &&
+        DateTime.now().day == widget.day.day;
+
+    if (isToday) {
+      if (widget.gpsStatus == gl.ServiceStatus.disabled &&
+          !merged.any((i) => i.type == 'gps_off' && DateTime.now().difference(i.at).inMinutes < 60)) {
+        merged.add(TrackingIncident(
+          id: 'current_gps_off',
+          type: 'gps_off',
+          title: 'GPS Hardware Disabled',
+          description: 'Device location services are currently turned off.',
+          at: DateTime.now(),
+          severity: 'critical',
+        ));
+      }
+
+      if (widget.locAlways != PermissionStatus.granted &&
+          !merged.any((i) => i.type == 'permission_blocked' && DateTime.now().difference(i.at).inMinutes < 60)) {
+        merged.add(TrackingIncident(
+          id: 'current_perm_blocked',
+          type: 'permission_blocked',
+          title: 'Background Location Permission Blocked',
+          description: widget.locWhenInUse == PermissionStatus.granted
+              ? 'Permission is set to "While in use" instead of "Allow all the time". Android restricts GPS background updates when the phone is locked or in pocket.'
+              : 'Location permission is denied on this device.',
+          at: DateTime.now(),
+          severity: 'critical',
+        ));
+      }
+
+      if (widget.pendingOfflineCount > 0 &&
+          !merged.any((i) => i.type == 'offline_queue' && DateTime.now().difference(i.at).inMinutes < 30)) {
+        merged.add(TrackingIncident(
+          id: 'current_offline_queue',
+          type: 'offline_queue',
+          title: '${widget.pendingOfflineCount} Coordinates Queued Offline',
+          description: 'Network offline. Coordinates are stored in local phone storage awaiting connection.',
+          at: DateTime.now(),
+          severity: 'warning',
+        ));
+      }
+    }
+
+    // Sort chronologically (oldest to newest)
+    merged.sort((a, b) => a.at.compareTo(b.at));
+
+    if (mounted) {
+      setState(() {
+        _incidents = merged;
+        _loadingIncidents = false;
+      });
+    }
+  }
+
+  List<Map<String, dynamic>> get _rawTrail {
+    final list = widget.rawRouteData?['trail'];
+    if (list is List) {
+      return list.whereType<Map>().map((m) => Map<String, dynamic>.from(m)).toList();
+    }
+    return const [];
+  }
+
+  List<({_Leg leg, String reason, Duration duration, double km, int points})> get _straightLineLegs {
+    final list = <({_Leg leg, String reason, Duration duration, double km, int points})>[];
+    for (final l in widget.legs) {
+      final km = l.km ?? 0;
+      final pts = l.path.length;
+      final dur = l.toAt.difference(l.fromAt);
+      if (pts <= 2 && km > 1.5) {
+        final timeFmt = DateFormat('hh:mm a');
+        list.add((
+          leg: l,
+          reason: 'Distance (${km.toStringAsFixed(1)} km) exceeds the 1.5 km road-snap limit. No intermediate GPS coordinates were captured between ${timeFmt.format(l.fromAt)} and ${timeFmt.format(l.toAt)} (${dur.inHours}h ${dur.inMinutes % 60}m).',
+          duration: dur,
+          km: km,
+          points: pts,
+        ));
+      }
+    }
+    return list;
+  }
+
+  int get _gpsCount => _incidents.where((i) => i.isGps).length;
+  int get _networkCount => _incidents.where((i) => i.isNetwork).length;
+  int get _permissionCount => _incidents.where((i) => i.isPermission).length;
+
+  List<TrackingIncident> get _filteredIncidents {
+    switch (_activeFilter) {
+      case _LogFilter.all:
+        return _incidents;
+      case _LogFilter.gps:
+        return _incidents.where((i) => i.isGps).toList();
+      case _LogFilter.network:
+        return _incidents.where((i) => i.isNetwork).toList();
+      case _LogFilter.permission:
+        return _incidents.where((i) => i.isPermission).toList();
+      case _LogFilter.rawTrail:
+        return const [];
+    }
+  }
+
+  void _copyDiagnostics(BuildContext context) {
+    final timeFmt = DateFormat('hh:mm:ss a');
+    final dateFmt = DateFormat('EEE, d MMM yyyy');
+    final buf = StringBuffer();
+    buf.writeln('=== EktaHR Route Tracking Diagnostic Report ===');
+    buf.writeln('Date: ${dateFmt.format(widget.day)}');
+    if (widget.staffName != null) buf.writeln('Staff: ${widget.staffName}');
+    buf.writeln('Tracking Enabled: ${widget.trackingOn ? "Yes" : "No"}');
+    buf.writeln('Total Distance: ${(widget.totalKm ?? 0).toStringAsFixed(1)} km (${widget.legs.length} legs)');
+    if (widget.trailKm != null) buf.writeln('Whole Day Tracked: ${widget.trailKm!.toStringAsFixed(1)} km');
+    buf.writeln('Total GPS Points Captured: ${_rawTrail.length}');
+    buf.writeln('Pending Offline Points: ${widget.pendingOfflineCount}');
+    buf.writeln('GPS Service Hardware: ${widget.gpsStatus == gl.ServiceStatus.enabled ? "Enabled" : "Disabled/Unknown"}');
+    buf.writeln('Location Permission: ${widget.locAlways == PermissionStatus.granted ? "Allow all the time" : (widget.locWhenInUse == PermissionStatus.granted ? "Only while using app (Limited)" : "Denied")}');
+    if (widget.healthIssues.isNotEmpty) {
+      buf.writeln('Active Health Issues: ${widget.healthIssues.map((e) => e.title).join(", ")}');
+    }
+
+    buf.writeln('\n--- Incident Log Summary ---');
+    buf.writeln('Total Events Logged: ${_incidents.length}');
+    buf.writeln('GPS Disconnections/Gaps: $_gpsCount');
+    buf.writeln('Network Outages/Queue: $_networkCount');
+    buf.writeln('Permission/Battery Blocks: $_permissionCount');
+
+    buf.writeln('\n--- Chronological Incident Log ---');
+    if (_incidents.isEmpty) {
+      buf.writeln('No incidents or disconnections logged for this day.');
+    } else {
+      for (var i = 0; i < _incidents.length; i++) {
+        final inc = _incidents[i];
+        buf.writeln('#${i + 1} [${timeFmt.format(inc.at)}] [${inc.type.toUpperCase()}] ${inc.title}');
+        buf.writeln('   ${inc.description}');
+      }
+    }
+
+    buf.writeln('\n--- Flags Timeline ---');
+    for (final f in widget.flags) {
+      final lat = f.pos?.latitude.toStringAsFixed(5) ?? '—';
+      final lng = f.pos?.longitude.toStringAsFixed(5) ?? '—';
+      buf.writeln('${f.code} [${f.type.toUpperCase()}] ${timeFmt.format(f.at)} · ($lat, $lng) · ${f.title} ${f.address}');
+    }
+
+    buf.writeln('\n--- Legs Detail ---');
+    for (final l in widget.legs) {
+      final dur = l.toAt.difference(l.fromAt);
+      final kmStr = l.km?.toStringAsFixed(1) ?? '—';
+      buf.writeln('Leg ${l.index} (${l.fromCode} -> ${l.toCode}): ${timeFmt.format(l.fromAt)} – ${timeFmt.format(l.toAt)} (${dur.inHours}h ${dur.inMinutes % 60}m) · $kmStr km · ${l.path.length} points');
+    }
+
+    if (_straightLineLegs.isNotEmpty) {
+      buf.writeln('\n--- Tracking Gap / Straight-Line Analysis ---');
+      for (final s in _straightLineLegs) {
+        buf.writeln('⚠️ Leg ${s.leg.index}: ${s.reason}');
+        buf.writeln('Likely causes:');
+        buf.writeln('- Android Doze Mode / battery saver killed GPS while phone was in pocket/locked.');
+        buf.writeln('- Location permission was not "Allow all the time".');
+        buf.writeln('- Phone was stationary until arrival; GPS fix woke only upon tapping Field In.');
+      }
+    }
+
+    Clipboard.setData(ClipboardData(text: buf.toString()));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Diagnostic report copied to clipboard'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final timeFmt = DateFormat('hh:mm a');
+    final dateFmt = DateFormat('EEE, d MMM yyyy');
+    final straightGaps = _straightLineLegs;
+    final trail = _rawTrail;
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.90),
+      decoration: const BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        children: [
+          // Drag handle
+          Container(
+            margin: const EdgeInsets.only(top: 10, bottom: 6),
+            width: 44,
+            height: 4,
+            decoration: BoxDecoration(
+              color: const Color(0xFFD1D5DB),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 4, 10, 10),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.receipt_long_rounded, color: AppColors.primary, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Route Tracking Logs',
+                        style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                      ),
+                      Text(
+                        dateFmt.format(widget.day),
+                        style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Copy Diagnostic Report',
+                  icon: const Icon(Icons.copy_rounded, size: 20),
+                  onPressed: () => _copyDiagnostics(context),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close_rounded, size: 22),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, thickness: 1, color: Color(0xFFECEEF1)),
+
+          // Body
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              children: [
+                // 1. Diagnostic Alert (Root cause of straight lines)
+                if (straightGaps.isNotEmpty) ...[
+                  for (final gap in straightGaps)
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFFDE68A), width: 1.2),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, color: Color(0xFFD97706), size: 22),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Straight Line Detected (Leg ${gap.leg.index})',
+                                  style: const TextStyle(
+                                    fontSize: 14.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF92400E),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            gap.reason,
+                            style: const TextStyle(fontSize: 12.5, color: Color(0xFF78350F), height: 1.4),
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'What caused this during tracking:',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Color(0xFF92400E)),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            '• Android Doze / Battery Saver: Phone in pocket paused GPS background updates.\n'
+                            '• Permission: Background location was not set to "Allow all the time".\n'
+                            '• Threshold rule: Roads API does not guess driving routes for gaps > 1.5 km.',
+                            style: TextStyle(fontSize: 12, color: Color(0xFF78350F), height: 1.45),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+
+                // 2. Phone & Tracking Diagnostics Grid
+                Row(
+                  children: [
+                    Expanded(
+                      child: _diagTile(
+                        icon: Icons.gps_fixed_rounded,
+                        label: 'GPS Hardware',
+                        value: widget.gpsStatus == gl.ServiceStatus.enabled ? 'Enabled' : 'Disabled',
+                        subtext: '$_gpsCount issue(s)',
+                        isGood: widget.gpsStatus == gl.ServiceStatus.enabled,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _diagTile(
+                        icon: Icons.near_me_rounded,
+                        label: 'Permission',
+                        value: widget.locAlways == PermissionStatus.granted
+                            ? 'Always Allow'
+                            : (widget.locWhenInUse == PermissionStatus.granted ? 'While in use ⚠️' : 'Denied ❌'),
+                        subtext: '$_permissionCount block(s)',
+                        isGood: widget.locAlways == PermissionStatus.granted,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _diagTile(
+                        icon: Icons.sync_rounded,
+                        label: 'Offline Queue',
+                        value: _currentPendingCount == 0
+                            ? 'All Synced'
+                            : '$_currentPendingCount Pending',
+                        subtext: '$_networkCount outage(s)',
+                        isGood: _currentPendingCount == 0,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _diagTile(
+                        icon: Icons.scatter_plot_rounded,
+                        label: 'GPS Coordinates',
+                        value: '${trail.length} Points',
+                        subtext: '${widget.legs.length} Leg(s)',
+                        isGood: trail.isNotEmpty,
+                      ),
+                    ),
+                  ],
+                ),
+                if (_currentPendingCount > 0) ...[
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFBFDBFE)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.cloud_upload_rounded, color: Color(0xFF2563EB), size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '$_currentPendingCount offline points queued',
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF1E3A8A),
+                                ),
+                              ),
+                              const Text(
+                                'Auto-syncs automatically when network is active.',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: Color(0xFF3B82F6),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: _syncingNow ? null : _manualSyncOffline,
+                          icon: _syncingNow
+                              ? const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                  ),
+                                )
+                              : const Icon(Icons.sync_rounded, size: 16),
+                          label: Text(_syncingNow ? 'Syncing...' : 'Sync Now'),
+                          style: TextButton.styleFrom(
+                            backgroundColor: const Color(0xFF2563EB),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 16),
+
+                // 3. Filter Pills Bar
+                const Text(
+                  'Event Log Timeline',
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                ),
+                const SizedBox(height: 8),
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _filterChipWidget(
+                        filter: _LogFilter.all,
+                        label: 'All Logs',
+                        count: _incidents.length,
+                        activeColor: const Color(0xFF1E293B),
+                        icon: Icons.format_list_bulleted_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChipWidget(
+                        filter: _LogFilter.gps,
+                        label: 'GPS Off / Gaps',
+                        count: _gpsCount,
+                        activeColor: const Color(0xFFDC2626),
+                        icon: Icons.location_off_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChipWidget(
+                        filter: _LogFilter.network,
+                        label: 'Network Issues',
+                        count: _networkCount,
+                        activeColor: const Color(0xFFD97706),
+                        icon: Icons.wifi_off_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChipWidget(
+                        filter: _LogFilter.permission,
+                        label: 'Permission Blocks',
+                        count: _permissionCount,
+                        activeColor: const Color(0xFF7C3AED),
+                        icon: Icons.security_rounded,
+                      ),
+                      const SizedBox(width: 8),
+                      _filterChipWidget(
+                        filter: _LogFilter.rawTrail,
+                        label: 'GPS Fixes',
+                        count: trail.length,
+                        activeColor: const Color(0xFF0D9488),
+                        icon: Icons.scatter_plot_rounded,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // 4. Content based on active filter
+                if (_loadingIncidents)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+                  )
+                else if (_activeFilter == _LogFilter.rawTrail) ...[
+                  if (trail.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: const Center(
+                        child: Text(
+                          'No intermediate GPS points stored in database for this date.',
+                          style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 250),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: trail.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFEEF2F6)),
+                        itemBuilder: (ctx, idx) {
+                          final p = trail[idx];
+                          final lat = (p['lat'] as num?)?.toDouble().toStringAsFixed(5) ?? '—';
+                          final lng = (p['lng'] as num?)?.toDouble().toStringAsFixed(5) ?? '—';
+                          final tStr = p['t']?.toString() ?? '';
+                          final dt = DateTime.tryParse(tStr)?.toLocal();
+                          final timeStr = dt != null ? timeFmt.format(dt) : tStr;
+                          final status = p['s']?.toString() ?? 'gps';
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                            child: Row(
+                              children: [
+                                Text('#${idx + 1}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textSecondary)),
+                                const SizedBox(width: 8),
+                                Text(timeStr, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary)),
+                                const Spacer(),
+                                Text('$lat, $lng', style: const TextStyle(fontSize: 11, color: Color(0xFF475569), fontFamily: 'monospace')),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: const Color(0xFFCBD5E1)),
+                                  ),
+                                  child: Text(status, style: const TextStyle(fontSize: 9.5, color: Color(0xFF64748B))),
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ] else if (_filteredIncidents.isEmpty) ...[
+                  _emptyIncidentsView(),
+                ] else ...[
+                  for (final inc in _filteredIncidents) _incidentCard(inc, timeFmt),
+                ],
+                const SizedBox(height: 16),
+
+                // 5. Milestones & Legs Accordion
+                InkWell(
+                  onTap: () => setState(() => _showMilestones = !_showMilestones),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: AppColors.background,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.alt_route_rounded, size: 20, color: AppColors.textPrimary),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Milestones & Travel Legs (${widget.legs.length} legs, ${widget.flags.length} stops)',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                          ),
+                        ),
+                        Icon(
+                          _showMilestones ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                          color: AppColors.textSecondary,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_showMilestones) ...[
+                  const SizedBox(height: 8),
+                  if (widget.flags.isEmpty)
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: AppColors.background,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Center(
+                        child: Text('No flags recorded for this day', style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+                      ),
+                    )
+                  else ...[
+                    for (var i = 0; i < widget.flags.length; i++) ...[
+                      _flagRow(widget.flags[i], timeFmt),
+                      if (i < widget.legs.length) _legRow(widget.legs[i], timeFmt),
+                    ],
+                  ],
+                ],
+                const SizedBox(height: 20),
+
+                // 6. Action buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _copyDiagnostics(context),
+                        icon: const Icon(Icons.copy_rounded, size: 18),
+                        label: const Text('Copy Report'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 46),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => openAppSettings(),
+                        icon: const Icon(Icons.settings_outlined, size: 18),
+                        label: const Text('Phone Settings'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(0, 46),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => gl.Geolocator.openLocationSettings(),
+                        icon: const Icon(Icons.gps_fixed_rounded, size: 18),
+                        label: const Text('GPS Settings'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => Permission.ignoreBatteryOptimizations.request(),
+                        icon: const Icon(Icons.battery_charging_full_rounded, size: 18),
+                        label: const Text('Battery Saver'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _filterChipWidget({
+    required _LogFilter filter,
+    required String label,
+    required int count,
+    required Color activeColor,
+    required IconData icon,
+  }) {
+    final isSelected = _activeFilter == filter;
+    return InkWell(
+      onTap: () => setState(() => _activeFilter = filter),
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: isSelected ? activeColor : const Color(0xFFF1F5F9),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? activeColor : const Color(0xFFE2E8F0),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: isSelected ? Colors.white : const Color(0xFF64748B),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+                color: isSelected ? Colors.white : const Color(0xFF475569),
+              ),
+            ),
+            const SizedBox(width: 5),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: isSelected
+                    ? Colors.white.withValues(alpha: 0.25)
+                    : const Color(0xFFCBD5E1).withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  color: isSelected ? Colors.white : const Color(0xFF334155),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyIncidentsView() {
+    String msg;
+    IconData icon;
+    Color color;
+
+    switch (_activeFilter) {
+      case _LogFilter.gps:
+        msg = 'No GPS disconnections or outages recorded for this day.';
+        icon = Icons.gps_fixed_rounded;
+        color = const Color(0xFF16A34A);
+      case _LogFilter.network:
+        msg = 'No network interruptions recorded. All points uploaded in real-time.';
+        icon = Icons.wifi_rounded;
+        color = const Color(0xFF16A34A);
+      case _LogFilter.permission:
+        msg = 'No permission or battery restrictions detected. Background tracking was permitted.';
+        icon = Icons.verified_user_rounded;
+        color = const Color(0xFF16A34A);
+      default:
+        msg = 'No tracking interruptions or disconnections logged for this day.';
+        icon = Icons.check_circle_outline_rounded;
+        color = const Color(0xFF16A34A);
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Center(
+        child: Column(
+          children: [
+            Icon(icon, size: 32, color: color),
+            const SizedBox(height: 8),
+            Text(
+              msg,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Color(0xFF475569)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _incidentCard(TrackingIncident inc, DateFormat timeFmt) {
+    Color col;
+    Color bg;
+    IconData icon;
+    String badge;
+
+    switch (inc.type) {
+      case 'gps_off':
+        col = const Color(0xFFDC2626);
+        bg = const Color(0xFFFEF2F2);
+        icon = Icons.location_off_rounded;
+        badge = 'GPS DISCONNECTED';
+      case 'gps_on':
+        col = const Color(0xFF16A34A);
+        bg = const Color(0xFFF0FDF4);
+        icon = Icons.location_on_rounded;
+        badge = 'GPS RESTORED';
+      case 'gap':
+        col = const Color(0xFFB91C1C);
+        bg = const Color(0xFFFFF1F2);
+        icon = Icons.straighten_rounded;
+        badge = 'TRACKING GAP';
+      case 'no_network':
+        col = const Color(0xFFD97706);
+        bg = const Color(0xFFFFFBEB);
+        icon = Icons.wifi_off_rounded;
+        badge = 'NETWORK OFFLINE';
+      case 'network_on':
+        col = const Color(0xFF16A34A);
+        bg = const Color(0xFFF0FDF4);
+        icon = Icons.wifi_rounded;
+        badge = 'NETWORK RESTORED';
+      case 'offline_queue':
+        col = const Color(0xFFD97706);
+        bg = const Color(0xFFFFFBEB);
+        icon = Icons.cloud_queue_rounded;
+        badge = 'OFFLINE BUFFER';
+      case 'sync':
+        col = const Color(0xFF2563EB);
+        bg = const Color(0xFFEFF6FF);
+        icon = Icons.cloud_done_rounded;
+        badge = 'SYNCED TO SERVER';
+      case 'permission_blocked':
+        col = const Color(0xFF7C3AED);
+        bg = const Color(0xFFF5F3FF);
+        icon = Icons.security_rounded;
+        badge = 'PERMISSION BLOCK';
+      case 'permission_ok':
+        col = const Color(0xFF16A34A);
+        bg = const Color(0xFFF0FDF4);
+        icon = Icons.verified_user_rounded;
+        badge = 'PERMISSION GRANTED';
+      case 'battery_restricted':
+        col = const Color(0xFFD97706);
+        bg = const Color(0xFFFFFBEB);
+        icon = Icons.battery_alert_rounded;
+        badge = 'BATTERY RESTRICTED';
+      case 'battery_ok':
+        col = const Color(0xFF16A34A);
+        bg = const Color(0xFFF0FDF4);
+        icon = Icons.battery_charging_full_rounded;
+        badge = 'BATTERY UNRESTRICTED';
+      default:
+        col = const Color(0xFF4B5563);
+        bg = const Color(0xFFF9FAFB);
+        icon = Icons.info_outline_rounded;
+        badge = 'INCIDENT';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 9),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: col.withValues(alpha: 0.25)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: bg,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Icon(icon, size: 18, color: col),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: bg,
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: col.withValues(alpha: 0.4)),
+                          ),
+                          child: Text(
+                            badge,
+                            style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: col),
+                          ),
+                        ),
+                        const Spacer(),
+                        Text(
+                          timeFmt.format(inc.at),
+                          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      inc.title,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(left: 36),
+            child: Text(
+              inc.description,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF4B5563), height: 1.35),
+            ),
+          ),
+          if (inc.type == 'permission_blocked' || inc.type == 'battery_restricted') ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => openAppSettings(),
+                icon: const Icon(Icons.settings_outlined, size: 14),
+                label: const Text('Open App Settings', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                style: TextButton.styleFrom(
+                  foregroundColor: col,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+          ] else if (inc.type == 'gps_off') ...[
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => gl.Geolocator.openLocationSettings(),
+                icon: const Icon(Icons.location_on_outlined, size: 14),
+                label: const Text('Open GPS Settings', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+                style: TextButton.styleFrom(
+                  foregroundColor: col,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _diagTile({
+    required IconData icon,
+    required String label,
+    required String value,
+    required String subtext,
+    required bool isGood,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 20, color: isGood ? AppColors.success : const Color(0xFFD97706)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 10.5, color: AppColors.textSecondary)),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: isGood ? AppColors.textPrimary : const Color(0xFFD97706),
+                  ),
+                ),
+                Text(
+                  subtext,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 10, color: Color(0xFF64748B)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _flagRow(_Flag f, DateFormat timeFmt) {
+    Color col;
+    switch (f.type) {
+      case 'punch_in':
+        col = const Color(0xFF16A34A);
+      case 'punch_out':
+        col = const Color(0xFFDC2626);
+      case 'field_in':
+        col = const Color(0xFF2563EB);
+      case 'field_out':
+        col = const Color(0xFFD97706);
+      default:
+        col = const Color(0xFF6B7280);
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            decoration: BoxDecoration(
+              color: col.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              f.code,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: col),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  f.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+                ),
+                if (f.address.isNotEmpty)
+                  Text(
+                    f.address,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+                  ),
+              ],
+            ),
+          ),
+          Text(
+            timeFmt.format(f.at),
+            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _legRow(_Leg l, DateFormat timeFmt) {
+    final dur = l.toAt.difference(l.fromAt);
+    final isStraight = l.path.length <= 2 && (l.km ?? 0) > 1.5;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 2, 8, 2),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: l.color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: l.color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isStraight ? Icons.straighten_rounded : Icons.alt_route_rounded,
+            size: 16,
+            color: l.color,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'Leg ${l.index}: ${l.km?.toStringAsFixed(1) ?? '—'} km',
+            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: l.color),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '(${dur.inHours > 0 ? '${dur.inHours}h ' : ''}${dur.inMinutes % 60}m)',
+            style: const TextStyle(fontSize: 11, color: AppColors.textSecondary),
+          ),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+            decoration: BoxDecoration(
+              color: isStraight ? const Color(0xFFFEF3C7) : Colors.white,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: isStraight ? const Color(0xFFF59E0B) : const Color(0xFFCBD5E1)),
+            ),
+            child: Text(
+              isStraight ? 'Straight line (${l.path.length} pts)' : '${l.path.length} GPS pts',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: isStraight ? const Color(0xFFB45309) : const Color(0xFF475569),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
