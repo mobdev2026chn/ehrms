@@ -178,6 +178,8 @@ class TrackingHealthService {
       // admin now about the interruption that just ended, and trigger immediate sync of all offline data!
       if (_wasOffline && !offlineNow) {
         unawaited(_reportReasonToAdmin('no_network'));
+        // The incident log recorded the outage while offline; ship it now.
+        unawaited(TrackingIncidentLogService.syncToServer(force: true));
         for (final callback in onNetworkRestored) {
           try {
             unawaited(callback());

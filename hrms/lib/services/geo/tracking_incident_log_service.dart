@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:intl/intl.dart';
+import 'package:hrms/services/api_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class TrackingIncident {
@@ -112,7 +114,46 @@ class TrackingIncidentLogService {
 
       await prefs.setString(
           key, jsonEncode(list.map((i) => i.toJson()).toList()));
+      // Best-effort: push the log to the server too (throttled; fails silently offline).
+      unawaited(syncToServer());
     } catch (_) {}
+  }
+
+  static DateTime? _lastSyncAttempt;
+
+  /// Uploads yesterday's and today's incidents to HRMSbackend
+  /// (POST /staff/geo-task/tracking-incidents) so the admin can see why a day's
+  /// route has gaps. Safe to call any time: throttled to once a minute (unless
+  /// [force]), silent while offline, and the server upserts by incident id, so
+  /// re-sending is harmless. Only the not-yet-synced tail of each day is sent.
+  static Future<void> syncToServer({bool force = false}) async {
+    try {
+      final now = DateTime.now();
+      if (!force &&
+          _lastSyncAttempt != null &&
+          now.difference(_lastSyncAttempt!).inSeconds < 60) {
+        return;
+      }
+      _lastSyncAttempt = now;
+      final prefs = await SharedPreferences.getInstance();
+      for (final day in [now.subtract(const Duration(days: 1)), now]) {
+        final list = await getIncidentsForDay(day);
+        if (list.isEmpty) continue;
+        final syncKey = '${_keyForDay(day)}_synced';
+        final synced = prefs.getInt(syncKey) ?? 0;
+        if (list.length <= synced) continue;
+        // After day-trimming the count can drift; the server's upsert-by-id absorbs
+        // any re-sent rows, so an occasional overlap costs nothing.
+        final batch = list.sublist(synced.clamp(0, list.length));
+        await ApiClient().dio.post<dynamic>(
+          '/staff/geo-task/tracking-incidents',
+          data: {'incidents': batch.map((i) => i.toJson()).toList()},
+        );
+        await prefs.setInt(syncKey, list.length);
+      }
+    } catch (_) {
+      // Offline or server unreachable: the log stays local and the next sync retries.
+    }
   }
 
   /// Returns all stored incidents for [day].
