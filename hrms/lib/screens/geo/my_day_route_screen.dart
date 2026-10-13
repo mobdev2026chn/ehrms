@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
 
+import '../../services/api_client.dart';
 import '../../services/geo/route_snapping_service.dart';
 import '../../services/geo/tracking_health_service.dart';
 import '../../services/geo/tracking_incident_log_service.dart';
@@ -404,6 +405,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   /// Rendered flag icons, keyed by type + visit.
   final Map<String, BitmapDescriptor> _icons = {};
 
+  /// Round "you are here" dot for the live last-location marker.
+  ({BitmapDescriptor icon, Offset anchor})? _liveDot;
+
   String get _dayKey => DateFormat('yyyyMMdd').format(_day);
 
   /// Cuts the whole-day GPS trail at every flag (Punch In, Field In, Field Out,
@@ -459,6 +463,14 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   /// Snaps are cached on the phone per piece + point count.
   Future<void> _buildMapGraphics() async {
     final segs = List<_Seg>.from(_segs);
+
+    // Live position is a round dot (not a dropped pin): current location is a
+    // point on the move, and the pin shape reads as a saved place.
+    if (_liveDot == null) {
+      try {
+        _liveDot = await liveDotMarkerIcon(context, const Color(0xFF7C3AED));
+      } catch (_) {}
+    }
 
     for (final f in _flags) {
       if (f.pos == null) continue;
@@ -557,7 +569,9 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           Marker(
             markerId: const MarkerId('last-location'),
             position: _lastPoint!.$1,
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+            icon: _liveDot?.icon ??
+                BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueViolet),
+            anchor: _liveDot?.anchor ?? const Offset(0.5, 1.0),
             infoWindow: InfoWindow(
               title: 'Last location',
               snippet: DateFormat('hh:mm a').format(_lastPoint!.$2),
@@ -1525,6 +1539,23 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
       }
     } else {
       list = await TrackingIncidentLogService.getIncidentsForDay(widget.day);
+      // Merge the server's copy of one's own day: entries synced from another
+      // device and the watchdog's "Tracking Silent" findings, which the local
+      // log cannot contain. Deduped by id; offline just means local-only.
+      try {
+        final res = await ApiClient().dio.get<dynamic>(
+          '/staff/geo-task/tracking-incidents',
+          queryParameters: {'date': DateFormat('yyyy-MM-dd').format(widget.day)},
+        );
+        final body = res.data is Map ? (res.data as Map) : {};
+        final data = body['data'] is Map ? body['data'] as Map : {};
+        final remote = (data['incidents'] as List? ?? const [])
+            .whereType<Map>()
+            .map((m) => TrackingIncident.fromJson(Map<String, dynamic>.from(m)));
+        final seen = list.map((i) => i.id).toSet();
+        list = [...list, ...remote.where((i) => !seen.contains(i.id))]
+          ..sort((a, b) => a.at.compareTo(b.at));
+      } catch (_) {}
     }
     final merged = <TrackingIncident>[...list];
 

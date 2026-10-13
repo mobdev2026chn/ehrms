@@ -58,6 +58,30 @@ Future<({BitmapDescriptor icon, Offset anchor})> plainFlagMarkerIcon(
 const Color kFieldInDotColor = Color(0xFF0284C7);
 const Color kFieldOutDotColor = AppColors.brandDark;
 
+/// "You are here" live dot: a translucent halo around a white-ringed solid dot,
+/// like the familiar my-location blue dot — a current position is a point, not a
+/// dropped-pin place. Anchor at the centre (0.5, 0.5).
+Future<({BitmapDescriptor icon, Offset anchor})> liveDotMarkerIcon(
+  BuildContext context,
+  Color color, {
+  double size = 34,
+}) async {
+  final dpr = MediaQuery.of(context).devicePixelRatio;
+  final s = size * dpr;
+  final c = Offset(s / 2, s / 2);
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawCircle(c, s / 2, Paint()..color = color.withValues(alpha: 0.22));
+  canvas.drawCircle(c, 9.5 * dpr, Paint()..color = Colors.white);
+  canvas.drawCircle(c, 7 * dpr, Paint()..color = color);
+  final img = await recorder.endRecording().toImage(s.ceil(), s.ceil());
+  final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
+  return (
+    icon: BitmapDescriptor.bytes(bytes!.buffer.asUint8List(), imagePixelRatio: dpr),
+    anchor: const Offset(0.5, 0.5),
+  );
+}
+
 /// A small white-ringed dot with a short label tag beside it ("F1 in",
 /// "F1 out"). [labelLeft] puts the tag on the dot's left — used for "out" so an
 /// in/out pair at the same spot shows both tags. Returns the icon and the anchor
