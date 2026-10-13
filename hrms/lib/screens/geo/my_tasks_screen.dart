@@ -201,6 +201,19 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   List<Task> get _matchedTasks {
     Iterable<Task> list = _tasks;
 
+    // A date filter must see the whole universe, not only the live work list:
+    // the backend's /tasks endpoint keeps just in-flight work plus today's
+    // completions, so "Yesterday" or "Last Month" would match (almost) nothing.
+    // Past tasks live in the already-loaded history — union them in, deduped by
+    // id with the live copy preferred.
+    if (_filterStartDate != null || _filterEndDate != null) {
+      final seen = _tasks.map((t) => t.id ?? t.taskId).toSet();
+      list = [
+        ..._tasks,
+        ..._historyTasks.where((t) => !seen.contains(t.id ?? t.taskId)),
+      ];
+    }
+
     // Strict fieldType filtering:
     // Internal employees only see Internal tasks; External employees only see External tasks.
     if (_isInternalStaff) {
@@ -254,11 +267,16 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         has(t.customer?.customerNumber);
   }
 
-  /// Whether the task's created-date calendar day falls within the selected
-  /// range (inclusive). Uses [Task.assignedDate] (falls back to createdAt in
-  /// the model), matching the date shown on each task card.
+  /// Whether the task falls within the selected range (inclusive, by calendar
+  /// day): a completed task by the day it was completed, anything else by its
+  /// assigned day — the same days the web's task/history filters use.
   bool _taskInDateRange(Task t) {
-    final du = (t.assignedDate ?? t.expectedCompletionDate).toLocal();
+    // A completed task belongs to the day it was closed (same rule as the web's
+    // history); anything else to its assigned day.
+    final raw = (t.status == TaskStatus.completed ? t.completedDate : null) ??
+        t.assignedDate ??
+        t.expectedCompletionDate;
+    final du = raw.toLocal();
     final day = DateTime(du.year, du.month, du.day);
     final s = _filterStartDate;
     if (s != null && day.isBefore(DateTime(s.year, s.month, s.day))) {
