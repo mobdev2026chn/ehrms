@@ -233,6 +233,24 @@ class _ProfileScreenState extends State<ProfileScreen>
 
     String? resolvedName;
 
+    // Call 0: the staff member's own endpoint. The admin calls below all 403
+    // under a staff token, which is why the raw id used to stay on screen.
+    try {
+      final res = await ApiClient().dio.get<dynamic>('/staff/profile/branch');
+      final body = res.data is Map ? (res.data as Map) : {};
+      final bData = body['data'];
+      if (bData is Map) {
+        final bName = (bData['branchName'] ?? bData['name'])?.toString().trim();
+        final bId = (bData['_id'] ?? bData['id'])?.toString();
+        if (bName != null &&
+            bName.isNotEmpty &&
+            !RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(bName)) {
+          if (bId != null && bId.isNotEmpty) _branchNameCache[bId] = bName;
+          if (bId == null || bId == branchId) resolvedName = bName;
+        }
+      }
+    } catch (_) {}
+
     // Call A: GET /admin/settings/attendance/branches/:id from HRMSbackend
     try {
       final dio = webHrmsApiDio();
@@ -400,11 +418,20 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<void> _loadDocuments() async {
     setState(() => _isLoadingDocs = true);
 
-    final result = await _onboardingService.getMyOnboarding();
+    // Two sources, both shown: the recruitment-onboarding checklist, and the
+    // company Staff-Documents form the admin fills on the web (Staff -> Documents).
+    // The app used to read only the first, so web-uploaded files never appeared.
+    final results = await Future.wait([
+      _onboardingService.getMyOnboarding(),
+      _fetchStaffDocuments(),
+    ]);
+    final result = results[0] as Map<String, dynamic>;
+    final staffDocs = results[1] as List<Map<String, dynamic>>;
 
     if (mounted) {
       setState(() {
-        if (result['success'] && result['data'] != null) {
+        List<dynamic> onboardingDocs = [];
+        if (result['success'] == true && result['data'] != null) {
           final data = result['data'];
 
           if (data is Map && data.containsKey('onboarding')) {
@@ -412,19 +439,60 @@ class _ProfileScreenState extends State<ProfileScreen>
             _onboardingData = onboarding;
 
             if (onboarding is Map && onboarding.containsKey('documents')) {
-              _documents = onboarding['documents'] as List? ?? [];
-            } else {
-              _documents = [];
+              onboardingDocs = onboarding['documents'] as List? ?? [];
             }
-          } else {
-            _documents = [];
           }
-        } else {
-          _documents = [];
         }
+        _documents = [...onboardingDocs, ...staffDocs];
 
         _isLoadingDocs = false;
       });
+    }
+  }
+
+  /// The company Staff-Documents form (GET /staff/profile/documents): one item per
+  /// configured field — filled fields COMPLETED with the file's url, empty ones
+  /// PENDING — plus any entries from before the form existed. Mapped to the same
+  /// shape as the onboarding documents the tab already renders.
+  Future<List<Map<String, dynamic>>> _fetchStaffDocuments() async {
+    try {
+      final res = await ApiClient().dio.get<dynamic>('/staff/profile/documents');
+      final body = res.data is Map ? (res.data as Map) : {};
+      final data = body['data'] is Map ? body['data'] as Map : {};
+      final fields = (data['fields'] as List? ?? []).whereType<Map>().toList();
+      final docs = (data['documents'] as List? ?? []).whereType<Map>().toList();
+
+      final byField = <String, Map>{};
+      final extras = <Map>[];
+      for (final d in docs) {
+        final fid = d['fieldId']?.toString() ?? '';
+        if (fid.isNotEmpty) {
+          byField[fid] = d;
+        } else {
+          extras.add(d);
+        }
+      }
+
+      Map<String, dynamic> item(String name, bool required, Map? d) => {
+            'name': name,
+            'type': 'document',
+            'required': required,
+            'status': d != null ? 'COMPLETED' : 'PENDING',
+            'url': d?['url']?.toString(),
+            'value': d?['value']?.toString(),
+            'uploadedAt': d?['uploadedAt'],
+          };
+
+      return [
+        for (final f in fields)
+          item(f['label']?.toString() ?? 'Document', f['required'] == true,
+              byField[f['_id']?.toString() ?? '']),
+        for (final d in extras)
+          item(d['name']?.toString() ?? 'Document', false, d),
+      ];
+    } catch (_) {
+      // Endpoint unreachable (old server): the onboarding list still shows.
+      return const [];
     }
   }
 
