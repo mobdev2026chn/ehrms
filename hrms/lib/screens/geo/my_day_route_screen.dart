@@ -73,6 +73,41 @@ class _Leg {
   String toCode = '';
 
   List<LatLng> get line => display.length >= 2 ? display : path;
+
+  Duration get duration => toAt.difference(fromAt);
+
+  double get straightLineMeters {
+    if (path.length < 2) return 0;
+    return gl.Geolocator.distanceBetween(
+      path.first.latitude,
+      path.first.longitude,
+      path.last.latitude,
+      path.last.longitude,
+    );
+  }
+
+  double get straightLineKm => straightLineMeters / 1000.0;
+
+  bool get isBlackoutOrStraight {
+    final pts = path.length;
+    final d = duration;
+    final strKm = straightLineKm;
+    return pts <= 2 && (strKm >= 0.15 || d.inMinutes >= 15 || (km != null && km! > 1.5));
+  }
+
+  String get blackoutReason {
+    final pts = path.length;
+    final d = duration;
+    final timeFmt = DateFormat('hh:mm a');
+    final durStr = d.inHours > 0 ? '${d.inHours}h ${d.inMinutes % 60}m' : '${d.inMinutes}m';
+    if (d.inMinutes >= 30) {
+      return 'Tracking Blackout ($durStr): Only $pts GPS fix(es) captured between ${timeFmt.format(fromAt)} and ${timeFmt.format(toAt)}. Android killed background tracking or battery saver was active. Map connected the points directly across buildings ($pts points across ${straightLineKm.toStringAsFixed(2)} km). Distance recorded as 0.0 km to prevent fake travel allowance.';
+    } else if ((km ?? 0) > 1.5) {
+      return 'Distance (${km!.toStringAsFixed(1)} km) exceeds road-snap limits without intermediate GPS fixes ($durStr). Connected directly.';
+    } else {
+      return 'Sparse Tracking ($pts points over $durStr): Intermediate road GPS coordinates were missing between ${timeFmt.format(fromAt)} and ${timeFmt.format(toAt)}. Drawn directly as a straight line.';
+    }
+  }
 }
 
 /// One piece of the day's continuous route, between two consecutive flags:
@@ -122,6 +157,18 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   /// Latest saved position today and its time (server `lastPoint`) - shown as the live
   /// "last location" marker while still punched in.
   (LatLng, DateTime)? _lastPoint;
+
+  /// Full-screen map view toggle
+  bool _isFullView = false;
+
+  void _toggleFullView() {
+    setState(() {
+      _isFullView = !_isFullView;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fitTo(null);
+    });
+  }
 
   @override
   void initState() {
@@ -528,11 +575,13 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       final pts = s.line;
       if (pts.length < 2) continue;
       final faded = _selectedLeg != null && s.legIndex != _selectedLeg;
+      final isBlackout = s.legIndex != null && _legs.any((l) => l.index == s.legIndex && l.isBlackoutOrStraight);
       out.add(Polyline(
         polylineId: PolylineId('seg-$i'),
         points: pts,
         color: faded ? s.color.withValues(alpha: 0.3) : s.color,
         width: s.legIndex == null ? 5 : 6,
+        patterns: isBlackout ? [PatternItem.dash(18), PatternItem.gap(10)] : const [],
         jointType: JointType.round,
         startCap: Cap.roundCap,
         endCap: Cap.roundCap,
@@ -612,42 +661,187 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text(widget.staffName != null ? '${widget.staffName}’s Route' : 'My Route'),
-        actions: [
-          IconButton(
-            onPressed: _loading ? null : _showRouteLogsSheet,
-            icon: const Icon(Icons.receipt_long_rounded),
-            tooltip: 'Tracking Logs & Diagnostics',
-          ),
-          IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded), tooltip: 'Refresh'),
-        ],
+    return PopScope(
+      canPop: !_isFullView,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _isFullView) {
+          _toggleFullView();
+        }
+      },
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        appBar: AppBar(
+          title: Text(widget.staffName != null ? '${widget.staffName}’s Route' : 'My Route'),
+          actions: [
+            IconButton(
+              onPressed: _loading ? null : _toggleFullView,
+              icon: Icon(_isFullView ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded),
+              tooltip: _isFullView ? 'Exit Full View' : 'Full View',
+            ),
+            IconButton(
+              onPressed: _loading ? null : _showRouteLogsSheet,
+              icon: const Icon(Icons.receipt_long_rounded),
+              tooltip: 'Tracking Logs & Diagnostics',
+            ),
+            IconButton(onPressed: _loading ? null : _load, icon: const Icon(Icons.refresh_rounded), tooltip: 'Refresh'),
+          ],
+        ),
+        body: Column(
+          children: [
+            _dayBar(),
+            Expanded(
+              flex: _isFullView ? 1 : 5,
+              child: _buildMapSection(),
+            ),
+            if (!_isFullView)
+              Expanded(flex: 6, child: _panel()),
+          ],
+        ),
       ),
-      body: Column(
-        children: [
-          _dayBar(),
-          Expanded(
-            flex: 5,
-            child: _loading
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2.5))
-                : GoogleMap(
-                    initialCameraPosition: CameraPosition(target: _initialTarget, zoom: 13),
-                    onMapCreated: (c) {
-                      _map = c;
-                      _fitTo(null);
-                    },
-                    markers: _markers,
-                    polylines: _polylines,
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    mapToolbarEnabled: false,
+    );
+  }
+
+  Widget _buildMapSection() {
+    if (_loading) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
+    }
+    return Stack(
+      children: [
+        GoogleMap(
+          initialCameraPosition: CameraPosition(target: _initialTarget, zoom: 13),
+          onMapCreated: (c) {
+            _map = c;
+            _fitTo(null);
+          },
+          markers: _markers,
+          polylines: _polylines,
+          myLocationButtonEnabled: false,
+          zoomControlsEnabled: false,
+          mapToolbarEnabled: false,
+        ),
+        // Floating map controls (top-right)
+        Positioned(
+          top: 12,
+          right: 12,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Full View toggle button
+              Material(
+                color: AppColors.surface,
+                elevation: 3,
+                shadowColor: Colors.black.withValues(alpha: 0.2),
+                shape: const CircleBorder(),
+                child: Tooltip(
+                  message: _isFullView ? 'Exit Full View' : 'Full View',
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: _toggleFullView,
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Icon(
+                        _isFullView ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
+                        size: 22,
+                        color: AppColors.primary,
+                      ),
+                    ),
                   ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Fit Route / Re-center button
+              Material(
+                color: AppColors.surface,
+                elevation: 3,
+                shadowColor: Colors.black.withValues(alpha: 0.2),
+                shape: const CircleBorder(),
+                child: Tooltip(
+                  message: 'Fit route',
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: () => _fitTo(null),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Icon(
+                        Icons.center_focus_strong_rounded,
+                        size: 22,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          Expanded(flex: 6, child: _panel()),
-        ],
-      ),
+        ),
+        // Floating summary bar at the bottom when in Full View
+        if (_isFullView)
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Material(
+              color: AppColors.surface.withValues(alpha: 0.95),
+              elevation: 4,
+              shadowColor: Colors.black.withValues(alpha: 0.25),
+              borderRadius: BorderRadius.circular(16),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: _toggleFullView,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.route_rounded, color: AppColors.primary, size: 20),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              '${_totalKm != null ? '${_totalKm!.toStringAsFixed(1)} km' : '—'} • ${_legs.length} ${_legs.length == 1 ? 'leg' : 'legs'}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                color: AppColors.textPrimary,
+                              ),
+                            ),
+                            Text(
+                              'Tap to show details & timeline',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: AppColors.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton.icon(
+                        onPressed: _toggleFullView,
+                        icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 18),
+                        label: const Text('Details', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                        style: TextButton.styleFrom(
+                          foregroundColor: AppColors.primary,
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -1048,31 +1242,116 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: l.color.withValues(alpha: selected ? 0.9 : 0.25)),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(color: l.color, borderRadius: BorderRadius.circular(999)),
-                      child: Text(
-                        'L${l.index}',
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(color: l.color, borderRadius: BorderRadius.circular(999)),
+                          child: Text(
+                            'L${l.index}',
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.white),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            '${l.fromCode.isNotEmpty ? l.fromCode : 'Start'} → ${l.toCode.isNotEmpty ? l.toCode : 'End'}'
+                            '  ·  ${time.format(l.fromAt)} – ${time.format(l.toAt)}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, color: _muted, fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          l.km == null ? '—' : '${l.km!.toStringAsFixed(1)} km',
+                          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: l.color),
+                        ),
+                      ],
+                    ),
+                    if (l.isBlackoutOrStraight) ...[
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFEF3C7),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: const Color(0xFFFCD34D), width: 0.8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.warning_amber_rounded, size: 14, color: Color(0xFFD97706)),
+                            const SizedBox(width: 5),
+                            Expanded(
+                              child: Text(
+                                l.duration.inMinutes >= 30
+                                    ? 'Straight line / Blackout (${l.duration.inHours > 0 ? "${l.duration.inHours}h ${l.duration.inMinutes % 60}m" : "${l.duration.inMinutes}m"} no GPS) • Tap for reason'
+                                    : 'Straight line across buildings • Tap for reason',
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF92400E),
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              selected ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                              size: 16,
+                              color: const Color(0xFFD97706),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        '${l.fromCode.isNotEmpty ? l.fromCode : 'Start'} → ${l.toCode.isNotEmpty ? l.toCode : 'End'}'
-                        '  ·  ${time.format(l.fromAt)} – ${time.format(l.toAt)}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 11.5, color: _muted, fontWeight: FontWeight.w600),
+                    ],
+                    if (selected && l.isBlackoutOrStraight) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFFBEB),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: const Color(0xFFFDE68A)),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Why is this line straight across buildings?',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              l.blackoutReason,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFF78350F),
+                                height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            const Text(
+                              'Device Root Causes:\n'
+                              '• Android OS battery saver / background restrictions killed GPS\n'
+                              '• Background location was not set to "Allow all the time"\n'
+                              '• App was closed / killed while device was idle',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: Color(0xFF78350F),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      l.km == null ? '—' : '${l.km!.toStringAsFixed(1)} km',
-                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: l.color),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -1120,6 +1399,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       backgroundColor: Colors.transparent,
       builder: (ctx) => _RouteLogsBottomSheet(
         day: _day,
+        staffId: widget.staffId,
         staffName: widget.staffName,
         trackingOn: _trackingOn,
         totalKm: _totalKm,
@@ -1140,6 +1420,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 class _RouteLogsBottomSheet extends StatefulWidget {
   const _RouteLogsBottomSheet({
     required this.day,
+    this.staffId,
     this.staffName,
     required this.trackingOn,
     this.totalKm,
@@ -1155,6 +1436,7 @@ class _RouteLogsBottomSheet extends StatefulWidget {
   });
 
   final DateTime day;
+  final String? staffId;
   final String? staffName;
   final bool trackingOn;
   final double? totalKm;
@@ -1233,7 +1515,17 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
   }
 
   Future<void> _loadIncidents() async {
-    final list = await TrackingIncidentLogService.getIncidentsForDay(widget.day);
+    List<TrackingIncident> list;
+    if (widget.staffId != null && widget.staffId!.isNotEmpty) {
+      try {
+        final remote = await AdminGeoService.instance.getStaffTrackingIncidents(widget.staffId!, widget.day);
+        list = remote.map((m) => TrackingIncident.fromJson(m)).toList();
+      } catch (_) {
+        list = await TrackingIncidentLogService.getIncidentsForDay(widget.day);
+      }
+    } else {
+      list = await TrackingIncidentLogService.getIncidentsForDay(widget.day);
+    }
     final merged = <TrackingIncident>[...list];
 
     // Synthesize gap incidents from legs if straight lines occurred
@@ -1245,7 +1537,9 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
         merged.add(TrackingIncident(
           id: 'gap_leg_${s.leg.index}',
           type: 'gap',
-          title: 'Straight-Line Gap: Leg ${s.leg.index} (${s.km.toStringAsFixed(1)} km)',
+          title: s.duration.inMinutes >= 30
+              ? 'Tracking Blackout: Leg ${s.leg.index} (${s.duration.inHours > 0 ? "${s.duration.inHours}h ${s.duration.inMinutes % 60}m" : "${s.duration.inMinutes}m"})'
+              : 'Straight-Line Gap: Leg ${s.leg.index} (${s.km.toStringAsFixed(1)} km)',
           description: s.reason,
           at: s.leg.fromAt,
           severity: 'critical',
@@ -1320,17 +1614,13 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
   List<({_Leg leg, String reason, Duration duration, double km, int points})> get _straightLineLegs {
     final list = <({_Leg leg, String reason, Duration duration, double km, int points})>[];
     for (final l in widget.legs) {
-      final km = l.km ?? 0;
-      final pts = l.path.length;
-      final dur = l.toAt.difference(l.fromAt);
-      if (pts <= 2 && km > 1.5) {
-        final timeFmt = DateFormat('hh:mm a');
+      if (l.isBlackoutOrStraight) {
         list.add((
           leg: l,
-          reason: 'Distance (${km.toStringAsFixed(1)} km) exceeds the 1.5 km road-snap limit. No intermediate GPS coordinates were captured between ${timeFmt.format(l.fromAt)} and ${timeFmt.format(l.toAt)} (${dur.inHours}h ${dur.inMinutes % 60}m).',
-          duration: dur,
-          km: km,
-          points: pts,
+          reason: l.blackoutReason,
+          duration: l.duration,
+          km: l.km ?? 0,
+          points: l.path.length,
         ));
       }
     }
@@ -2318,7 +2608,7 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
 
   Widget _legRow(_Leg l, DateFormat timeFmt) {
     final dur = l.toAt.difference(l.fromAt);
-    final isStraight = l.path.length <= 2 && (l.km ?? 0) > 1.5;
+    final isStraight = l.isBlackoutOrStraight;
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 2, 8, 2),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -2353,7 +2643,9 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
               border: Border.all(color: isStraight ? const Color(0xFFF59E0B) : const Color(0xFFCBD5E1)),
             ),
             child: Text(
-              isStraight ? 'Straight line (${l.path.length} pts)' : '${l.path.length} GPS pts',
+              isStraight
+                  ? (l.duration.inMinutes >= 30 ? 'Blackout gap (${l.path.length} pts)' : 'Straight line (${l.path.length} pts)')
+                  : '${l.path.length} GPS pts',
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: FontWeight.w600,

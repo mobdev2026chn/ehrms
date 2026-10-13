@@ -113,6 +113,18 @@ class AdminGeoService {
     throw GeoApiException('Could not load this employee\'s route.');
   }
 
+  /// One staff member's tracking incidents for a day (GPS off, offline, battery, etc.).
+  /// GET /tracking-incidents/:staffId?date=YYYY-MM-DD
+  Future<List<Map<String, dynamic>>> getStaffTrackingIncidents(String staffId, DateTime day) async {
+    final r = await _call('$_base/tracking-incidents/$staffId',
+        query: {'date': dayKey(day)}, fallback: 'Could not load tracking logs.');
+    final data = r['data'];
+    if (data is Map && data['incidents'] is List) {
+      return _list(data['incidents']);
+    }
+    return const [];
+  }
+
   // ── travel allowance ──────────────────────────────────────────────────────────
 
   /// Claims, newest first (optionally one day / one staff). GET /travel-allowance?date&staffId
