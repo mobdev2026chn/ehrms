@@ -13,6 +13,8 @@ import '../utils/punch_flow_log.dart';
 import '../utils/salary_fine_summary.dart';
 import 'api_client.dart';
 import 'auth_service.dart';
+import 'geo/tracking_health_service.dart';
+import 'geo/tracking_punch_gate.dart';
 import 'web_hrms_api_dio.dart';
 
 class AttendanceService {
@@ -208,6 +210,20 @@ class AttendanceService {
       if (selfiePayload != null && selfiePayload.isNotEmpty) {
         selfiePayload =
             await AttendanceSelfieCompress.compressDataUrlForPunch(selfiePayload);
+      }
+
+      // HARD GATE (field employees): a punch-in with GPS off, location not "Allow all
+      // the time", or battery-restricted would track nothing all day (Jagan, 12 Oct:
+      // 7-hour hole). Refuse it, say why, and raise the tracking-health banner +
+      // notification whose Fix buttons open the exact settings screens.
+      final blockers = await TrackingPunchGate.criticalIssuesForPunch();
+      if (blockers.isNotEmpty) {
+        unawaited(TrackingHealthService.instance.start());
+        throw Exception(
+          'Punch-in blocked — fix phone settings first: '
+          '${blockers.map((i) => i.title).join('; ')}. '
+          'Use the Fix buttons on the red banner, then punch in again.',
+        );
       }
 
       // Button-tap instant; the server stores this as punchIn so selfie/network

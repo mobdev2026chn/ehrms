@@ -286,6 +286,9 @@ class TrackingHealthService {
     }
   }
 
+  /// One-off detection without starting the watch — used by the punch-in gate.
+  static Future<List<TrackingIssue>> detectIssues() => _detect();
+
   static Future<List<TrackingIssue>> _detect() async {
     if (kIsWeb) return const [];
     final found = <TrackingIssue>[];
