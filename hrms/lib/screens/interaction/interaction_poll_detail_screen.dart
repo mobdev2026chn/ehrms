@@ -143,7 +143,7 @@ class _InteractionPollDetailScreenState extends State<InteractionPollDetailScree
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      drawer: const AppDrawer(),
+      drawer: const AppDrawer(activeItem: 'Interaction'),
       appBar: AppBar(
         leading: const MenuIconButton(),
         title: const Text('Poll'),

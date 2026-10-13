@@ -221,7 +221,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.background,
-      drawer: const AppDrawer(),
+      drawer: const AppDrawer(activeItem: 'Overtime'),
       appBar: AppBar(
         title: const Text('My Overtime'),
         actions: [

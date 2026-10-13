@@ -5687,6 +5687,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     // True when a holiday falls on a week-off: the cell is styled as a Week Off,
     // but we still mark the holiday with a small indigo dot so it stays visible.
     bool showHolidayDot = false;
+    // Past working day with no record of any kind: gets its own look + legend entry,
+    // instead of an unexplained blank cell.
+    bool isNotMarked = false;
 
     if (isCurrentMonth) {
       final bool isHoliday = _holidayDateSet.contains(dateStr);
@@ -5795,6 +5798,13 @@ class _AttendanceScreenState extends State<AttendanceScreen>
           textColor = const Color(
             0xFF5D4037,
           ); // Brown text for contrast on the working-day background
+        } else {
+          // 10. Past (or today's) working day with no record at all — "Not Marked".
+          // Used to stay transparent, which the legend never explained; a faint
+          // slate fill + outline says "no attendance recorded for this day".
+          isNotMarked = true;
+          bgColor = const Color(0xFFF8FAFC); // Not Marked - faint slate
+          textColor = const Color(0xFF64748B);
         }
       }
 
@@ -5872,6 +5882,7 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         textColor = const Color(0xFFCBD5E1);
         leaveTypeAbbr = null;
         isLowHours = false;
+        isNotMarked = false; // days before joining are blank, not "Not Marked"
       }
     }
 
@@ -5884,7 +5895,9 @@ class _AttendanceScreenState extends State<AttendanceScreen>
             ? Border.all(color: AppColors.primary, width: 2)
             : (isSelectedDay
                   ? Border.all(color: AppColors.textPrimary, width: 1.6)
-                  : null),
+                  : (isNotMarked
+                        ? Border.all(color: const Color(0xFFCBD5E1), width: 1)
+                        : null)),
       ),
       child: Stack(
         children: [
@@ -7107,20 +7120,26 @@ class _AttendanceScreenState extends State<AttendanceScreen>
         _legendItem(AppColors.indigo, 'Holiday'),
         _legendItem(AppColors.textCaption, 'Weekend'),
         _legendItem(const Color(0xFF8D6E63), 'Working Day'),
-        _legendItem(AppColors.info, 'On Leave'),
+        _legendItem(AppColors.info, 'On Leave / Half Day'),
         _legendItem(AppColors.warning, 'Low Work Hours'),
+        _legendItem(const Color(0xFF94A3B8), 'Not Marked', outlined: true),
       ],
     );
   }
 
-  Widget _legendItem(Color color, String label) {
+  Widget _legendItem(Color color, String label, {bool outlined = false}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           width: 8,
           height: 8,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          decoration: outlined
+              ? BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: color, width: 1.5),
+                )
+              : BoxDecoration(color: color, shape: BoxShape.circle),
         ),
         const SizedBox(width: 6),
         Text(label,

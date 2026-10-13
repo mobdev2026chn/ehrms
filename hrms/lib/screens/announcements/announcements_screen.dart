@@ -87,7 +87,7 @@ class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      drawer: const AppDrawer(),
+      drawer: const AppDrawer(activeItem: 'Announcements'),
       appBar: AppBar(
         leading: const MenuIconButton(),
         title: const Text('Announcements'),

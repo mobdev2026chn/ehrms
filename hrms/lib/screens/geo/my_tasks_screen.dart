@@ -1975,7 +1975,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           // Status-filtered view of the loaded page (see _filteredTasks).
           final visibleTasks = _filteredTasks;
           return Scaffold(
-            drawer: const AppDrawer(),
+            drawer: const AppDrawer(activeItem: 'GEOtasks'),
             backgroundColor: AppColors.background,
             appBar: AppBar(
               leading: _isSelectionMode

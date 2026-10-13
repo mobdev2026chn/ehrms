@@ -11,6 +11,7 @@ import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../utils/face_enrollment_gate.dart';
 import '../../models/break_summary.dart';
+import '../dashboard/dashboard_screen.dart';
 import '../../services/auth_service.dart';
 import '../../services/break_service.dart';
 import '../../services/face_identity_guard.dart';
@@ -36,6 +37,21 @@ class BreakScreen extends StatefulWidget {
 }
 
 class _BreakScreenState extends State<BreakScreen> {
+  /// Leaves this screen. Normally pops back to whoever opened it; when it is the
+  /// only route (opened straight from the break-reminder notification on a cold
+  /// start), popping would leave an empty stack — a black screen — so it goes to
+  /// the dashboard instead.
+  void _leave([bool? result]) {
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop(result);
+    } else {
+      nav.pushReplacement(
+        MaterialPageRoute<void>(builder: (_) => const DashboardScreen()),
+      );
+    }
+  }
+
   final BreakService _breakService = BreakService();
   final AuthService _authService = AuthService();
 
@@ -91,7 +107,7 @@ class _BreakScreenState extends State<BreakScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => _leave(),
             child: const Text('OK'),
           ),
         ],
@@ -475,7 +491,7 @@ class _BreakScreenState extends State<BreakScreen> {
                 ? 'Break ended. Your break time will be added to Fine.'
                 : 'Break ended successfully';
         SnackBarUtils.showSnackBar(context, endMsg);
-        Navigator.of(context).pop(true);
+        _leave(true);
         return;
       }
       setState(() {

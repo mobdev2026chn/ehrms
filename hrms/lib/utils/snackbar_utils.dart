@@ -49,6 +49,16 @@ class SnackBarUtils {
         '[SnackBarUtils][trace] source=${debugSource ?? "(auto)"} isError=$isError msg=$preview',
       );
     }
+    // An error belongs to the screen whose action caused it. When the response
+    // lands after the user has already moved on (e.g. a task's geofence failure
+    // arriving while Add Customer is open), showing it would blame the wrong
+    // screen — drop it instead. Success toasts still show (e.g. "Customer
+    // added" right before navigating away is intentional).
+    if (isError) {
+      final route = ModalRoute.of(context);
+      if (route != null && !route.isCurrent) return;
+    }
+
     // Attempt to find the top-level overlay
     final overlay = Navigator.of(context, rootNavigator: true).overlay;
     if (overlay == null) return;
@@ -139,6 +149,13 @@ class _ErrorToastRouteObserver extends NavigatorObserver {
   @override
   void didReplace({Route<dynamic>? newRoute, Route<dynamic>? oldRoute}) {
     if (newRoute is PageRoute) SnackBarUtils.dismissError();
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    // Leaving a screen takes its error with it: a geofence failure shown on the
+    // task screen must not still be on top after backing out to the task list.
+    if (route is PageRoute) SnackBarUtils.dismissError();
   }
 }
 

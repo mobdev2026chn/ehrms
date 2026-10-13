@@ -76,7 +76,12 @@ class AppDrawer extends StatefulWidget {
   final int? currentIndex;
   final void Function(int index)? onNavigateToIndex;
 
-  const AppDrawer({super.key, this.currentIndex, this.onNavigateToIndex});
+  /// Employee-drawer entry to highlight as the current module ('Loans', 'GEOtasks',
+  /// 'Overtime', 'Interaction', 'Announcements', …). Pushed module screens pass it;
+  /// dashboard tab screens are derived from [currentIndex] instead.
+  final String? activeItem;
+
+  const AppDrawer({super.key, this.currentIndex, this.onNavigateToIndex, this.activeItem});
 
   /// Clears the admin menu's remembered sections and last opened screen.
   static void resetMenuMemory() => _AppDrawerState.resetMenuMemory();
@@ -293,6 +298,24 @@ class _AppDrawerState extends State<AppDrawer> {
     );
   }
 
+  /// Which employee-drawer entry is the module currently on screen, so the menu
+  /// highlights where the user is. Pushed module screens pass [AppDrawer.activeItem];
+  /// dashboard tabs map from [AppDrawer.currentIndex].
+  String? get _activeEmployeeItem {
+    if (widget.activeItem != null) return widget.activeItem;
+    switch (widget.currentIndex) {
+      case 0:
+        return 'Dashboard';
+      case 1:
+        return 'Requests';
+      case 3:
+        return 'Profile';
+      case 4:
+        return 'Attendance';
+    }
+    return null;
+  }
+
   /// Standard Employee Drawer List
   Widget _buildEmployeeNavList() {
     return ListView(
@@ -305,40 +328,43 @@ class _AppDrawerState extends State<AppDrawer> {
             style: AppTextStyles.sectionLabel,
           ),
         ),
-        _item(Icons.dashboard_rounded, 'Dashboard', () => _navigateToTab(0)),
-        _item(Icons.calendar_month_rounded, 'Attendance', () => _navigateToTab(4)),
-        _item(Icons.fact_check_rounded, 'Requests', () => _navigateToTab(1)),
+        _item(Icons.dashboard_rounded, 'Dashboard', () => _navigateToTab(0),
+            selected: _activeEmployeeItem == 'Dashboard'),
+        _item(Icons.calendar_month_rounded, 'Attendance', () => _navigateToTab(4),
+            selected: _activeEmployeeItem == 'Attendance'),
+        _item(Icons.fact_check_rounded, 'Requests', () => _navigateToTab(1),
+            selected: _activeEmployeeItem == 'Requests'),
         _item(Icons.account_balance_outlined, 'Loans', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const LoansScreen()));
-        }),
+        }, selected: _activeEmployeeItem == 'Loans'),
         _item(Icons.assignment_turned_in_rounded, 'GEOtasks', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
-        }),
+        }, selected: _activeEmployeeItem == 'GEOtasks'),
         _item(Icons.schedule_rounded, 'Overtime', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const OvertimeScreen()));
-        }),
+        }, selected: _activeEmployeeItem == 'Overtime'),
         _item(Icons.forum_rounded, 'Interaction', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const StaffInteractionScreen()));
-        }),
+        }, selected: _activeEmployeeItem == 'Interaction'),
         _item(Icons.campaign_rounded, 'Announcements', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const AnnouncementsScreen()));
-        }),
+        }, selected: _activeEmployeeItem == 'Announcements'),
         const SizedBox(height: 8),
         const Divider(height: 1, indent: 12, endIndent: 12, color: Color(0xFFECEEF1)),
         const SizedBox(height: 8),
         _item(Icons.person_outline_rounded, 'Profile', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const ProfileScreen(dashboardTabIndex: 3)));
-        }),
+        }, selected: _activeEmployeeItem == 'Profile'),
         _item(Icons.settings_outlined, 'Settings', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const SettingsScreen()));
-        }),
+        }, selected: _activeEmployeeItem == 'Settings'),
       ],
     );
   }
@@ -966,18 +992,34 @@ class _AppDrawerState extends State<AppDrawer> {
     );
   }
 
-  Widget _item(IconData icon, String title, VoidCallback onTap, {Color? color, bool isDark = false}) {
+  Widget _item(IconData icon, String title, VoidCallback onTap,
+      {Color? color, bool isDark = false, bool selected = false}) {
     final fg = color ?? (isDark ? const Color(0xFFE4E4E7) : AppColors.textPrimary);
     // Icon tile: tinted square behind the icon (gold tint for regular items,
-    // the item's own colour tint for coloured items such as Logout).
-    final tileFg = color ?? (isDark ? fg : AppColors.primaryText);
-    final tileBg = color != null
-        ? color.withValues(alpha: 0.10)
-        : (isDark ? Colors.white.withValues(alpha: 0.06) : AppColors.primary.withValues(alpha: 0.12));
+    // the item's own colour tint for coloured items such as Logout). The current
+    // module gets a solid tile + tinted row so it reads at a glance.
+    final tileFg = selected
+        ? Colors.white
+        : (color ?? (isDark ? fg : AppColors.primaryText));
+    final tileBg = selected
+        ? AppColors.primary
+        : (color != null
+            ? color.withValues(alpha: 0.10)
+            : (isDark
+                ? Colors.white.withValues(alpha: 0.06)
+                : AppColors.primary.withValues(alpha: 0.12)));
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      child: Padding(
+      child: Container(
+        decoration: selected
+            ? BoxDecoration(
+                color: isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : AppColors.primary.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(12),
+              )
+            : null,
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Row(
           children: [
@@ -997,10 +1039,20 @@ class _AppDrawerState extends State<AppDrawer> {
                 title,
                 style: AppTextStyles.label.copyWith(
                   fontSize: 14.5,
+                  fontWeight: selected ? FontWeight.w700 : null,
                   color: fg,
                 ),
               ),
             ),
+            if (selected)
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: AppColors.primary,
+                  shape: BoxShape.circle,
+                ),
+              ),
           ],
         ),
       ),
