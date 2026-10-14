@@ -19,6 +19,7 @@ import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
 import com.icapps.background_location_tracker.flutter.FlutterBackgroundManager
+import com.icapps.background_location_tracker.receiver.TrackingWatchdogReceiver
 import com.icapps.background_location_tracker.utils.ActivityCounter
 import com.icapps.background_location_tracker.utils.Logger
 import com.icapps.background_location_tracker.utils.NotificationUtil
@@ -93,6 +94,13 @@ internal class LocationUpdatesService : Service() {
         if (startedFromNotification) {
             stopTracking()
             stopSelf()
+        } else if (SharedPrefsUtil.isTracking(this)) {
+            // Started with startForegroundService: confirm foreground (no-op when already).
+            try {
+                NotificationUtil.startForeground(this, location)
+            } catch (e: Throwable) {
+                Logger.error(TAG, "startForeground in onStartCommand failed: $e")
+            }
         }
 
         // Tells the system to try to recreate the service after it has been killed.
@@ -109,7 +117,10 @@ internal class LocationUpdatesService : Service() {
         // and binds with this service. The service should cease to be a foreground service
         // when that happens.
         Logger.debug(TAG, "OnBind")
-        stopForegroundService()
+        // While tracking the service stays in the foreground even with the app open:
+        // promoting it again when the app leaves the screen is not allowed on Android 12+,
+        // and a service that is not foreground is stopped in the background.
+        if (!SharedPrefsUtil.isTracking(this)) stopForegroundService()
         changingConfiguration = false
         return binder
     }
@@ -128,7 +139,7 @@ internal class LocationUpdatesService : Service() {
         // and binds once again with this service. The service should cease to be a foreground
         // service when that happens.
         Logger.debug(TAG, "OnRebind")
-        stopForegroundService()
+        if (!SharedPrefsUtil.isTracking(this)) stopForegroundService()
         changingConfiguration = false
         super.onRebind(intent)
     }
@@ -178,6 +189,23 @@ internal class LocationUpdatesService : Service() {
 
         Logger.debug(TAG, "Requesting location updates")
         SharedPrefsUtil.saveIsTracking(this, true)
+        // Watchdog: alerts the employee (and restarts tracking) if fixes stop while tracking.
+        SharedPrefsUtil.saveTrackingStarted(this, System.currentTimeMillis())
+        TrackingWatchdogReceiver.schedule(applicationContext)
+        // A started (not only bound) service keeps running when the app leaves the screen;
+        // bound-only, Android destroys it as soon as the app is backgrounded or the phone
+        // locks, and tracking stops. Starts come from the open app (punch-in, Field Out),
+        // which Android 12+ allows; a refused start is logged and tracking stays bound.
+        try {
+            val intent = Intent(applicationContext, LocationUpdatesService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Throwable) {
+            Logger.error(TAG, "Could not start the service (it stays bound only): $e")
+        }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 NotificationUtil.startForeground(this, location)
@@ -185,6 +213,9 @@ internal class LocationUpdatesService : Service() {
         } catch (e: Throwable) {
             Logger.error(TAG, "NotificationUtil.startForeground failed: $e")
         }
+        // Rebuild from the saved interval / distance filter so each start uses the caller's
+        // values; requesting again with the same callback replaces the previous request.
+        createLocationRequest()
         val locationRequest = locationRequest ?: return
         val locationCallback = locationCallback ?: return
         try {
@@ -211,6 +242,8 @@ internal class LocationUpdatesService : Service() {
         try {
             fusedLocationClient?.removeLocationUpdates(locationCallback)
             SharedPrefsUtil.saveIsTracking(this, false)
+            TrackingWatchdogReceiver.cancel(applicationContext)
+            TrackingWatchdogReceiver.clearAlert(applicationContext)
             stopSelf()
         } catch (unlikely: SecurityException) {
             SharedPrefsUtil.saveIsTracking(this, true)
@@ -235,6 +268,8 @@ internal class LocationUpdatesService : Service() {
     private fun onNewLocation(location: Location?) {
         if (location == null) return;
         Logger.debug(TAG, "New location: $location")
+        SharedPrefsUtil.saveLastFix(this, System.currentTimeMillis())
+        TrackingWatchdogReceiver.clearAlert(applicationContext)
         this.location = location
 
         if (serviceIsRunningInForeground(this)) {

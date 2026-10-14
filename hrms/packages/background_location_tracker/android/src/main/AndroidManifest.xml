@@ -14,5 +14,9 @@
             android:enabled="true"
             android:exported="true"
             android:foregroundServiceType="location" />
+        <!-- Tracking watchdog: wakes with the app closed and alerts when location stops. -->
+        <receiver
+            android:name=".receiver.TrackingWatchdogReceiver"
+            android:exported="false" />
     </application>
 </manifest>

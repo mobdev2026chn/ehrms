@@ -55,7 +55,8 @@ class BackgroundChannel {
         course: course,
         courseAccuracy: courseAccuracy,
         speed: speed,
-        speedAccuracy: speedAccuracy));
+        speedAccuracy: speedAccuracy,
+        isMock: data['is_mock'] == true));
     return true;
   }
 }

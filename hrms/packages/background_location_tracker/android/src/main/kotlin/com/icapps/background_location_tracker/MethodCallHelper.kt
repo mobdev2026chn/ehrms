@@ -1,13 +1,16 @@
 package com.icapps.background_location_tracker
 
 import android.content.Context
+import android.content.Intent
 import android.location.Location
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleObserver
 import androidx.lifecycle.OnLifecycleEvent
 import com.icapps.background_location_tracker.ext.checkRequiredFields
 import com.icapps.background_location_tracker.flutter.FlutterBackgroundManager
 import com.icapps.background_location_tracker.service.LocationServiceConnection
+import com.icapps.background_location_tracker.service.LocationUpdatesService
 import com.icapps.background_location_tracker.service.LocationUpdateListener
 import com.icapps.background_location_tracker.utils.Logger
 import com.icapps.background_location_tracker.utils.NotificationUtil
@@ -91,6 +94,14 @@ internal class MethodCallHelper(private val ctx: Context) : MethodChannel.Method
         val enableNotificationLocationUpdates = call.argument<Boolean>(enableNotificationLocationUpdatesKey)
         val cancelTrackingActionText = call.argument<String>(cancelTrackingActionTextKey)
         val enableCancelTrackingAction = call.argument<Boolean>(enableCancelTrackingActionKey)
+        // The caller's interval / distance filter (optional): saved here and applied by
+        // LocationUpdatesService.startTracking, which rebuilds its location request.
+        val trackingInterval = call.argument<Number>("android_update_interval_msec")?.toLong()
+        if (trackingInterval != null && trackingInterval > 0) {
+            SharedPrefsUtil.saveTrackingInterval(ctx, trackingInterval)
+            val distanceFilter = call.argument<Number>("android_distance_filter")?.toFloat() ?: 0f
+            SharedPrefsUtil.saveDistanceFilter(ctx, distanceFilter)
+        }
         if (notificationBody != null || notificationIcon != null || cancelTrackingActionText != null
                 || enableNotificationLocationUpdates != null || enableCancelTrackingAction != null) {
             SharedPrefsUtil.saveNotificationConfig(ctx, notificationBody ?: SharedPrefsUtil.getNotificationBody(ctx),
@@ -99,7 +110,19 @@ internal class MethodCallHelper(private val ctx: Context) : MethodChannel.Method
                                                    enableNotificationLocationUpdates ?: SharedPrefsUtil.isNotificationLocationUpdatesEnabled(ctx),
                                                    enableCancelTrackingAction ?: SharedPrefsUtil.isCancelTrackingActionEnabled(ctx))
         }
-        serviceConnection.service?.startTracking()
+        val service = serviceConnection.service
+        if (service != null) {
+            service.startTracking()
+        } else {
+            // Not bound (no app screen yet, or a background isolate): start the service; its
+            // onCreate resumes tracking because IS_TRACKING is set. Before, this start was lost.
+            SharedPrefsUtil.saveIsTracking(ctx, true)
+            try {
+                ContextCompat.startForegroundService(ctx, Intent(ctx, LocationUpdatesService::class.java))
+            } catch (e: Throwable) {
+                Logger.error(TAG, "Could not start the tracking service: $e")
+            }
+        }
         result.success(true)
     }
 

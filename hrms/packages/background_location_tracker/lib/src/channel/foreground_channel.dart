@@ -55,6 +55,12 @@ class ForegroundChannel {
     return _foregroundChannel.invokeMethod(
       'startTracking',
       {
+        // Applied by the native side on every start, so a caller's interval / distance
+        // filter takes effect (before, only `initialize` set them).
+        if (config != null)
+          'android_update_interval_msec': config.trackingInterval.inMilliseconds,
+        if (config != null)
+          'android_distance_filter': config.distanceFilterMeters ?? 0.0,
         'android_config_notification_body': config?.notificationBody,
         'android_config_notification_icon': config?.notificationIcon,
         'android_config_enable_notification_location_updates':

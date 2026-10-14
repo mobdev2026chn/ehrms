@@ -102,7 +102,7 @@ internal object NotificationUtil {
      * ("explore") that the current build no longer has. The service can restart before Dart
      * re-saves the config, so the saved name alone can't be trusted.
      */
-    private fun resolveSmallIcon(context: Context): Int {
+    fun resolveSmallIcon(context: Context): Int {
         val res = context.resources
         val pkg = context.packageName
         val saved = SharedPrefsUtil.getNotificationIcon(context)

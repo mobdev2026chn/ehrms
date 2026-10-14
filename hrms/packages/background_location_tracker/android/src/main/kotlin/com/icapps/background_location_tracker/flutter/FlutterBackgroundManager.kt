@@ -148,6 +148,13 @@ internal object FlutterBackgroundManager {
         data["speed"] = if (location.hasSpeed()) location.speed else -1.0
         data["speed_accuracy"] = -1.0
         data["logging_enabled"] = SharedPrefsUtil.isLoggingEnabled(ctx)
+        // Fix from a mock-location (fake GPS) app.
+        data["is_mock"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            location.isMock
+        } else {
+            @Suppress("DEPRECATION")
+            location.isFromMockProvider
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             data["vertical_accuracy"] = if (location.hasVerticalAccuracy()) location.verticalAccuracyMeters else -1.0

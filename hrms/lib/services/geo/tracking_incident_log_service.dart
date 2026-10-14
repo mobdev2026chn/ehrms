@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:intl/intl.dart';
 import 'package:hrms/services/api_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,7 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 class TrackingIncident {
   final String id;
   /// Types: 'gps_off', 'gps_on', 'no_network', 'network_on', 'permission_blocked',
-  /// 'permission_ok', 'battery_restricted', 'battery_ok', 'gap', 'sync', 'offline_queue'
+  /// 'permission_ok', 'battery_restricted', 'battery_ok', 'gap', 'sync', 'offline_queue',
+  /// 'fix_dropped', 'tracker_started', 'tracker_failed', 'app_foreground',
+  /// 'app_background', 'app_closed'
   final String type;
   final String title;
   final String description;
@@ -42,11 +45,26 @@ class TrackingIncident {
         severity: json['severity']?.toString() ?? 'warning',
       );
 
-  bool get isGps => type == 'gps_off' || type == 'gps_on' || type == 'gap';
+  bool get isGps =>
+      type == 'gps_off' ||
+      type == 'gps_on' ||
+      type == 'gap' ||
+      type == 'fix_dropped' ||
+      type == 'mock_location' ||
+      type == 'tracker_started' ||
+      type == 'tracker_failed';
+
+  /// App opened / sent to background / closed while tracking.
+  bool get isApp =>
+      type == 'app_foreground' || type == 'app_background' || type == 'app_closed';
+
+  /// Something went wrong (a block, an outage, a gap) - not a recovery or a status note.
+  bool get isProblem => severity != 'info';
   bool get isNetwork =>
       type == 'no_network' ||
       type == 'network_on' ||
       type == 'offline_queue' ||
+      type == 'offline_overflow' ||
       type == 'sync';
   bool get isPermission =>
       type == 'permission_blocked' ||
@@ -61,7 +79,18 @@ class TrackingIncidentLogService {
   TrackingIncidentLogService._();
 
   static const String _prefPrefix = 'tracking_incidents_v1_';
-  static const int _maxPerDay = 250;
+  static const int _maxPerDay = 600;
+
+  /// The app and the background tracker run in separate isolates, each with its own cached
+  /// copy of SharedPreferences. Re-read from disk before every read-modify-write, or one side
+  /// overwrites the entries the other just logged (gaps and fake-GPS are logged in background).
+  static Future<SharedPreferences> _freshPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    try {
+      await prefs.reload();
+    } catch (_) {}
+    return prefs;
+  }
 
   static String _keyForDay(DateTime day) =>
       '$_prefPrefix${DateFormat('yyyy-MM-dd').format(day)}';
@@ -77,7 +106,7 @@ class TrackingIncidentLogService {
     try {
       final now = at ?? DateTime.now();
       final key = _keyForDay(now);
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _freshPrefs();
       final raw = prefs.getString(key);
       final list = <TrackingIncident>[];
       if (raw != null && raw.isNotEmpty) {
@@ -135,7 +164,7 @@ class TrackingIncidentLogService {
         return;
       }
       _lastSyncAttempt = now;
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _freshPrefs();
       for (final day in [now.subtract(const Duration(days: 1)), now]) {
         final list = await getIncidentsForDay(day);
         if (list.isEmpty) continue;
@@ -145,9 +174,12 @@ class TrackingIncidentLogService {
         // After day-trimming the count can drift; the server's upsert-by-id absorbs
         // any re-sent rows, so an occasional overlap costs nothing.
         final batch = list.sublist(synced.clamp(0, list.length));
+        // The token is set explicitly: in the background isolate the shared client has none.
+        final token = (prefs.getString('token') ?? '').replaceAll('"', '').trim();
         await ApiClient().dio.post<dynamic>(
           '/staff/geo-task/tracking-incidents',
           data: {'incidents': batch.map((i) => i.toJson()).toList()},
+          options: token.isEmpty ? null : Options(headers: {'Authorization': 'Bearer $token'}),
         );
         await prefs.setInt(syncKey, list.length);
       }
@@ -160,7 +192,7 @@ class TrackingIncidentLogService {
   static Future<List<TrackingIncident>> getIncidentsForDay(DateTime day) async {
     try {
       final key = _keyForDay(day);
-      final prefs = await SharedPreferences.getInstance();
+      final prefs = await _freshPrefs();
       final raw = prefs.getString(key);
       if (raw == null || raw.isEmpty) return const [];
       final decoded = jsonDecode(raw) as List;
@@ -261,6 +293,89 @@ class TrackingIncidentLogService {
       description:
           'Network connection lost or server unreachable. $source coordinate buffered locally (queue depth: $count).',
       severity: 'warning',
+    );
+  }
+
+  /// No location reached the app between [from] and [to] while punched in.
+  static Future<void> logLocationGap({
+    required DateTime from,
+    required DateTime to,
+    required double movedKm,
+    String? appStateAtStart,
+  }) async {
+    final fmt = DateFormat('hh:mm a');
+    final mins = to.difference(from).inMinutes;
+    final span = mins >= 60 ? '${mins ~/ 60}h ${mins % 60}m' : '$mins min';
+    final state = switch (appStateAtStart) {
+      'foreground' => 'open on screen',
+      'background' => 'in the background',
+      'closed' => 'closed',
+      _ => 'in an unknown state',
+    };
+    await record(
+      type: 'gap',
+      title: 'No location for $span (${fmt.format(from)} – ${fmt.format(to)})',
+      description:
+          'The phone delivered no location between these times, so no route points were saved. '
+          'Moved ${movedKm.toStringAsFixed(2)} km in that time - that stretch is drawn as a straight line. '
+          'The app was $state when it went quiet. Usual causes: the app was swiped away, or the phone '
+          'stopped background tracking (battery saver, power saving mode, app not allowed to run in background).',
+      severity: 'critical',
+      at: to,
+    );
+  }
+
+  /// A location fix was received but not used (too imprecise).
+  static Future<void> logFixDropped({required double accuracyM}) async {
+    await record(
+      type: 'fix_dropped',
+      title: 'Location Ignored (Weak GPS)',
+      description:
+          'A location with ${accuracyM.toStringAsFixed(0)} m accuracy was ignored (limit 50 m). '
+          'Usually indoors, under cover, or with the phone deep in a bag.',
+      severity: 'warning',
+    );
+  }
+
+  /// A location came from a mock-location (fake GPS) app and was not used.
+  static Future<void> logMockLocation() async {
+    await record(
+      type: 'mock_location',
+      title: 'Fake GPS Detected',
+      description:
+          'A location from a mock-location (fake GPS) app was rejected and not saved. '
+          'Turn off the fake location app / developer "mock location" setting.',
+      severity: 'critical',
+    );
+  }
+
+  /// The background tracker was (re)started, or could not be.
+  static Future<void> logTrackerStarted({required bool ok, String? error}) async {
+    await record(
+      type: ok ? 'tracker_started' : 'tracker_failed',
+      title: ok ? 'Background Tracking Started' : 'Background Tracking Could Not Start',
+      description: ok
+          ? 'Location is checked every 5 s while moving, also with the app closed or the phone locked.'
+          : 'The phone refused to start background location${error != null ? ': $error' : ''}. '
+              'Route points are saved only while the app is open.',
+      severity: ok ? 'info' : 'critical',
+    );
+  }
+
+  /// The app was opened, sent to the background or closed while punched in.
+  static Future<void> logAppState(String state) async {
+    final (type, title) = switch (state) {
+      'foreground' => ('app_foreground', 'App Opened'),
+      'closed' => ('app_closed', 'App Closed'),
+      _ => ('app_background', 'App In Background'),
+    };
+    await record(
+      type: type,
+      title: title,
+      description: state == 'foreground'
+          ? 'EktaHR is open on screen.'
+          : 'EktaHR left the screen; location continues from the background tracker.',
+      severity: 'info',
     );
   }
 

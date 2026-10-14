@@ -25,6 +25,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart' as gl;
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dio/dio.dart';
@@ -69,14 +70,24 @@ const String _kPresenceLastSentTime = 'presence_last_sent_time';
 const String _kPresenceLastBackgroundAttemptTime =
     'presence_last_background_attempt_time';
 const String _kPresenceLastMovementType = 'presence_last_movement_type';
+// Last location fix received while punched in (sent or not), and the app state then:
+// a long silence before the next fix is logged as a gap.
+const String _kPresenceLastFixMs = 'presence_last_fix_ms';
+const String _kPresenceLastFixLat = 'presence_last_fix_lat';
+const String _kPresenceLastFixLng = 'presence_last_fix_lng';
+const String _kPresenceLastFixAppState = 'presence_last_fix_app_state';
+// Stamped by the open app's timer every tick. A "foreground" state with a stale stamp means
+// the app was killed while open (no lifecycle callback), so the background tracker sends.
+const String _kPresenceForegroundAliveMs = 'presence_foreground_alive_ms';
 const String _kPresenceConsecutiveLowSpeed = 'presence_consecutive_low_speed';
 
 /// JSON: { id, latitude, longitude, radius } — sub-zone from branch.geofence.locations hit at check-in.
 const String _kPresencePinnedGeofenceLocation =
     'presence_pinned_geofence_location_json';
 /// Offline presence points kept on the phone. Stationary points are not queued, so this
-/// covers well over a working day of real movement; beyond it the oldest are dropped.
-const int _maxPendingPresence = 3000;
+/// covers a full working day on the move at 5 s / 20 m spacing; beyond it the oldest are
+/// dropped and the drop is logged.
+const int _maxPendingPresence = 10000;
 
 /// A queued point must be this far from the last queued one (same movement) to be kept.
 const double _minQueueMoveM = 15;
@@ -191,15 +202,32 @@ class PresenceTrackingService {
   static const int _kDefaultIntervalSeconds = 30;
   static const String _kPresenceIntervalSec = 'presence_capture_interval_sec';
 
-  /// Interval for inserting presence tracking into DB (trackings collection).
-  /// Applied to both foreground timer and native Android background tracker.
-  ///
-  /// Live tracking checks the position every 30 s (never less often), however
-  /// long the admin's save interval is; points within [_duplicateLocationThresholdMeters]
-  /// of the last sent one are not sent at all (idle = no new points).
-  static Duration get trackingInterval =>
+  /// How often the position is checked: the foreground timer and the native Android
+  /// background tracker both run at this cadence. While moving, a point is sent every
+  /// check once it is [_movingMinMoveMeters] from the last sent one (5 s / 20 m), so the
+  /// route follows the roads actually taken. While idle, sends are spaced by
+  /// [_idleSendInterval] and points within [_duplicateLocationThresholdMeters] of the
+  /// last sent one are not sent at all (idle = no new points).
+  static Duration get trackingInterval => const Duration(seconds: _kMovingCaptureSeconds);
+  static const int _kMovingCaptureSeconds = 5;
+
+  /// Gap between sends while not moving: the admin's interval, at most 30 s.
+  static Duration get _idleSendInterval =>
       Duration(seconds: _intervalSeconds < _kLiveCheckSeconds ? _intervalSeconds : _kLiveCheckSeconds);
   static const int _kLiveCheckSeconds = 30;
+
+  /// While moving, a point is sent once it is this far from the last sent point.
+  static const double _movingMinMoveMeters = 20;
+
+  /// Standing still: one "still here" ping this often (see _shouldSkipPresenceSend).
+  static const Duration _idleHeartbeatEvery = Duration(minutes: 5);
+
+  /// A gap at least this long is also reported to the admin (shorter ones are only logged).
+  static const Duration _gapReportToAdmin = Duration(minutes: 10);
+
+  /// Native fixes can arrive faster than [trackingInterval] (Android delivers at up to
+  /// twice the rate when another app asks for location); moving sends stay this far apart.
+  static const Duration _movingMinGap = Duration(milliseconds: 4500);
 
   static Future<void> _loadIntervalFromPrefs([SharedPreferences? p]) async {
     final prefs = p ?? await SharedPreferences.getInstance();
@@ -280,10 +308,6 @@ class PresenceTrackingService {
     String logLabel = 'presence_store',
     bool moving = false,
   }) async {
-    // Genuinely moving (driving/walking): keep every point so the route draws the real
-    // path, even when two fixes land within 15 m of each other. Idle is still neglected.
-    if (moving) return false;
-
     final prefs = await SharedPreferences.getInstance();
     await _loadIntervalFromPrefs(prefs);
     final lastLat = prefs.getDouble(_kPresenceLastSentLat);
@@ -291,11 +315,17 @@ class PresenceTrackingService {
     if (lastLat == null || lastLng == null) return false;
 
     final distanceM = gl.Geolocator.distanceBetween(lastLat, lastLng, lat, lng);
+    // Genuinely moving (driving/walking): a point every 20 m, so the route draws the real
+    // path without piling up points a few metres apart. Idle is still neglected below.
+    if (moving) return distanceM < _movingMinMoveMeters;
     if (distanceM >= _duplicateLocationThresholdMeters) return false;
 
-    // Same place (within 15 m): neglect it, however long since the last point.
+    // Same place (within 15 m): neglected - except one heartbeat every [_idleHeartbeatEvery],
+    // which the server does not store as a route point but takes as "the phone is alive",
+    // so standing still is never mistaken for a dead or killed phone.
     final lastSentMs = prefs.getInt(_kPresenceLastSentTime) ?? 0;
     final elapsedMs = DateTime.now().millisecondsSinceEpoch - lastSentMs;
+    if (elapsedMs >= _idleHeartbeatEvery.inMilliseconds) return false;
     if (kDebugMode && AppConstants.logTrackingsToConsole) {
       debugPrint(
         '[Trackings] $logLabel duplicate_check '
@@ -338,6 +368,7 @@ class PresenceTrackingService {
       await prefs.remove(_kPresenceLastMovementType);
       await prefs.remove(_kPresenceConsecutiveLowSpeed);
       await prefs.remove(_kPresencePinnedGeofenceLocation);
+      await _clearLastFix(prefs);
       await _clearPresenceAddressCache(prefs);
     }
   }
@@ -422,7 +453,98 @@ class PresenceTrackingService {
     await prefs.remove(_kPresenceLastMovementType);
     await prefs.remove(_kPresenceConsecutiveLowSpeed);
     await prefs.remove(_kPresencePinnedGeofenceLocation);
+    await _clearLastFix(prefs);
     await _clearPresenceAddressCache(prefs);
+  }
+
+  static Future<void> _clearLastFix(SharedPreferences prefs) async {
+    await prefs.remove(_kPresenceLastFixMs);
+    await prefs.remove(_kPresenceLastFixLat);
+    await prefs.remove(_kPresenceLastFixLng);
+    await prefs.remove(_kPresenceLastFixAppState);
+  }
+
+  /// No fix for this long while punched in = a gap in the route, logged when fixes resume.
+  static const Duration _gapLogThreshold = Duration(minutes: 3);
+
+  /// Notes a location fix received while punched in (whether or not it is sent). When the
+  /// previous one is older than [_gapLogThreshold], logs the silence in between - the phone
+  /// or the app stopped delivering location - with how far the employee moved meanwhile.
+  static Future<void> _noteLocationFix(
+    SharedPreferences prefs,
+    double lat,
+    double lng,
+  ) async {
+    try {
+      final now = DateTime.now();
+      final lastMs = prefs.getInt(_kPresenceLastFixMs);
+      final lastLat = prefs.getDouble(_kPresenceLastFixLat);
+      final lastLng = prefs.getDouble(_kPresenceLastFixLng);
+      final lastState = prefs.getString(_kPresenceLastFixAppState);
+      await prefs.setInt(_kPresenceLastFixMs, now.millisecondsSinceEpoch);
+      await prefs.setDouble(_kPresenceLastFixLat, lat);
+      await prefs.setDouble(_kPresenceLastFixLng, lng);
+      final state = prefs.getString(_kPresenceAppLifecycleState);
+      if (state != null) await prefs.setString(_kPresenceLastFixAppState, state);
+      if (lastMs == null || lastLat == null || lastLng == null) return;
+      final gapMs = now.millisecondsSinceEpoch - lastMs;
+      if (gapMs < _gapLogThreshold.inMilliseconds) return;
+      final from = DateTime.fromMillisecondsSinceEpoch(lastMs);
+      final movedKm = gl.Geolocator.distanceBetween(lastLat, lastLng, lat, lng) / 1000;
+      await TrackingIncidentLogService.logLocationGap(
+        from: from,
+        to: now,
+        movedKm: movedKm,
+        appStateAtStart: lastState,
+      );
+      if (gapMs >= _gapReportToAdmin.inMilliseconds) {
+        final fmt = DateFormat('hh:mm a');
+        final where = switch (lastState) {
+          'foreground' => 'open',
+          'background' => 'in the background',
+          'closed' => 'closed',
+          _ => 'in an unknown state',
+        };
+        await _reportTrackingAlert(
+          prefs,
+          'gap',
+          message: '{name} had no location from ${fmt.format(from)} to ${fmt.format(now)} '
+              '(${gapMs ~/ 60000} min, moved ${movedKm.toStringAsFixed(2)} km). The app was $where. '
+              'That part of the route is estimated.',
+        );
+      }
+    } catch (_) {}
+  }
+
+  /// Tells the employee's admin about a tracking problem (POST /staff/geo-task/tracking-alert;
+  /// the server throttles repeats). Plain HTTP with the saved token, so it also works from the
+  /// background isolate. Best effort - the problem is already in the day's log.
+  static Future<void> _reportTrackingAlert(
+    SharedPreferences prefs,
+    String reason, {
+    String? message,
+  }) async {
+    try {
+      final token = _sanitizeStoredToken(prefs.getString('token'));
+      if (token == null || token.isEmpty) return;
+      final baseUrl = AppConstants.baseUrl.replaceAll(RegExp(r'/$'), '');
+      await http
+          .post(
+            Uri.parse('$baseUrl/staff/geo-task/tracking-alert'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({'reason': reason, if (message != null) 'message': message}),
+          )
+          .timeout(const Duration(seconds: 10));
+    } catch (_) {}
+  }
+
+  /// A fix from a fake-GPS app: never sent as a route point; logged and reported once a while.
+  static Future<void> _handleMockFix(SharedPreferences prefs) async {
+    await TrackingIncidentLogService.logMockLocation();
+    await _reportTrackingAlert(prefs, 'mock_location');
   }
 
   Future<void> _clearPinnedOfficeZone() async {
@@ -544,19 +666,20 @@ class PresenceTrackingService {
     return apiGeofence;
   }
 
-  Future<void> markAppForeground() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kPresenceAppLifecycleState, 'foreground');
-  }
+  Future<void> markAppForeground() => _setAppState('foreground');
 
-  Future<void> markAppBackground() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kPresenceAppLifecycleState, 'background');
-  }
+  Future<void> markAppBackground() => _setAppState('background');
 
-  Future<void> markAppClosed() async {
+  Future<void> markAppClosed() => _setAppState('closed');
+
+  /// Saves the app's lifecycle state; a change while punched in goes into the day's log.
+  Future<void> _setAppState(String state) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kPresenceAppLifecycleState, 'closed');
+    final previous = prefs.getString(_kPresenceAppLifecycleState);
+    await prefs.setString(_kPresenceAppLifecycleState, state);
+    if (previous != state && await isTrackingAllowed()) {
+      unawaited(TrackingIncidentLogService.logAppState(state));
+    }
   }
 
   static Future<String> _getLifecycleAppStatusForBackgroundInsert() async {
@@ -584,11 +707,18 @@ class PresenceTrackingService {
     if (_taskInProgress) return;
     if (!await isTrackingAllowed()) return;
     if (await LiveTrackingService().isActive()) return;
+    var wasRunning = false;
+    try {
+      wasRunning = await BackgroundLocationTrackerManager.isTracking();
+    } catch (_) {}
     try {
       await BackgroundLocationTrackerManager.startTracking(
         config: _presenceBackgroundConfig,
       );
+      // Logged on a real (re)start only - this runs on every dashboard reload too.
+      if (!wasRunning) unawaited(TrackingIncidentLogService.logTrackerStarted(ok: true));
     } catch (e) {
+      unawaited(TrackingIncidentLogService.logTrackerStarted(ok: false, error: '$e'));
       if (kDebugMode) {
         debugPrint('[PresenceTracking] background tracker start failed: $e');
       }
@@ -645,32 +775,49 @@ class PresenceTrackingService {
     int? batteryPercent,
     double? accuracyM,
     double? speedMps,
+    bool isMock = false,
   }) async {
     // Background isolate: refresh the prefs cache so an active task is seen (see
     // LiveTrackingService.sendTrackingFromBackground).
     try {
       await (await SharedPreferences.getInstance()).reload();
     } catch (_) {}
+    final self = PresenceTrackingService();
+    final prefs = await SharedPreferences.getInstance();
+    // Fake GPS: never a route point (presence or ride); the employee and admin are told.
+    if (isMock) {
+      if (await self.isTrackingAllowed()) await _handleMockFix(prefs);
+      return;
+    }
+    // Every fix counts for gap logging, also during a task ride (which sends its own points).
+    if (await self.isTrackingAllowed()) await _noteLocationFix(prefs, lat, lng);
     if (await LiveTrackingService().isActive()) return;
     if (!await isBackgroundPresenceEnabled()) return;
 
-    final self = PresenceTrackingService();
     if (!await self.isTrackingAllowed()) return;
 
-    final prefs = await SharedPreferences.getInstance();
     final token = _sanitizeStoredToken(prefs.getString('token'));
     if (token == null || token.isEmpty) return;
     final lifecycleState = prefs.getString(_kPresenceAppLifecycleState);
-    if (lifecycleState == 'foreground') {
+    // App open and its own timer running: that timer sends. "Foreground" with a stale timer
+    // stamp means the app was killed while open - send from here, labelled as closed.
+    final foregroundAliveMs = prefs.getInt(_kPresenceForegroundAliveMs) ?? 0;
+    final killedWhileOpen = lifecycleState == 'foreground' &&
+        DateTime.now().millisecondsSinceEpoch - foregroundAliveMs >
+            _foregroundStaleAfter.inMilliseconds;
+    if (lifecycleState == 'foreground' && !killedWhileOpen) {
       return;
     }
 
     await _loadIntervalFromPrefs(prefs);
+    final movingNow =
+        speedMps != null && speedMps.isFinite && speedMps >= _movingSpeedMps;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final lastAttemptMs = prefs.getInt(_kPresenceLastBackgroundAttemptTime);
+    final minGap = movingNow ? _movingMinGap : _idleSendInterval;
     if (lastAttemptMs != null &&
         lastAttemptMs > 0 &&
-        (nowMs - lastAttemptMs) < trackingInterval.inMilliseconds) {
+        (nowMs - lastAttemptMs) < minGap.inMilliseconds) {
       return;
     }
     await prefs.setInt(_kPresenceLastBackgroundAttemptTime, nowMs);
@@ -678,7 +825,7 @@ class PresenceTrackingService {
       lat,
       lng,
       logLabel: 'presence_store_bg',
-      moving: speedMps != null && speedMps.isFinite && speedMps >= _movingSpeedMps,
+      moving: movingNow,
     )) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
@@ -700,7 +847,9 @@ class PresenceTrackingService {
       'latitude': lat,
       'longitude': lng,
       'status': 'active',
-      'appStatus': await _getLifecycleAppStatusForBackgroundInsert(),
+      'appStatus': killedWhileOpen
+          ? 'app_closed'
+          : await _getLifecycleAppStatusForBackgroundInsert(),
       'timestamp': capturedAt.toIso8601String(),
     };
     String? presenceStatus;
@@ -738,6 +887,9 @@ class PresenceTrackingService {
       sensorSpeedMps: speedMps,
     );
     if (outlierDecision.shouldSkip) {
+      if (outlierDecision.reason == 'ignored_accuracy' && accuracyM != null) {
+        await TrackingIncidentLogService.logFixDropped(accuracyM: accuracyM);
+      }
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
           '[Trackings] presence_store_bg SKIP outlier '
@@ -1275,6 +1427,7 @@ class PresenceTrackingService {
     String? appStatus,
     String? movementType,
     double? accuracy,
+    double? speedMps,
     int? batteryPercent,
     String? address,
     String? fullAddress,
@@ -1295,6 +1448,9 @@ class PresenceTrackingService {
       sensorSpeedMps: null,
     );
     if (outlierDecision.shouldSkip) {
+      if (outlierDecision.reason == 'ignored_accuracy' && accuracy != null) {
+        await TrackingIncidentLogService.logFixDropped(accuracyM: accuracy);
+      }
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
         debugPrint(
           '[Trackings] presence_store SKIP outlier '
@@ -1314,7 +1470,8 @@ class PresenceTrackingService {
     final shouldBypassDuplicateCheck =
         !hasInternet || status == 'offline' || appStatus == 'offline';
     final movingNow = _isMovingMovementType(resolvedMovementType) ||
-        _isMovingMovementType(movementType);
+        _isMovingMovementType(movementType) ||
+        (speedMps != null && speedMps.isFinite && speedMps >= _movingSpeedMps);
     if (!shouldBypassDuplicateCheck &&
         await _shouldSkipPresenceSend(lat, lng, logLabel: 'presence_store', moving: movingNow)) {
       if (kDebugMode && AppConstants.logTrackingsToConsole) {
@@ -1361,6 +1518,9 @@ class PresenceTrackingService {
       }
       body['movementType'] = resolvedMovementType;
       if (accuracy != null) body['accuracy'] = accuracy;
+      if (speedMps != null && speedMps.isFinite && speedMps >= 0) {
+        body['speed'] = speedMps;
+      }
       if (batteryPercent != null) body['batteryPercent'] = batteryPercent;
       if (address != null && address.isNotEmpty) body['address'] = address;
       if (fullAddress != null && fullAddress.isNotEmpty) {
@@ -1567,8 +1727,16 @@ class PresenceTrackingService {
       if (pincode != null && pincode.isNotEmpty) 'pincode': pincode,
       'timestamp': capturedAtUtc.toIso8601String(),
     });
-    while (list.length > _maxPendingPresence) {
-      list = list.sublist(list.length - _maxPendingPresence);
+    if (list.length > _maxPendingPresence) {
+      final dropped = list.length - _maxPendingPresence;
+      list = list.sublist(dropped);
+      unawaited(TrackingIncidentLogService.record(
+        type: 'offline_overflow',
+        title: 'Offline Queue Full',
+        description: 'The phone has been offline too long: the oldest $dropped queued location(s) '
+            'were dropped to make room. Connect to the internet so the queue can upload.',
+        severity: 'critical',
+      ));
     }
     await _savePendingQueue(list);
     unawaited(TrackingIncidentLogService.logOfflineQueue(list.length, source: 'Presence'));
@@ -1759,19 +1927,41 @@ class PresenceTrackingService {
 
     final gf = branchGeofence;
 
-    gl.Position? position;
-    try {
-      position = await _capturePresencePosition();
-    } catch (e) {
-      if (kDebugMode) {
-        debugPrint('[PresenceTracking] accurate position failed: $e');
+    // App not on screen: the background tracker sends (every 5 s); this timer would only
+    // send the same movement twice. It still sends if that tracker is not running.
+    final appState = (await SharedPreferences.getInstance()).getString(_kPresenceAppLifecycleState);
+    if (appState != null && appState != 'foreground') {
+      try {
+        if (await BackgroundLocationTrackerManager.isTracking()) return;
+      } catch (_) {}
+    }
+
+    // Moving: the native tracker's latest fix (every 5 s), sent as is. Not moving: one
+    // stabilized fix per idle interval, as before the 5 s cadence.
+    gl.Position? position = await _recentMovingFix();
+    final movingFix = position != null;
+    if (!movingFix) {
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+      if (nowMs - _lastIdleTickMs < _idleSendInterval.inMilliseconds) return;
+      _lastIdleTickMs = nowMs;
+      try {
+        position = await _capturePresencePosition();
+      } catch (e) {
+        if (kDebugMode) {
+          debugPrint('[PresenceTracking] accurate position failed: $e');
+        }
+        return;
       }
-      return;
     }
 
     final lat = position.latitude;
     final lng = position.longitude;
     final accuracy = position.accuracy;
+    if (position.isMocked) {
+      await _handleMockFix(await SharedPreferences.getInstance());
+      return;
+    }
+    await _noteLocationFix(await SharedPreferences.getInstance(), lat, lng);
     int? batteryPercent;
     try {
       batteryPercent = await Battery().batteryLevel;
@@ -1790,7 +1980,8 @@ class PresenceTrackingService {
         : 'out_of_office';
     final appStatus = await _getAppStatusForCurrentLifecycle();
 
-    final capturedAt = DateTime.now().toUtc();
+    // A moving fix keeps its own time (it can be a few seconds old), so the route is in order.
+    final capturedAt = movingFix ? position.timestamp.toUtc() : DateTime.now().toUtc();
     final outcome = await _sendPresence(
       lat: lat,
       lng: lng,
@@ -1799,6 +1990,7 @@ class PresenceTrackingService {
       appStatus: appStatus,
       movementType: movementType,
       accuracy: accuracy,
+      speedMps: position.speed,
       batteryPercent: batteryPercent,
       address: addr['address'],
       fullAddress: addr['fullAddress'],
@@ -1851,8 +2043,35 @@ class PresenceTrackingService {
     }
   }
 
+  /// When the foreground tick last took an idle (not moving) fix.
+  int _lastIdleTickMs = 0;
+
+  /// The phone's latest fix when it is fresh, precise and moving (walking pace or faster),
+  /// else null. The native tracker refreshes it every [trackingInterval] while punched in.
+  Future<gl.Position?> _recentMovingFix() async {
+    try {
+      final p = await gl.Geolocator.getLastKnownPosition();
+      if (p == null) return null;
+      final age = DateTime.now().difference(p.timestamp);
+      if (age.isNegative || age > const Duration(seconds: 10)) return null;
+      if (!p.accuracy.isFinite || p.accuracy > kMaxAccuracyM) return null;
+      if (!p.speed.isFinite || p.speed < _movingSpeedMps) return null;
+      return p;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The open app's timer is considered dead after this long without a tick.
+  static const Duration _foregroundStaleAfter = Duration(seconds: 60);
+
   Future<void> _periodicTick() async {
     if (!_isTracking || _taskInProgress) return;
+    // Heartbeat for the background sender (see _kPresenceForegroundAliveMs).
+    try {
+      await (await SharedPreferences.getInstance())
+          .setInt(_kPresenceForegroundAliveMs, DateTime.now().millisecondsSinceEpoch);
+    } catch (_) {}
     if (_periodicTickInProgress) return;
     if (!await isTrackingAllowed()) {
       stopTracking();

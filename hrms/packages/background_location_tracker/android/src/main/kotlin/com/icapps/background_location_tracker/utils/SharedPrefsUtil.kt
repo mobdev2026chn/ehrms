@@ -10,6 +10,9 @@ internal object SharedPrefsUtil {
     private const val KEY_LOGGING_ENABED = "background.location.tracker.manager.LOGGIN_ENABLED"
     private const val KEY_TRACKING_INTERVAL = "background.location.tracker.manager.TRACKING_INTERVAL"
     private const val KEY_DISTANCE_FILTER = "background.location.tracker.manager.DISTANCE_FILTER"
+    private const val KEY_LAST_FIX_MS = "background.location.tracker.manager.LAST_FIX_MS"
+    private const val KEY_TRACKING_STARTED_MS = "background.location.tracker.manager.TRACKING_STARTED_MS"
+    private const val KEY_WATCHDOG_ALERT_SHOWN = "background.location.tracker.manager.WATCHDOG_ALERT_SHOWN"
 
     private const val KEY_NOTIFICATION_BODY = "background.location.tracker.manager.NOTIFICATION_BODY"
     private const val KEY_NOTIFICATION_ICON = "background.location.tracker.manager.NOTIFICATION_ICON"
@@ -38,6 +41,26 @@ internal object SharedPrefsUtil {
     }
 
     fun isTracking(ctx: Context): Boolean = ctx.prefs().getBoolean(KEY_IS_TRACKING, false)
+
+    /** When the last location fix arrived (ms), for the tracking watchdog. */
+    fun saveLastFix(ctx: Context, atMs: Long) {
+        ctx.prefs().edit().putLong(KEY_LAST_FIX_MS, atMs).apply()
+    }
+
+    fun lastFixMs(ctx: Context): Long = ctx.prefs().getLong(KEY_LAST_FIX_MS, 0L)
+
+    /** When tracking was last started (ms): the watchdog's reference before the first fix. */
+    fun saveTrackingStarted(ctx: Context, atMs: Long) {
+        ctx.prefs().edit().putLong(KEY_TRACKING_STARTED_MS, atMs).apply()
+    }
+
+    fun trackingStartedMs(ctx: Context): Long = ctx.prefs().getLong(KEY_TRACKING_STARTED_MS, 0L)
+
+    fun saveWatchdogAlertShown(ctx: Context, shown: Boolean) {
+        ctx.prefs().edit().putBoolean(KEY_WATCHDOG_ALERT_SHOWN, shown).apply()
+    }
+
+    fun isWatchdogAlertShown(ctx: Context): Boolean = ctx.prefs().getBoolean(KEY_WATCHDOG_ALERT_SHOWN, false)
 
     fun saveLoggingEnabled(ctx: Context, isTracking: Boolean) {
         ctx.prefs()

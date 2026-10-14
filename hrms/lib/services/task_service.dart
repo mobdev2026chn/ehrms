@@ -37,6 +37,11 @@ class TaskService {
 
   static Future<List<Map<String, dynamic>>> _loadOfflineQueue() async {
     final prefs = await SharedPreferences.getInstance();
+    // The background tracker queues ride points from its own isolate: re-read from disk,
+    // or this side would save its stale copy over the rows queued there.
+    try {
+      await prefs.reload();
+    } catch (_) {}
     final raw = prefs.getString(_offlineTrackingQueueKey);
     if (raw == null || raw.isEmpty) return [];
     try {

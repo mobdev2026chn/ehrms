@@ -24,7 +24,9 @@ import 'bloc/auth/auth_bloc.dart';
 import 'bloc/task/task_bloc.dart';
 import 'bloc/attendance/attendance_bloc.dart';
 
-const Duration _defaultBackgroundLocationInterval = Duration(minutes: 1);
+// Matches the presence / ride capture cadence (5 s while moving); startTracking re-applies
+// each caller's own interval.
+const Duration _defaultBackgroundLocationInterval = Duration(seconds: 5);
 
 @pragma('vm:entry-point')
 void backgroundCallback() {
@@ -37,19 +39,23 @@ void backgroundCallback() {
       try {
         batteryPercent = await Battery().batteryLevel;
       } catch (_) {}
-      await LiveTrackingService.sendTrackingFromBackground(
-        lat,
-        lon,
-        batteryPercent: batteryPercent,
-        speedMps: speedMps,
-        accuracyM: data.horizontalAccuracy,
-      );
+      // A fake-GPS fix is never a route point; the presence sender logs and reports it.
+      if (!data.isMock) {
+        await LiveTrackingService.sendTrackingFromBackground(
+          lat,
+          lon,
+          batteryPercent: batteryPercent,
+          speedMps: speedMps,
+          accuracyM: data.horizontalAccuracy,
+        );
+      }
       await PresenceTrackingService.sendPresenceFromBackground(
         lat,
         lon,
         batteryPercent: batteryPercent,
         accuracyM: data.horizontalAccuracy,
         speedMps: speedMps,
+        isMock: data.isMock,
       );
     });
   } on MissingPluginException catch (e) {
@@ -156,7 +162,7 @@ void main() {
             ),
             iOSConfig: const IOSConfig(
               activityType: ActivityType.FITNESS,
-              distanceFilterMeters: 40,
+              distanceFilterMeters: 20,
               restartAfterKill: true,
             ),
           ),

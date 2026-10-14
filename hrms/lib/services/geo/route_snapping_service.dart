@@ -154,19 +154,10 @@ class RouteSnappingService {
   // (travelledDistanceKm) still snaps, exactly as before.
 
   static const double _denseSpacingMeters = 60;
-  // v3: road snapping / gap routing is only kept when it fits the recorded GPS
-  // (metro, train, footpaths stay as recorded), so routes cached by v2 are rebuilt once.
-  static const String _snapCachePrefix = 'route_snap_v3:';
-  static const String _snapCacheIndex = 'route_snap_v3_index';
-
-  /// A gap longer than this is a GPS blackout (underground metro, tunnel) or a
-  /// tracking pause, not a road the person was seen on: it stays straight.
-  static const double _maxRoutableGapMeters = 1500;
-
-  /// The road route for a gap is used only if it is at most this much longer than
-  /// the straight line between its ends; a bigger detour means the person went
-  /// another way (metro / rail line, footpath) and the gap stays straight.
-  static const double _maxGapDetourRatio = 1.35;
+  // v4: every gap is routed along the roads (no length / detour / count limit), so routes
+  // cached by v3 - which left long or roundabout gaps straight - are rebuilt once.
+  static const String _snapCachePrefix = 'route_snap_v4:';
+  static const String _snapCacheIndex = 'route_snap_v4_index';
 
   /// A snapped route is rejected (raw GPS drawn instead) when it is this much
   /// longer than the recorded path …
@@ -183,8 +174,8 @@ class RouteSnappingService {
   /// comes from the Directions API instead.
   static const double _gapMeters = 250;
 
-  /// Directions requests per route at most (each is billed); further gaps stay straight.
-  static const int _maxDirectionsPerRoute = 10;
+  /// Directions requests in flight at once (every gap is routed, a batch at a time).
+  static const int _directionsConcurrency = 10;
 
   /// Display route for [raw] tracking points of task [cacheKey].
   static Future<List<LatLng>> buildDisplayRoute(
@@ -359,33 +350,33 @@ class RouteSnappingService {
     return false;
   }
 
-  /// Replaces each straight jump longer than [_gapMeters] with the road route between
-  /// its two ends (Directions API). Any request that fails leaves that gap straight.
+  /// Replaces every straight jump longer than [_gapMeters] with the road route between
+  /// its two ends (Directions API). A gap with no road route (no result, or the request
+  /// fails) stays straight - the raw GPS fallback.
   static Future<List<LatLng>> _routeGaps(List<LatLng> path) async {
     final key = AppConstants.googleMapsApiKey.trim();
     if (key.isEmpty || path.length < 2) return path;
-    final out = <LatLng>[path.first];
-    var requests = 0;
-    for (var i = 1; i < path.length; i++) {
-      final a = path[i - 1];
-      final b = path[i];
-      final gap = _metersBetween(a, b);
-      // Only short gaps are routed along the roads; a long one is a GPS blackout
-      // (underground metro, tunnel) or a pause and stays straight.
-      if (gap > _gapMeters && gap <= _maxRoutableGapMeters && requests < _maxDirectionsPerRoute) {
-        requests++;
+    final gaps = <int>[
+      for (var i = 1; i < path.length; i++)
+        if (_metersBetween(path[i - 1], path[i]) > _gapMeters) i,
+    ];
+    final roads = <int, List<LatLng>>{};
+    for (var b = 0; b < gaps.length; b += _directionsConcurrency) {
+      final batch = gaps.sublist(b, math.min(b + _directionsConcurrency, gaps.length));
+      await Future.wait(batch.map((i) async {
         try {
-          final road = await _directions(a, b, key);
-          // Keep the recorded ends; take the road geometry in between - but only when the
-          // road roughly follows the straight line (a big detour = metro / rail / footpath).
-          if (road.length > 2 && _pathLengthMeters(road) <= gap * _maxGapDetourRatio) {
-            out.addAll(road.sublist(1, road.length - 1));
-          }
+          roads[i] = await _directions(path[i - 1], path[i], key);
         } catch (e) {
           if (kDebugMode) debugPrint('[RouteSnapping] directions failed, gap stays straight: $e');
         }
-      }
-      out.add(b);
+      }));
+    }
+    final out = <LatLng>[path.first];
+    for (var i = 1; i < path.length; i++) {
+      // Keep the recorded ends; take the road geometry in between.
+      final road = roads[i];
+      if (road != null && road.length > 2) out.addAll(road.sublist(1, road.length - 1));
+      out.add(path[i]);
     }
     return out;
   }

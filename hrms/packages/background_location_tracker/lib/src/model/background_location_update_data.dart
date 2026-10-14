@@ -31,6 +31,9 @@ class BackgroundLocationUpdateData {
   /// The accuracy of the speed value, measured in meters per second. Negative value if not available.
   final double speedAccuracy;
 
+  /// True when the fix came from a mock-location (fake GPS) app. Android only; false elsewhere.
+  final bool isMock;
+
   const BackgroundLocationUpdateData({
     required this.lat,
     required this.lon,
@@ -41,6 +44,7 @@ class BackgroundLocationUpdateData {
     required this.courseAccuracy,
     required this.speed,
     required this.speedAccuracy,
+    this.isMock = false,
   });
 
   Map<String, dynamic> toMap() {
@@ -54,6 +58,7 @@ class BackgroundLocationUpdateData {
       'courseAccuracy': courseAccuracy,
       'speed': speed,
       'speedAccuracy': speedAccuracy,
+      'isMock': isMock,
     };
   }
 
@@ -68,6 +73,7 @@ class BackgroundLocationUpdateData {
       courseAccuracy: map['courseAccuracy'].toDouble(),
       speed: map['speed'].toDouble(),
       speedAccuracy: map['speedAccuracy'].toDouble(),
+      isMock: map['isMock'] == true,
     );
   }
 

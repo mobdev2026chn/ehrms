@@ -133,6 +133,8 @@ class LocationService {
         config: liveTrackingConfig,
       );
       BackgroundLocationTrackerManager.handleBackgroundUpdated((data) async {
+        // Fake GPS is never a route point (logged and reported by presence tracking).
+        if (data.isMock) return;
         final Location currentLocation = Location.fromBackgroundData(data);
         if (currentLocation.latitude != null &&
             currentLocation.longitude != null) {

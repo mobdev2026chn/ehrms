@@ -16,6 +16,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
+import '../../utils/snackbar_utils.dart';
 
 import '../../services/api_client.dart';
 import '../../services/geo/route_snapping_service.dart';
@@ -141,6 +142,11 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   String? _error;
   bool _trackingOn = false;
   double? _totalKm;
+  /// Finished legs + the leg in progress (from the last departure to now); the distance
+  /// travelled so far. Older servers send no liveKm, then it is [_totalKm].
+  double? _liveKm;
+  /// A leg is under way: departed (Punch In / Field Out), not yet at the next Field In.
+  bool _legInProgress = false;
   double? _trailKm;
   /// The whole tracked day (punch-in → punch-out / now), including time at clients.
   bool _punchedOut = false;
@@ -216,8 +222,15 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
   /// [silent]: periodic refresh — keep the map, camera and selected leg as they are.
   Future<void> _load({bool silent = false}) async {
     if (widget.staffId == null) {
-      unawaited(PresenceTrackingService().flushPendingPresenceQueue());
-      unawaited(TaskService.syncOfflineQueueBatch());
+      // Upload what the phone queued while offline first, so the route fetched below already
+      // contains those points (they are filed by the time they were recorded). Bounded, so a
+      // slow network never holds the screen.
+      try {
+        await Future.wait([
+          PresenceTrackingService().flushPendingPresenceQueue(),
+          TaskService.syncOfflineQueueBatch(),
+        ]).timeout(const Duration(seconds: 8));
+      } catch (_) {}
     }
     if (!silent) {
       setState(() {
@@ -323,6 +336,8 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         _rawRouteData = data;
         _trackingOn = data['trackingEnabled'] == true;
         _totalKm = (data['totalKm'] as num?)?.toDouble();
+        _liveKm = (data['liveKm'] as num?)?.toDouble() ?? _totalKm;
+        _legInProgress = data['openLeg'] is Map;
         _trailKm = (data['trailKm'] as num?)?.toDouble();
         _punchedOut = flags.any((f) => f.type == 'punch_out');
         final lp = data['lastPoint'];
@@ -331,6 +346,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
             : null;
         _flags = flags;
         _legs = legs;
+        _blackouts = _findBlackouts(trailT);
         final segs = _buildSegments(flags, legs, trailT);
         // Periodic refresh: keep the road-snapped line of pieces that haven't
         // changed. The growing last piece (still punched in) keeps its snapped
@@ -345,7 +361,10 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
               s.display = old.display;
             } else if (isOpen &&
                 old.key.split('-').first == s.key.split('-').first &&
-                s.points.length > old.points.length) {
+                s.points.length > old.points.length &&
+                // Only when the new points were added at the end: offline points synced
+                // late land in the middle, and then the piece is drawn again from scratch.
+                _startsWith(s.points, old.points)) {
               s.display = [...old.display, ...s.points.sublist(old.points.length)];
               s.provisional = true;
             }
@@ -357,9 +376,23 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
       unawaited(_buildMapGraphics());
     } catch (e) {
       if (!mounted || silent) return;
+      // Offline: say that the points recorded meanwhile are safe on the phone.
+      var queued = 0;
+      if (widget.staffId == null) {
+        try {
+          queued = await PresenceTrackingService().getPendingPresenceCount() +
+              await TaskService.getOfflineQueueCount();
+        } catch (_) {}
+      }
+      if (!mounted) return;
       setState(() {
         _loading = false;
-        _error = ErrorMessageUtils.toUserFriendlyMessage(e);
+        _error = ErrorMessageUtils.toUserFriendlyMessage(e) +
+            (queued > 0
+                ? '\n\n$queued location point${queued == 1 ? '' : 's'} recorded while offline '
+                    '${queued == 1 ? 'is' : 'are'} saved on this phone and will appear on the route '
+                    'as soon as the internet is back.'
+                : '');
       });
     }
   }
@@ -398,6 +431,69 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 
   /// The day's route as connected pieces (see [_Seg]).
   List<_Seg> _segs = [];
+
+  /// Stretches with no GPS: consecutive stored points more than [_blackoutAfter] and
+  /// [_blackoutMinKm] apart (tracking stopped, phone off, no signal). The route there is
+  /// the road between the two points - an estimate - so it is drawn dashed.
+  List<({LatLng a, LatLng b, DateTime from, DateTime to})> _blackouts = [];
+  static const Duration _blackoutAfter = Duration(minutes: 3);
+  static const double _blackoutMinKm = 0.15;
+
+  List<({LatLng a, LatLng b, DateTime from, DateTime to})> _findBlackouts(
+    List<(LatLng, DateTime)> trail,
+  ) {
+    final out = <({LatLng a, LatLng b, DateTime from, DateTime to})>[];
+    for (var i = 1; i < trail.length; i++) {
+      final (a, from) = trail[i - 1];
+      final (b, to) = trail[i];
+      if (to.difference(from) <= _blackoutAfter) continue;
+      final km = gl.Geolocator.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude) / 1000;
+      if (km >= _blackoutMinKm) out.add((a: a, b: b, from: from, to: to));
+    }
+    return out;
+  }
+
+  /// The part of the drawn line between [a] and [b] (nearest line points), or null.
+  List<LatLng>? _lineBetween(LatLng a, LatLng b) {
+    double d(LatLng p, LatLng q) =>
+        gl.Geolocator.distanceBetween(p.latitude, p.longitude, q.latitude, q.longitude);
+    for (final s in _segs) {
+      final line = s.line;
+      if (line.length < 2) continue;
+      var ia = -1;
+      var best = double.infinity;
+      for (var i = 0; i < line.length; i++) {
+        final v = d(line[i], a);
+        if (v < best) {
+          best = v;
+          ia = i;
+        }
+      }
+      if (ia < 0 || best > 80) continue;
+      var ib = -1;
+      best = double.infinity;
+      for (var j = ia + 1; j < line.length; j++) {
+        final v = d(line[j], b);
+        if (v < best) {
+          best = v;
+          ib = j;
+        }
+      }
+      if (ib > ia && best <= 80) return line.sublist(ia, ib + 1);
+    }
+    return null;
+  }
+
+  static bool _startsWith(List<LatLng> list, List<LatLng> prefix) {
+    if (prefix.length > list.length) return false;
+    for (var i = 0; i < prefix.length; i++) {
+      if (list[i] != prefix[i]) return false;
+    }
+    return true;
+  }
+
+  String _spanText(Duration d) =>
+      d.inMinutes >= 60 ? '${d.inHours}h ${d.inMinutes % 60}m' : '${d.inMinutes} min';
 
   /// Grey for time at a client, between two coloured legs.
   static const Color _siteColor = Color(0xFF64748B);
@@ -604,6 +700,27 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         onTap: s.legIndex == null
             ? null
             : () => setState(() => _selectedLeg = _selectedLeg == s.legIndex ? null : s.legIndex),
+      ));
+    }
+    // No-GPS stretches: white dashes over the line, so they read as dashed (estimated).
+    final timeFmt = DateFormat('hh:mm a');
+    for (var k = 0; k < _blackouts.length; k++) {
+      final g = _blackouts[k];
+      final part = _lineBetween(g.a, g.b);
+      if (part == null || part.length < 2) continue;
+      out.add(Polyline(
+        polylineId: PolylineId('nogps-$k'),
+        points: part,
+        color: Colors.white,
+        width: 6,
+        patterns: [PatternItem.dash(14), PatternItem.gap(12)],
+        zIndex: 3,
+        consumeTapEvents: true,
+        onTap: () => SnackBarUtils.showSnackBar(
+          context,
+          'No GPS from ${timeFmt.format(g.from)} to ${timeFmt.format(g.to)} '
+          '(${_spanText(g.to.difference(g.from))}). This stretch is the road route between the two points - estimated.',
+        ),
       ));
     }
     return out;
@@ -821,7 +938,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Text(
-                              '${_totalKm != null ? '${_totalKm!.toStringAsFixed(1)} km' : '—'} • ${_legs.length} ${_legs.length == 1 ? 'leg' : 'legs'}',
+                              '${_liveKm != null ? '${_liveKm!.toStringAsFixed(1)} km' : '—'} • $_legsLabel',
                               style: const TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
@@ -980,8 +1097,12 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     );
   }
 
+  /// "2 legs", plus " · 1 in progress" while a leg is under way.
+  String get _legsLabel =>
+      '${_legs.length} leg${_legs.length == 1 ? '' : 's'}${_legInProgress ? ' · 1 in progress' : ''}';
+
   Widget _summary() {
-    final km = _totalKm;
+    final km = _liveKm;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -1018,7 +1139,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                 const SizedBox(height: 2),
                 Text(
                   _trackingOn
-                      ? '${(km ?? 0).toStringAsFixed(1)} km · ${_legs.length} leg${_legs.length == 1 ? '' : 's'}'
+                      ? '${(km ?? 0).toStringAsFixed(1)} km · $_legsLabel'
                       : 'Distance is not recorded for this employee',
                   style: TextStyle(
                     fontSize: _trackingOn ? 20 : 13,
@@ -1031,6 +1152,24 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
                   Text(
                     'Whole day tracked: ${_trailKm!.toStringAsFixed(1)} km (incl. movement at clients)',
                     style: AppTextStyles.caption.copyWith(color: _muted),
+                  ),
+                ],
+                if (_trackingOn && _blackouts.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.warning_amber_rounded, size: 14, color: AppColors.error),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          'No GPS for ${_spanText(_blackouts.fold(Duration.zero, (sum, g) => sum + g.to.difference(g.from)))} '
+                          'in ${_blackouts.length} stretch${_blackouts.length == 1 ? '' : 'es'} - '
+                          'shown dashed (estimated). See Logs for why.',
+                          style: AppTextStyles.caption.copyWith(color: AppColors.error, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ],
@@ -1092,6 +1231,16 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
             const Text('At client (Field In → Field Out)', style: TextStyle(fontSize: 11.5, color: _muted)),
           ],
         ),
+        if (_blackouts.isNotEmpty)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < 3; i++)
+                Container(width: 4, height: 4, margin: const EdgeInsets.only(right: 3), color: _legPalette.first),
+              const SizedBox(width: 2),
+              const Text('Dashed = no GPS (estimated road)', style: TextStyle(fontSize: 11.5, color: _muted)),
+            ],
+          ),
       ],
     );
   }
@@ -1642,6 +1791,65 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
     return const [];
   }
 
+  /// Two stored points further apart in time than this get a "no points" row between them.
+  static const Duration _trailGapRowAfter = Duration(minutes: 3);
+
+  /// The GPS fixes in order, with a gap row wherever no point was stored for a while.
+  List<({int? index, Duration? gap, double? km})> get _trailRows {
+    final trail = _rawTrail;
+    final rows = <({int? index, Duration? gap, double? km})>[];
+    DateTime? prevAt;
+    double? prevLat, prevLng;
+    for (var i = 0; i < trail.length; i++) {
+      final p = trail[i];
+      final at = DateTime.tryParse(p['t']?.toString() ?? '');
+      final lat = (p['lat'] as num?)?.toDouble();
+      final lng = (p['lng'] as num?)?.toDouble();
+      if (at != null && prevAt != null && at.difference(prevAt) > _trailGapRowAfter) {
+        final km = (lat != null && lng != null && prevLat != null && prevLng != null)
+            ? gl.Geolocator.distanceBetween(prevLat, prevLng, lat, lng) / 1000
+            : null;
+        rows.add((index: null, gap: at.difference(prevAt), km: km));
+      }
+      rows.add((index: i, gap: null, km: null));
+      if (at != null) prevAt = at;
+      if (lat != null && lng != null) {
+        prevLat = lat;
+        prevLng = lng;
+      }
+    }
+    return rows;
+  }
+
+  /// Points closer than this across a gap: the employee stayed put (standing still saves
+  /// no points), not a tracking loss.
+  static const double _stationaryGapKm = 0.15;
+
+  Widget _trailGapRow(Duration gap, double km) {
+    final mins = gap.inMinutes;
+    final span = mins >= 60 ? '${mins ~/ 60}h ${mins % 60}m' : '$mins min';
+    final stayed = km < _stationaryGapKm;
+    final color = stayed ? AppColors.textSecondary : AppColors.error;
+    return Container(
+      color: stayed ? AppColors.inputFill : AppColors.errorBg.withValues(alpha: 0.6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      child: Row(
+        children: [
+          Icon(stayed ? Icons.pause_circle_outline_rounded : Icons.location_disabled_rounded, size: 15, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              stayed
+                  ? 'Stayed in one place for $span (no new points needed)'
+                  : 'No points saved for $span · moved ${km.toStringAsFixed(2)} km (see All Logs for why)',
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: color),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   List<({_Leg leg, String reason, Duration duration, double km, int points})> get _straightLineLegs {
     final list = <({_Leg leg, String reason, Duration duration, double km, int points})>[];
     for (final l in widget.legs) {
@@ -1658,9 +1866,11 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
     return list;
   }
 
-  int get _gpsCount => _incidents.where((i) => i.isGps).length;
-  int get _networkCount => _incidents.where((i) => i.isNetwork).length;
-  int get _permissionCount => _incidents.where((i) => i.isPermission).length;
+  // Counts are problems only (GPS off, gaps, outages, blocks) - the lists also show the
+  // recoveries ("network restored", "queue synced", "permission OK") for context.
+  int get _gpsCount => _incidents.where((i) => i.isGps && i.isProblem).length;
+  int get _networkCount => _incidents.where((i) => i.isNetwork && i.isProblem).length;
+  int get _permissionCount => _incidents.where((i) => i.isPermission && i.isProblem).length;
 
   List<TrackingIncident> get _filteredIncidents {
     switch (_activeFilter) {
@@ -2076,9 +2286,12 @@ class _RouteLogsBottomSheetState extends State<_RouteLogsBottomSheet> {
                       ),
                       child: ListView.separated(
                         shrinkWrap: true,
-                        itemCount: trail.length,
+                        itemCount: _trailRows.length,
                         separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFFEEF2F6)),
-                        itemBuilder: (ctx, idx) {
+                        itemBuilder: (ctx, row) {
+                          final r = _trailRows[row];
+                          if (r.gap != null) return _trailGapRow(r.gap!, r.km ?? 0);
+                          final idx = r.index!;
                           final p = trail[idx];
                           final lat = (p['lat'] as num?)?.toDouble().toStringAsFixed(5) ?? '—';
                           final lng = (p['lng'] as num?)?.toDouble().toStringAsFixed(5) ?? '—';
