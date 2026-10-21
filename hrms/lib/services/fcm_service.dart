@@ -24,6 +24,7 @@ import '../screens/interaction/staff/staff_announcement_detail_screen.dart';
 import '../screens/salary/all_payslips_screen.dart';
 import '../screens/grievance/grievance_shell_screen.dart';
 import '../screens/interaction/staff/staff_interaction_screen.dart';
+import '../screens/admin/interaction/admin_interaction_screen.dart';
 import '../screens/assets/assets_listing_screen.dart';
 import '../screens/lms/lms_shell_screen.dart';
 import '../screens/geo/my_tasks_screen.dart';
@@ -1329,6 +1330,16 @@ class FcmService {
     return false;
   }
 
+  static bool _isAdminPayload(Map<String, dynamic> data) {
+    final role = (data['role'] ?? '').toString().toLowerCase();
+    final staffType = (data['staffType'] ?? '').toString().toLowerCase();
+    return role == 'admin' ||
+        role == 'superadmin' ||
+        role == 'hr' ||
+        role == 'hr_admin' ||
+        staffType == 'admin';
+  }
+
   /// Maps an explicit `screen`/`route` value from the notification payload to a
   /// Flutter screen, so a notification can target a screen directly (independent
   /// of `module`). Returns null for unknown keys — the caller then falls back to
@@ -1365,15 +1376,26 @@ class FcmService {
       case 'grievance':
       case 'grievances':
         return const GrievanceShellScreen();
+      case 'admin_interaction':
+      case 'admininteraction':
+        return const AdminInteractionScreen();
+      case 'admin_poll':
+      case 'admin_polls':
+      case 'adminpolls':
+        return const AdminInteractionScreen(initialTab: 2);
       case 'interaction':
       case 'chat':
       case 'chats':
       case 'message':
       case 'messages':
-        return const StaffInteractionScreen();
+        return _isAdminPayload(data)
+            ? const AdminInteractionScreen()
+            : const StaffInteractionScreen();
       case 'poll':
       case 'polls':
-        return const StaffInteractionScreen(initialTab: 1);
+        return _isAdminPayload(data)
+            ? const AdminInteractionScreen(initialTab: 2)
+            : const StaffInteractionScreen(initialTab: 1);
       case 'asset':
       case 'assets':
       case 'license':
@@ -1599,8 +1621,34 @@ class FcmService {
         type.startsWith('chat') ||
         type.startsWith('message') ||
         type.startsWith('poll')) {
-      _log('handleNotificationData: navigating to StaffInteractionScreen');
       final isPoll = effModule == 'poll' || type.startsWith('poll');
+      bool isAdmin = false;
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final userStr = prefs.getString('user');
+        if (userStr != null) {
+          final u = jsonDecode(userStr);
+          final role = (u['role'] ?? '').toString().toLowerCase();
+          final staffType = (u['staffType'] ?? '').toString().toLowerCase();
+          isAdmin = role == 'admin' ||
+              role == 'superadmin' ||
+              role == 'hr' ||
+              role == 'hr_admin' ||
+              staffType == 'admin';
+        }
+      } catch (_) {}
+
+      if (isAdmin) {
+        _log('handleNotificationData: navigating to AdminInteractionScreen');
+        navPush(
+          MaterialPageRoute<void>(
+            builder: (_) => AdminInteractionScreen(initialTab: isPoll ? 2 : 0),
+          ),
+        );
+        return true;
+      }
+
+      _log('handleNotificationData: navigating to StaffInteractionScreen');
       navPush(
         MaterialPageRoute<void>(
           builder: (_) => StaffInteractionScreen(initialTab: isPoll ? 1 : 0),

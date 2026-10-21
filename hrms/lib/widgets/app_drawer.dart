@@ -16,6 +16,7 @@ import '../screens/settings/settings_screen.dart';
 import '../screens/overtime/overtime_screen.dart';
 import '../screens/geo/my_tasks_screen.dart';
 import '../screens/profile/profile_screen.dart';
+import '../screens/admin/profile/admin_profile_screen.dart';
 import '../screens/admin/staff/admin_staff_list_screen.dart';
 import '../screens/admin/staff/admin_attendance_screen.dart';
 import '../screens/admin/staff/admin_overtime_screen.dart';
@@ -47,6 +48,7 @@ import '../screens/admin/recruitment/admin_selected_rejected_screen.dart';
 import '../screens/admin/recruitment/admin_offer_letter_screen.dart';
 import '../screens/admin/recruitment/admin_verifications_screen.dart';
 import '../screens/interaction/staff/staff_interaction_screen.dart';
+import '../screens/admin/interaction/admin_interaction_screen.dart';
 import '../screens/announcements/announcements_screen.dart';
 import '../screens/admin/staff/admin_import_staff_screen.dart';
 import '../screens/admin/recruitment/admin_recruitment_analytics_screen.dart';
@@ -491,7 +493,7 @@ class _AppDrawerState extends State<AppDrawer> {
         _NavGroup('Modules', [
           _NavNode.leaf('Performance', Icons.trending_up_rounded, () => const PerformanceModuleScreen()),
           _NavNode.leaf('LMS', Icons.school_outlined, () => const LmsAdminShellScreen()),
-          _NavNode.leaf('Interaction', Icons.forum_outlined, () => const StaffInteractionScreen()),
+          _NavNode.leaf('Interaction', Icons.forum_outlined, () => const AdminInteractionScreen()),
           _NavNode.leaf('Asset Management', Icons.devices_other_outlined, () => const AssetsAllListScreen()),
           _NavNode.leaf('Grievance', Icons.report_gmailerrorred_outlined, () => const GrievanceShellScreen()),
           _NavNode.leaf('Announcements', Icons.campaign_rounded, () => const AdminAnnouncementsScreen()),
@@ -500,7 +502,7 @@ class _AppDrawerState extends State<AppDrawer> {
           _NavNode.leaf('Notifications', Icons.notifications_outlined, () => const NotificationsScreen()),
         ]),
         _NavGroup('Account', [
-          _NavNode.leaf('Profile', Icons.person_outline_rounded, () => const ProfileScreen(dashboardTabIndex: 3)),
+          _NavNode.leaf('Profile', Icons.person_outline_rounded, () => const AdminProfileScreen(dashboardTabIndex: 3)),
           _NavNode.leaf('App Settings', Icons.settings_outlined, () => const SettingsScreen()),
         ]),
       ];
@@ -552,7 +554,7 @@ class _AppDrawerState extends State<AppDrawer> {
 
     return _pressable(
       radius: 16,
-      onTap: () => _open(const ProfileScreen(dashboardTabIndex: 3)),
+      onTap: () => _open(const AdminProfileScreen(dashboardTabIndex: 3)),
       child: Ink(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(

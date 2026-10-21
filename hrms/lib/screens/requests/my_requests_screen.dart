@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FilteringTextInputFormatter, LengthLimitingTextInputFormatter;
 import 'dart:async';
 import 'package:intl/intl.dart';
 import 'dart:io';
@@ -1110,13 +1111,21 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
   Future<void> _cancelLeave(Map<String, dynamic> leave) async {
     final leaveId = leave['_id']?.toString() ?? leave['id']?.toString();
     if (leaveId == null || leaveId.isEmpty) return;
+    final isApproved = (leave['status']?.toString() ?? '').toLowerCase() == 'approved';
 
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Cancel Leave Request', style: AppTextStyles.headingSmall),
         content: Text(
-          'Are you sure you want to cancel this leave request?',
+          // Cancelling an already-approved leave restores the balance it used and reverts the
+          // days marked as leave in attendance (cancelMyLeaveRequest, HRMSbackend) - worth
+          // saying plainly, since undoing an approval is a bigger step than withdrawing a
+          // request still awaiting a decision.
+          isApproved
+              ? 'This leave is already approved. Cancelling it will restore your leave balance '
+                  'and remove it from your attendance record. Are you sure?'
+              : 'Are you sure you want to cancel this leave request?',
           style: AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
         ),
         actions: [
@@ -2162,7 +2171,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
-                    if (isPending) ...[
+                    if (isPending || isApproved) ...[
                       const SizedBox(height: 10),
                       Align(
                         alignment: Alignment.centerRight,
@@ -2285,7 +2294,7 @@ class _LeaveRequestsTabState extends State<LeaveRequestsTab>
                   DataCell(
                     _RowActions(
                       onView: () => _showLeaveDetails(leave is Map<String, dynamic> ? leave : Map<String, dynamic>.from(leave as Map)),
-                      extra: isPending
+                      extra: (isPending || isApproved)
                         ? OutlinedButton(
                             onPressed: () => _cancelLeave(leave),
                             style: OutlinedButton.styleFrom(
@@ -2554,6 +2563,21 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     } catch (_) {}
   }
 
+  /// Number of leave days the current Start/End (or half-day) selection charges, for the
+  /// "Total Days" preview shown while applying - same formula as the authoritative calc in
+  /// _handleApplyLeaveSubmit, so what the employee sees before submitting is what they get.
+  /// Null when the dates aren't resolved yet (nothing to preview).
+  double? get _previewLeaveDays {
+    if (_isHalfDay) return _startDate != null ? 0.5 : null;
+    final start = _startDate;
+    final end = _endDate;
+    if (start == null || end == null) return null;
+    final s = DateTime(start.year, start.month, start.day);
+    final e = DateTime(end.year, end.month, end.day);
+    if (s.isAfter(e)) return null;
+    return (e.difference(s).inDays + 1).toDouble();
+  }
+
   Map<String, dynamic>? get _selectedOption {
     if (_selectedLeaveTypeName == null) return null;
     return _leaveTypeOptions.firstWhere(
@@ -2564,11 +2588,15 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   Future<void> _pickDateFor(bool isStart) async {
     final DateTime initial = (isStart ? _startDate : _endDate) ?? DateTime.now();
+    final today = DateTime.now();
+    final todayOnly = DateTime(today.year, today.month, today.day);
+    // Leave is for time not yet worked - today or later only. Previously allowed a date up to
+    // 30 days in the past, which let an employee file a leave request for a day already over.
     final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
-      initialDate: initial,
-      firstDate: DateTime.now().subtract(const Duration(days: 30)),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
+      initialDate: initial.isBefore(todayOnly) ? todayOnly : initial,
+      firstDate: todayOnly,
+      lastDate: today.add(const Duration(days: 365)),
     );
 
     if (picked != null) {
@@ -3535,6 +3563,35 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                       ),
                     ),
                   ],
+                ),
+              ],
+
+              if (_previewLeaveDays != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.brandLight,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.event_available_rounded, size: 16, color: AppColors.primaryText),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Total Days',
+                        style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primaryText),
+                      ),
+                      const Spacer(),
+                      Text(
+                        _previewLeaveDays == _previewLeaveDays!.roundToDouble()
+                            ? '${_previewLeaveDays!.toInt()} Day${_previewLeaveDays == 1 ? '' : 's'}'
+                            : '${_previewLeaveDays!} Day(s)',
+                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppColors.primaryText),
+                      ),
+                    ],
+                  ),
                 ),
               ],
 
@@ -8349,8 +8406,18 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
 
     final lH = int.tryParse(_lateHoursController.text.trim()) ?? 0;
     final lM = int.tryParse(_lateMinutesController.text.trim()) ?? 0;
-    final eH = int.tryParse(_earlyHoursController.text.trim()) ?? 0;
-    final eM = int.tryParse(_earlyMinutesController.text.trim()) ?? 0;
+    // Custom is a single Hours/Minutes duration (the "Custom Window"): it shares the Late
+    // controllers (same field role, matching the web app) and always sends 0 for Early, so
+    // the backend's existing (lateHours+lateMinutes)+(earlyHours+earlyMinutes) sum for 'Custom'
+    // resolves to just the entered duration, with no backend change needed.
+    final eH = _permType == 'Custom' ? 0 : (int.tryParse(_earlyHoursController.text.trim()) ?? 0);
+    final eM = _permType == 'Custom' ? 0 : (int.tryParse(_earlyMinutesController.text.trim()) ?? 0);
+
+    // The Minutes field is the remainder within an hour - 60 or more belongs in the Hours field.
+    if (lM < 0 || lM > 59 || eM < 0 || eM > 59) {
+      setState(() => _errorMessage = 'Minutes must be between 0 and 59. Use the Hours field for whole hours.');
+      return;
+    }
 
     int totalDuration = 0;
     if (_permType == 'Late') {
@@ -8358,7 +8425,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
     } else if (_permType == 'Early') {
       totalDuration = eH * 60 + eM;
     } else if (_permType == 'Custom') {
-      totalDuration = (lH * 60 + lM) + (eH * 60 + eM);
+      totalDuration = lH * 60 + lM;
     }
 
     if (totalDuration <= 0) {
@@ -8409,6 +8476,19 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
         );
       });
     }
+  }
+
+  /// "1 hr 30 min (90 mins)" / "1 hr (60 mins)" / "30 min (30 mins)" — matches the web app's
+  /// "Total duration" line under the Custom Duration fields.
+  String _formatDuration(int totalMins) {
+    final hrs = totalMins ~/ 60;
+    final mins = totalMins % 60;
+    final label = hrs > 0 && mins > 0
+        ? '$hrs hr $mins min'
+        : hrs > 0
+            ? '$hrs hr'
+            : '$mins min';
+    return '$label ($totalMins mins)';
   }
 
   @override
@@ -8579,7 +8659,7 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                     items: const [
                       DropdownMenuItem(value: 'Late', child: Text('Late')),
                       DropdownMenuItem(value: 'Early', child: Text('Early')),
-                      DropdownMenuItem(value: 'Custom', child: Text('Custom')),
+                      DropdownMenuItem(value: 'Custom', child: Text('Custom (Custom Window)')),
                     ],
                     onChanged: (val) {
                       if (val != null) {
@@ -8634,6 +8714,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           TextField(
                             controller: _lateMinutesController,
                             keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(2),
+                            ],
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 30)',
                               hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
@@ -8690,6 +8774,10 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           TextField(
                             controller: _earlyMinutesController,
                             keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(2),
+                            ],
                             decoration: InputDecoration(
                               hintText: 'Minutes (e.g. 45)',
                               hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
@@ -8706,9 +8794,12 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                   ],
                 ),
               ] else ...[
-                // Custom: Both Late & Early rows
+                // Custom: a single excused-time budget for the day (the "Custom Window"),
+                // used on the day via Start/End Permission on the dashboard. Shares the Late
+                // controllers (same field role as Late/Early); submit always zeroes Early for
+                // this type (see _handleRequestPermissionSubmit), matching the web app.
                 const Text(
-                  'LATE DURATION *',
+                  'CUSTOM DURATION *',
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -8726,8 +8817,9 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           TextField(
                             controller: _lateHoursController,
                             keyboardType: TextInputType.number,
+                            onChanged: (_) => setState(() {}),
                             decoration: InputDecoration(
-                              hintText: 'Hours (e.g. 0)',
+                              hintText: 'Hours (e.g. 1)',
                               hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
                               fillColor: AppColors.background,
@@ -8747,8 +8839,13 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                           TextField(
                             controller: _lateMinutesController,
                             keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(2),
+                            ],
+                            onChanged: (_) => setState(() {}),
                             decoration: InputDecoration(
-                              hintText: 'Minutes (e.g. 0)',
+                              hintText: 'Minutes (0-59)',
                               hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
                               filled: true,
                               fillColor: AppColors.background,
@@ -8756,67 +8853,26 @@ class _RequestPermissionDialogState extends State<RequestPermissionDialog> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
+                          const Text('Minutes (0-59)', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'EARLY DURATION *',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.textSecondary,
-                    letterSpacing: 0.6,
-                  ),
                 ),
                 const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TextField(
-                            controller: _earlyHoursController,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(
-                              hintText: 'Hours (e.g. 0)',
-                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
-                              filled: true,
-                              fillColor: AppColors.background,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text('Hours', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TextField(
-                            controller: _earlyMinutesController,
-                            keyboardType: TextInputType.number,
-                            decoration: InputDecoration(
-                              hintText: 'Minutes (e.g. 30)',
-                              hintStyle: const TextStyle(fontSize: 13, color: AppColors.textCaption),
-                              filled: true,
-                              fillColor: AppColors.background,
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          const Text('Minutes', style: TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w500)),
-                        ],
-                      ),
-                    ),
-                  ],
+                Builder(builder: (context) {
+                  final h = int.tryParse(_lateHoursController.text.trim()) ?? 0;
+                  final m = int.tryParse(_lateMinutesController.text.trim()) ?? 0;
+                  final total = h * 60 + m;
+                  return Text(
+                    'Total duration: ${_formatDuration(total)}',
+                    style: const TextStyle(fontSize: 12, color: AppColors.textSecondary, fontWeight: FontWeight.w600),
+                  );
+                }),
+                const SizedBox(height: 6),
+                const Text(
+                  'On the day, use Start / End Permission on your dashboard. Only the time logged there is excused.',
+                  style: TextStyle(fontSize: 11.5, color: AppColors.textCaption),
                 ),
               ],
 
@@ -10191,10 +10247,33 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
     final now = DateTime.now();
     _month = _months[now.month - 1];
     _yearController = TextEditingController(text: now.year.toString());
+    // Re-filter the Month dropdown (and clamp _month if it's now past the end of that list)
+    // whenever the typed year changes - e.g. typing next year should hide months not reached yet.
+    _yearController.addListener(_onYearChanged);
+  }
+
+  void _onYearChanged() {
+    final available = _availableMonths;
+    if (available.isNotEmpty && !available.contains(_month)) {
+      setState(() => _month = available.last);
+    } else {
+      setState(() {});
+    }
+  }
+
+  /// Months selectable for the typed year: all twelve for a past year, up to and including
+  /// the current month for the current year, none (handled by the submit-time check) beyond.
+  List<String> get _availableMonths {
+    final now = DateTime.now();
+    final year = int.tryParse(_yearController.text.trim());
+    if (year == null || year < now.year) return _months;
+    if (year > now.year) return const [];
+    return _months.sublist(0, now.month);
   }
 
   @override
   void dispose() {
+    _yearController.removeListener(_onYearChanged);
     _yearController.dispose();
     _reasonController.dispose();
     super.dispose();
@@ -10207,6 +10286,15 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
     final year = int.tryParse(yearStr);
     if (year == null || year < 2000 || year > 2100) {
       setState(() => _errorMessage = 'Please enter a valid year.');
+      return;
+    }
+
+    // A payslip is for a month that has (at least started to) run through payroll - nothing to
+    // issue yet for one that hasn't happened. The current month is still allowed.
+    final now = DateTime.now();
+    final monthIndex = _months.indexOf(_month) + 1;
+    if (year > now.year || (year == now.year && monthIndex > now.month)) {
+      setState(() => _errorMessage = 'Payslip cannot be requested for a future month.');
       return;
     }
 
@@ -10337,11 +10425,16 @@ class _RequestPayslipDialogState extends State<RequestPayslipDialog> {
                 ),
                 child: DropdownButtonHideUnderline(
                   child: DropdownButton<String>(
-                    value: _month,
+                    // Only an available month can be the value - an empty list (a future year
+                    // typed in) leaves this null rather than pointing at a hidden item.
+                    value: _availableMonths.contains(_month) ? _month : null,
+                    hint: _availableMonths.isEmpty
+                        ? const Text('Enter a valid year', style: TextStyle(fontSize: 13, color: AppColors.textCaption))
+                        : null,
                     isExpanded: true,
                     icon: const Icon(Icons.keyboard_arrow_down_rounded, color: AppColors.textSecondary),
                     style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: AppColors.textPrimary),
-                    items: _months
+                    items: _availableMonths
                         .map((m) => DropdownMenuItem(value: m, child: Text(m)))
                         .toList(),
                     onChanged: _isSubmitting

@@ -24,6 +24,7 @@ import '../../widgets/notification_reaction_overlay.dart';
 import '../../widgets/bottom_navigation_bar.dart';
 import '../../services/attendance_service.dart';
 import '../../services/break_service.dart';
+import '../../services/permission_service.dart';
 import '../../services/face_identity_guard.dart';
 import '../../services/break_reminder_service.dart';
 import '../../models/break_summary.dart';
@@ -98,6 +99,7 @@ class _DashboardScreenState extends State<DashboardScreen>
   bool _isSubmitAttendanceDialogVisible = false;
   bool _isPunchActionInProgress = false;
   bool _isBreakActionInProgress = false;
+  bool _isPermissionActionInProgress = false;
 
   /// UTC instant captured the moment the punch / break button is tapped, before
   /// any camera, location or network work. Sent as the server-saved time so the
@@ -141,6 +143,7 @@ class _DashboardScreenState extends State<DashboardScreen>
 
   final AttendanceService _attendanceService = AttendanceService();
   final BreakService _breakService = BreakService();
+  final PermissionService _permissionService = PermissionService();
   final AuthService _authService = AuthService();
   final RequestService _requestService = RequestService();
   final ValueNotifier<int> _dashboardRefreshTrigger = ValueNotifier<int>(0);
@@ -1886,6 +1889,154 @@ class _DashboardScreenState extends State<DashboardScreen>
     } finally {
       if (mounted) {
         setState(() => _isBreakActionInProgress = false);
+      }
+    }
+  }
+
+  /// Start/End Permission - the dashboard's inline counterpart to the web app's
+  /// "Start Permission" / "Stop Permission" button. Mirrors _startBreakFlow /
+  /// _endBreakFlow's selfie-and-submit shape, but simpler: there is only ever one
+  /// active permission window (no id to track, unlike a break), and the "allowance"
+  /// is today's Approved Custom permission request(s), not an assigned template - see
+  /// services/attendance/staffPermissionService.ts (HRMSbackend) and
+  /// services/permission_service.dart.
+  Future<void> _permissionActionFlow() async {
+    if (_isPermissionActionInProgress) return;
+    setState(() => _isPermissionActionInProgress = true);
+    try {
+      final statusResult = await _permissionService.getStatus();
+      if (!mounted) return;
+      if (statusResult['success'] != true) {
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(
+            statusResult['message']?.toString(),
+            fallback: 'Could not load permission status.',
+          ),
+          isError: true,
+        );
+        return;
+      }
+      final status = statusResult['status'] as PermissionWindowStatus;
+
+      if (!status.hasRequest) {
+        // "Apply for Permission": no Custom request for today - send them to create one,
+        // same destination as the dashboard's "Request Permission" quick action.
+        _onDashboardNavigate(1, subTabIndex: 1);
+        return;
+      }
+      if (!status.isOnPermission && status.requestStatus == 'Pending') {
+        SnackBarUtils.showSnackBar(
+          context,
+          'Your Custom permission request for today is still awaiting approval.',
+        );
+        return;
+      }
+      if (!status.isOnPermission && !status.canStartPermission) {
+        SnackBarUtils.showSnackBar(
+          context,
+          status.remainingMinutes <= 0
+              ? 'You have already used your full approved permission time for today.'
+              : 'Permission cannot be started right now.',
+          isError: true,
+        );
+        return;
+      }
+
+      final isEnding = status.isOnPermission;
+      File? file;
+      _ResolvedLocation? latestLocation;
+
+      if (AppConstants.enableAttendanceSelfie) {
+        if (!await FaceEnrollmentGate.ensureEnrolled(context, actionLabel: 'permission')) {
+          return;
+        }
+        if (!mounted) return;
+        final result = await SelfieCameraScreen.captureSelfie(
+          context,
+          title: isEnding ? 'End Permission' : 'Start Permission',
+          loadLocationOnOpen: true,
+          infoText: isEnding
+              ? 'Approved budget: ${status.allowedMinutes} min'
+              : 'Remaining today: ${status.remainingMinutes} min',
+          onRefreshLocation: () async {
+            final location = await _getCurrentLocation();
+            latestLocation = location;
+            final formatted = _formatLocationText(location);
+            return formatted.isEmpty ? null : formatted;
+          },
+          // Same scan-time face-match + buddy-punch identity check as punch/break.
+          onCaptured: _verifyBreakFace,
+        );
+        if (!mounted) return;
+        if (result is File) {
+          file = result;
+        } else if (identical(result, useImagePickerFallback)) {
+          final pickedFile = await ImagePicker().pickImage(
+            source: ImageSource.camera,
+            preferredCameraDevice: CameraDevice.front,
+            imageQuality: 85,
+            maxWidth: 1024,
+          );
+          if (!mounted) return;
+          if (pickedFile != null) file = File(pickedFile.path);
+        }
+        if (file == null) return;
+      }
+
+      final location = latestLocation ?? await _getCurrentLocation();
+      if (!mounted) return;
+      final position = location.position;
+      if (position == null) {
+        SnackBarUtils.showSnackBar(context, 'Location is required for this.', isError: true);
+        return;
+      }
+      final selfie = file != null
+          ? await AttendanceSelfieCompress.compressRawBytesToDataUrl(await file.readAsBytes())
+          : '';
+
+      final result = isEnding
+          ? await _permissionService.endPermission(
+              lat: position.latitude,
+              lng: position.longitude,
+              address: location.address,
+              area: location.area,
+              city: location.city,
+              pincode: location.pincode,
+              selfie: selfie,
+            )
+          : await _permissionService.startPermission(
+              lat: position.latitude,
+              lng: position.longitude,
+              address: location.address,
+              area: location.area,
+              city: location.city,
+              pincode: location.pincode,
+              selfie: selfie,
+            );
+
+      if (!mounted) return;
+      if (result['success'] == true) {
+        SnackBarUtils.showSnackBar(
+          context,
+          result['message']?.toString() ?? (isEnding ? 'Permission ended' : 'Permission started'),
+        );
+        // Same trigger break uses after a successful start/end - refreshes _todayAttendance
+        // (and its permissionStatus) wherever HomeDashboardScreen reads it.
+        _dashboardRefreshTrigger.value++;
+      } else {
+        SnackBarUtils.showSnackBar(
+          context,
+          ErrorMessageUtils.sanitizeForDisplay(
+            result['message']?.toString(),
+            fallback: isEnding ? 'Failed to end permission' : 'Failed to start permission',
+          ),
+          isError: true,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isPermissionActionInProgress = false);
       }
     }
   }
@@ -3669,6 +3820,8 @@ class _DashboardScreenState extends State<DashboardScreen>
         onEndBreakTap: _endBreakFlow,
         isBreakActionInProgress: _isBreakActionInProgress,
         completedBreakSecondsToday: _breakSummary?.completedBreakSeconds,
+        onPermissionActionTap: _permissionActionFlow,
+        isPermissionActionInProgress: _isPermissionActionInProgress,
       ),
       MyRequestsScreen(
         // Stable key: an in-screen tab switch must NOT recreate the whole

@@ -16,7 +16,6 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:intl/intl.dart';
-import '../../utils/snackbar_utils.dart';
 
 import '../../services/api_client.dart';
 import '../../services/geo/route_snapping_service.dart';
@@ -94,7 +93,10 @@ class _Leg {
     final pts = path.length;
     final d = duration;
     final strKm = straightLineKm;
-    return pts <= 2 && (strKm >= 0.15 || d.inMinutes >= 15 || (km != null && km! > 1.5));
+    if (pts <= 2 && (strKm >= 0.15 || d.inMinutes >= 15 || (km != null && km! > 1.5))) return true;
+    if (pts <= 5 && (d.inMinutes >= 15 || strKm >= 0.5)) return true;
+    if (pts <= 10 && d.inMinutes >= 30) return true;
+    return false;
   }
 
   String get blackoutReason {
@@ -117,7 +119,7 @@ class _Leg {
 /// (F1 → F1 out). Consecutive pieces share their end points, so the route is
 /// one unbroken line from Punch In to Punch Out.
 class _Seg {
-  _Seg(this.key, this.legIndex, this.color, this.points);
+  _Seg(this.key, this.legIndex, this.color, this.points, {this.fromAt, this.toAt});
   final String key;
 
   /// Leg number for travel pieces; null for time at a client.
@@ -126,6 +128,8 @@ class _Seg {
 
   /// Anchored at both ends (flag positions / neighbour's end).
   final List<LatLng> points;
+  final DateTime? fromAt;
+  final DateTime? toAt;
 
   /// [points] snapped to the roads, with the same two end points.
   List<LatLng> display = const [];
@@ -453,36 +457,6 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     return out;
   }
 
-  /// The part of the drawn line between [a] and [b] (nearest line points), or null.
-  List<LatLng>? _lineBetween(LatLng a, LatLng b) {
-    double d(LatLng p, LatLng q) =>
-        gl.Geolocator.distanceBetween(p.latitude, p.longitude, q.latitude, q.longitude);
-    for (final s in _segs) {
-      final line = s.line;
-      if (line.length < 2) continue;
-      var ia = -1;
-      var best = double.infinity;
-      for (var i = 0; i < line.length; i++) {
-        final v = d(line[i], a);
-        if (v < best) {
-          best = v;
-          ia = i;
-        }
-      }
-      if (ia < 0 || best > 80) continue;
-      var ib = -1;
-      best = double.infinity;
-      for (var j = ia + 1; j < line.length; j++) {
-        final v = d(line[j], b);
-        if (v < best) {
-          best = v;
-          ib = j;
-        }
-      }
-      if (ib > ia && best <= 80) return line.sublist(ia, ib + 1);
-    }
-    return null;
-  }
 
   static bool _startsWith(List<LatLng> list, List<LatLng> prefix) {
     if (prefix.length > list.length) return false;
@@ -518,13 +492,13 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
 
     _Leg? legFrom(_Flag f) {
       for (final l in legs) {
-        if (l.fromAt.difference(f.at).inSeconds.abs() <= 1) return l;
+        if (l.fromAt.difference(f.at).inSeconds.abs() <= 60) return l;
       }
       return null;
     }
 
     final segs = <_Seg>[];
-    LatLng? carry = marks.first.pos; // the previous piece's end
+    LatLng? carry = marks.first.pos; // the previous piece's end00
     for (var i = 0; i < marks.length; i++) {
       final from = marks[i];
       final to = i + 1 < marks.length ? marks[i + 1] : null;
@@ -549,6 +523,8 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
         leg?.index,
         leg?.color ?? (isTravel ? _legPalette[segs.length % _legPalette.length] : _siteColor),
         pts,
+        fromAt: from.at,
+        toAt: end,
       ));
     }
     return segs;
@@ -569,6 +545,7 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
     }
 
     for (final f in _flags) {
+      if (!mounted) return;
       if (f.pos == null) continue;
       final key = _flagKey(f);
       if (_icons.containsKey(key)) continue;
@@ -676,53 +653,230 @@ class _MyDayRouteScreenState extends State<MyDayRouteScreen> {
           ),
       };
 
+  ({int start, int end})? _findRangeInLine(List<LatLng> line, LatLng a, LatLng b) {
+    if (line.length < 2) return null;
+    double d(LatLng p, LatLng q) =>
+        gl.Geolocator.distanceBetween(p.latitude, p.longitude, q.latitude, q.longitude);
+
+    var ia = -1;
+    var bestA = double.infinity;
+    for (var i = 0; i < line.length; i++) {
+      final v = d(line[i], a);
+      if (v < bestA) {
+        bestA = v;
+        ia = i;
+      }
+    }
+    if (ia < 0 || bestA > 500) return null;
+
+    var ib = -1;
+    var bestB = double.infinity;
+    for (var j = ia + 1; j < line.length; j++) {
+      final v = d(line[j], b);
+      if (v < bestB) {
+        bestB = v;
+        ib = j;
+      }
+    }
+    if (ib > ia && bestB <= 500) {
+      return (start: ia, end: ib);
+    }
+    return null;
+  }
+
   /// One continuous route: the pieces in order, each in its leg colour (grey
   /// while at a client). Tap a leg to highlight it.
+  /// Normal GPS portions are drawn solid; no-GPS / blackout stretches are drawn dashed.
   Set<Polyline> get _polylines {
     final out = <Polyline>{};
+
     for (var i = 0; i < _segs.length; i++) {
       final s = _segs[i];
       final pts = s.line;
       if (pts.length < 2) continue;
+
       final faded = _selectedLeg != null && s.legIndex != _selectedLeg;
-      final isBlackout = s.legIndex != null && _legs.any((l) => l.index == s.legIndex && l.isBlackoutOrStraight);
-      out.add(Polyline(
-        polylineId: PolylineId('seg-$i'),
-        points: pts,
-        color: faded ? s.color.withValues(alpha: 0.3) : s.color,
-        width: s.legIndex == null ? 5 : 6,
-        patterns: isBlackout ? [PatternItem.dash(18), PatternItem.gap(10)] : const [],
-        jointType: JointType.round,
-        startCap: Cap.roundCap,
-        endCap: Cap.roundCap,
-        zIndex: faded ? 1 : 2,
-        consumeTapEvents: s.legIndex != null,
-        onTap: s.legIndex == null
-            ? null
-            : () => setState(() => _selectedLeg = _selectedLeg == s.legIndex ? null : s.legIndex),
-      ));
+      final legColor = faded ? s.color.withValues(alpha: 0.3) : s.color;
+      final legWidth = s.legIndex == null ? 5 : 6;
+
+      // Check if the entire segment is a blackout or straight line
+      final bool legIsBlackout = s.legIndex != null &&
+          _legs.any((l) => l.index == s.legIndex && l.isBlackoutOrStraight);
+
+      final double segStraightKm = pts.length >= 2
+          ? gl.Geolocator.distanceBetween(
+                pts.first.latitude,
+                pts.first.longitude,
+                pts.last.latitude,
+                pts.last.longitude,
+              ) /
+              1000.0
+          : 0.0;
+
+      final bool sparseGps = s.points.length <= 2 && segStraightKm >= 0.15;
+
+      // Check if any blackout stretch substantially overlaps this segment
+      bool blackoutOverlaps = false;
+      if (s.fromAt != null && s.toAt != null) {
+        final segDur = s.toAt!.difference(s.fromAt!).inSeconds;
+        var overlapSeconds = 0;
+        for (final g in _blackouts) {
+          final start = g.from.isAfter(s.fromAt!) ? g.from : s.fromAt!;
+          final end = g.to.isBefore(s.toAt!) ? g.to : s.toAt!;
+          if (end.isAfter(start)) {
+            overlapSeconds += end.difference(start).inSeconds;
+          }
+        }
+        if (segDur > 0 && (overlapSeconds / segDur) >= 0.4) {
+          blackoutOverlaps = true;
+        }
+      }
+
+      final bool isWholeBlackout = legIsBlackout || sparseGps || blackoutOverlaps;
+
+      if (isWholeBlackout) {
+        out.add(Polyline(
+          polylineId: PolylineId('seg-$i-dashed'),
+          points: pts,
+          color: legColor,
+          width: legWidth,
+          patterns: [PatternItem.dash(18), PatternItem.gap(12)],
+          jointType: JointType.round,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          zIndex: faded ? 1 : 2,
+          consumeTapEvents: s.legIndex != null,
+          onTap: s.legIndex == null
+              ? null
+              : () => setState(() => _selectedLeg =
+                  _selectedLeg == s.legIndex ? null : s.legIndex),
+        ));
+        continue;
+      }
+
+      // Check for blackout intervals within this segment
+      final blackoutRanges = <({int start, int end})>[];
+      for (final g in _blackouts) {
+        final range = _findRangeInLine(pts, g.a, g.b);
+        if (range != null && range.end > range.start) {
+          blackoutRanges.add(range);
+        }
+      }
+
+      if (blackoutRanges.isEmpty) {
+        // Normal continuous solid polyline
+        out.add(Polyline(
+          polylineId: PolylineId('seg-$i'),
+          points: pts,
+          color: legColor,
+          width: legWidth,
+          patterns: const [],
+          jointType: JointType.round,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          zIndex: faded ? 1 : 2,
+          consumeTapEvents: s.legIndex != null,
+          onTap: s.legIndex == null
+              ? null
+              : () => setState(() => _selectedLeg =
+                  _selectedLeg == s.legIndex ? null : s.legIndex),
+        ));
+      } else {
+        // Merge overlapping blackout ranges
+        blackoutRanges.sort((r1, r2) => r1.start.compareTo(r2.start));
+        final merged = <({int start, int end})>[];
+        for (final r in blackoutRanges) {
+          if (merged.isEmpty) {
+            merged.add(r);
+          } else {
+            final prev = merged.last;
+            if (r.start <= prev.end) {
+              merged[merged.length - 1] = (
+                start: prev.start,
+                end: r.end > prev.end ? r.end : prev.end,
+              );
+            } else {
+              merged.add(r);
+            }
+          }
+        }
+
+        var currIdx = 0;
+        var subPart = 0;
+        for (final r in merged) {
+          // Solid section before blackout
+          if (r.start > currIdx) {
+            final solidPts = pts.sublist(currIdx, r.start + 1);
+            if (solidPts.length >= 2) {
+              out.add(Polyline(
+                polylineId: PolylineId('seg-$i-p$subPart-solid'),
+                points: solidPts,
+                color: legColor,
+                width: legWidth,
+                patterns: const [],
+                jointType: JointType.round,
+                startCap: Cap.roundCap,
+                endCap: Cap.roundCap,
+                zIndex: faded ? 1 : 2,
+                consumeTapEvents: s.legIndex != null,
+                onTap: s.legIndex == null
+                    ? null
+                    : () => setState(() => _selectedLeg =
+                        _selectedLeg == s.legIndex ? null : s.legIndex),
+              ));
+              subPart++;
+            }
+          }
+
+          // Dashed section during blackout
+          final dashedPts = pts.sublist(r.start, r.end + 1);
+          if (dashedPts.length >= 2) {
+            out.add(Polyline(
+              polylineId: PolylineId('seg-$i-p$subPart-dashed'),
+              points: dashedPts,
+              color: legColor,
+              width: legWidth,
+              patterns: [PatternItem.dash(18), PatternItem.gap(12)],
+              jointType: JointType.round,
+              startCap: Cap.roundCap,
+              endCap: Cap.roundCap,
+              zIndex: faded ? 1 : 2,
+              consumeTapEvents: s.legIndex != null,
+              onTap: s.legIndex == null
+                  ? null
+                  : () => setState(() => _selectedLeg =
+                      _selectedLeg == s.legIndex ? null : s.legIndex),
+            ));
+            subPart++;
+          }
+          currIdx = r.end;
+        }
+
+        // Remaining solid section at the end
+        if (currIdx < pts.length - 1) {
+          final solidPts = pts.sublist(currIdx);
+          if (solidPts.length >= 2) {
+            out.add(Polyline(
+              polylineId: PolylineId('seg-$i-p$subPart-solid'),
+              points: solidPts,
+              color: legColor,
+              width: legWidth,
+              patterns: const [],
+              jointType: JointType.round,
+              startCap: Cap.roundCap,
+              endCap: Cap.roundCap,
+              zIndex: faded ? 1 : 2,
+              consumeTapEvents: s.legIndex != null,
+              onTap: s.legIndex == null
+                  ? null
+                  : () => setState(() => _selectedLeg =
+                      _selectedLeg == s.legIndex ? null : s.legIndex),
+            ));
+          }
+        }
+      }
     }
-    // No-GPS stretches: white dashes over the line, so they read as dashed (estimated).
-    final timeFmt = DateFormat('hh:mm a');
-    for (var k = 0; k < _blackouts.length; k++) {
-      final g = _blackouts[k];
-      final part = _lineBetween(g.a, g.b);
-      if (part == null || part.length < 2) continue;
-      out.add(Polyline(
-        polylineId: PolylineId('nogps-$k'),
-        points: part,
-        color: Colors.white,
-        width: 6,
-        patterns: [PatternItem.dash(14), PatternItem.gap(12)],
-        zIndex: 3,
-        consumeTapEvents: true,
-        onTap: () => SnackBarUtils.showSnackBar(
-          context,
-          'No GPS from ${timeFmt.format(g.from)} to ${timeFmt.format(g.to)} '
-          '(${_spanText(g.to.difference(g.from))}). This stretch is the road route between the two points - estimated.',
-        ),
-      ));
-    }
+
     return out;
   }
 

@@ -87,6 +87,12 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     _loadTaskCustomerAndMap();
   }
 
+  @override
+  void dispose() {
+    SnackBarUtils.dismiss();
+    super.dispose();
+  }
+
   Future<void> _loadTaskCustomerAndMap() async {
     if (task.id != null && task.id!.isNotEmpty) {
       try {
@@ -391,8 +397,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ),
           };
           _polylines.clear();
+          final bool hasGpsIssue = rawCoords.length <= 2 || (rawCoords.length <= 5 && km > 0.5);
           _polylines.add(
-            TravelledRouteStyle.polyline('travelled', travelledPts),
+            TravelledRouteStyle.polyline('travelled', travelledPts).copyWith(
+              patternsParam: hasGpsIssue
+                  ? [PatternItem.dash(14), PatternItem.gap(10)]
+                  : const [],
+            ),
           );
         });
         return;
@@ -528,7 +539,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_rounded),
           tooltip: 'Back',
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            SnackBarUtils.dismiss(context);
+            Navigator.of(context).pop();
+          },
         ),
         title: const Text('Task Details'),
         actions: [
@@ -1053,14 +1067,22 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
 
   Widget _buildDestinationCard() {
     final parsed = _parseSourceDestination(task.description);
-    final address = _customer != null
+    // Task Location (Editable) on the web - saved ON THE TASK and may differ from
+    // the customer's own address. Everywhere else on this screen (map pin, "km
+    // away") already prefers task.destinationLocation over the customer record;
+    // this card used to skip straight to the customer address, so an edited task
+    // location (or a customer with only a generic city/state on file) showed the
+    // wrong, broader place instead of the precise one configured for this task.
+    final taskDestAddress = task.destinationLocation?.address?.trim();
+    final customerAddress = _customer != null
         ? '${_customer!.address}, ${_customer!.city}, ${_customer!.pincode}'
               .trim()
-        : parsed.destination ?? '';
+        : '';
+    final address = (taskDestAddress != null && taskDestAddress.isNotEmpty)
+        ? taskDestAddress
+        : (parsed.destination ?? customerAddress);
 
-    if (_customer == null &&
-        parsed.source == null &&
-        parsed.destination == null) {
+    if (address.isEmpty && _customer == null && parsed.source == null) {
       return const SizedBox.shrink();
     }
 
@@ -1132,9 +1154,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            parsed.destination?.isNotEmpty == true
-                ? parsed.destination!
-                : address,
+            address,
             style: TextStyle(
               fontSize: 13,
               color: AppColors.textPrimary,

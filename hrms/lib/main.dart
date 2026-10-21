@@ -67,10 +67,27 @@ void backgroundCallback() {
   }
 }
 
+/// Whether [runApp] has been called with the real app (not the pre-init error screen).
+/// Guards the zone's catch-all below: once the app is up, a later stray async error
+/// should just be logged, not replace the whole UI with an error screen.
+bool _appStarted = false;
+
 void main() {
   runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+
+      // Engine/platform-level errors (e.g. a plugin's native callback throwing outside
+      // Flutter's own error zone — camera, secure storage, geolocator) land here, not in
+      // FlutterError.onError or the zone's catch below. Without this handler such an error
+      // can silently kill the engine (seen as "Lost connection to device" in `flutter run`,
+      // or the app just disappearing on a phone) with nothing in the log to explain why.
+      // Older/budget devices hit plugin edge cases like this far more often. Returning true
+      // marks it handled so the engine does not treat it as fatal.
+      PlatformDispatcher.instance.onError = (error, stack) {
+        debugPrint('[PlatformDispatcher] Unhandled error: $error\n$stack');
+        return true;
+      };
 
       try {
         // Web has no google-services.json — it needs explicit options.
@@ -173,6 +190,7 @@ void main() {
         );
       }
 
+      _appStarted = true;
       runApp(
         MultiProvider(
           providers: [
@@ -187,9 +205,19 @@ void main() {
     },
     (error, stack) {
       debugPrint('[runZonedGuarded] Unhandled error: $error $stack');
-      if (kReleaseMode) {
-        // Ensure we don't leave the app in a black screen; if runApp wasn't called yet, show error
-        // (runApp may already have been called, so this only helps for pre-runApp errors)
+      // An error reaching here before runApp succeeded (an async failure during init, on
+      // a device/OS combination the try/catches above didn't anticipate) would otherwise
+      // leave the phone on a black screen forever with nothing in the log — the device
+      // just looks "stuck" or "doesn't open" to the field employee. Show the same message
+      // as a Firebase init failure instead. Once the real app is up, a later stray error
+      // here is logged only — it must not tear down a screen the person is mid-task on.
+      if (!_appStarted) {
+        _appStarted = true;
+        runApp(
+          const _InitErrorApp(
+            message: 'App could not start. Please check your internet or reinstall.',
+          ),
+        );
       }
     },
   );

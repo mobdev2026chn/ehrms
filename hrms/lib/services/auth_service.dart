@@ -717,8 +717,13 @@ class AuthService {
 
       _api.setAuthToken(token);
       invalidateProfileCache();
-      final response = await _api.dio.patch<Map<String, dynamic>>(
-        '/auth/profile/education',
+      // Same endpoint every other self-editable profile field goes through
+      // (PUT /staff/profile - see staff/profile/profileController.ts updateMyProfile).
+      // '/auth/profile/education' was never a real backend route; this call always
+      // 404'd silently and the Exp & Edu tab's "No education details found" state was
+      // the only sign of it.
+      final response = await _api.dio.put<Map<String, dynamic>>(
+        '/staff/profile',
         data: {'education': education},
       );
       final body = response.data;
@@ -755,8 +760,9 @@ class AuthService {
 
       _api.setAuthToken(token);
       invalidateProfileCache();
-      final response = await _api.dio.patch<Map<String, dynamic>>(
-        '/auth/profile/experience',
+      // Same endpoint as updateEducation above - see its comment.
+      final response = await _api.dio.put<Map<String, dynamic>>(
+        '/staff/profile',
         data: {'experience': experience},
       );
       final body = response.data;

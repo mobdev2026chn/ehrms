@@ -758,8 +758,6 @@ class Task {
       case 'delayedtasks':
       case 'servingtoday':
         return TaskStatus.pending;
-      case 'completedtasks':
-        return TaskStatus.completed;
       case 'onhold':
         return TaskStatus.hold;
       case 'approved':

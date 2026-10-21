@@ -256,6 +256,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
             points: [origin, dest],
             color: AppColors.primary,
             width: 5,
+            patterns: [PatternItem.dash(14), PatternItem.gap(10)],
           ),
         };
       });
@@ -395,7 +396,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
             destinationLat: _destinationLatLng!.latitude,
             destinationLng: _destinationLatLng!.longitude,
           )
-          .catchError((_) {});
+          .catchError((_) => false);
       PresenceTrackingService().pausePresenceTracking();
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

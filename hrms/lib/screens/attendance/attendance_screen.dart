@@ -2069,6 +2069,20 @@ class _AttendanceScreenState extends State<AttendanceScreen>
       formattedHeaderDate = dateStr.toString();
     }
 
+    // Hide the Log section for days before the employee's onboarding date
+    final onboardingDate = _profileJoiningDateForShiftResolution();
+    final bool isBeforeOnboarding = () {
+      if (onboardingDate == null) return false;
+      try {
+        final d = _extractDateOnly(record['date']);
+        final dateOnly = DateTime(d.year, d.month, d.day);
+        final onboardingOnly = DateTime(onboardingDate.year, onboardingDate.month, onboardingDate.day);
+        return dateOnly.isBefore(onboardingOnly);
+      } catch (_) {
+        return false;
+      }
+    }();
+
     final presentDetails =
         record['presentDetails'] is Map ? record['presentDetails'] as Map : null;
     dynamic punchIn = _resolvePunchInFromRecord(record);
@@ -2545,11 +2559,12 @@ class _AttendanceScreenState extends State<AttendanceScreen>
                           ],
                         ),
                       ],
-                      if (logs.isNotEmpty ||
-                          punchIn != null ||
-                          punchOut != null ||
-                          breakSessions.isNotEmpty ||
-                          activeBreak != null) ...[
+                      if (!isBeforeOnboarding &&
+                          (logs.isNotEmpty ||
+                              punchIn != null ||
+                              punchOut != null ||
+                              breakSessions.isNotEmpty ||
+                              activeBreak != null)) ...[
                         const SizedBox(height: 20),
                         _buildDayDetailSection(
                           'Log',
@@ -2633,7 +2648,14 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     String? punchOutAddress,
   }) {
     final cleanShiftTime = shiftTime.trim();
-    final shiftLine = (cleanShiftTime.isEmpty || cleanShiftTime == 'N/A - N/A')
+    final isInvalidShiftTime = cleanShiftTime.isEmpty ||
+        cleanShiftTime == 'N/A - N/A' ||
+        cleanShiftTime == 'N/A-N/A' ||
+        cleanShiftTime == 'NA - NA' ||
+        cleanShiftTime == '-' ||
+        cleanShiftTime.toLowerCase().contains('n/a') ||
+        cleanShiftTime.toLowerCase().contains('null');
+    final shiftLine = isInvalidShiftTime
         ? shiftLabel
         : '$shiftLabel - $cleanShiftTime';
     return Container(
@@ -4683,27 +4705,41 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     }
 
     // 2. Direct shift fields stamped on record (e.g. from backend getMonthAttendance / getAttendanceHistory)
-    final recStart =
-        (record['shiftStartTime'] ?? record['startTime'])?.toString().trim();
-    final recEnd =
-        (record['shiftEndTime'] ?? record['endTime'])?.toString().trim();
-    final recName =
-        (record['shiftName'] ?? record['name'])?.toString().trim();
-    final recType =
-        (record['shiftType'] ?? '').toString().toLowerCase().trim();
+    final shiftObj = record['shift'] is Map
+        ? Map<String, dynamic>.from(record['shift'] as Map)
+        : (_monthData?['shift'] is Map
+            ? Map<String, dynamic>.from(_monthData!['shift'] as Map)
+            : (_monthData?['defaultShift'] is Map
+                ? Map<String, dynamic>.from(_monthData!['defaultShift'] as Map)
+                : null));
+    final recStart = (record['shiftStartTime'] ?? record['startTime'] ?? shiftObj?['startTime'])?.toString().trim();
+    final recEnd = (record['shiftEndTime'] ?? record['endTime'] ?? shiftObj?['endTime'])?.toString().trim();
+    final recName = (record['shiftName'] ?? record['name'] ?? shiftObj?['name'])?.toString().trim();
+    final recType = (record['shiftType'] ?? shiftObj?['shiftType'] ?? '').toString().toLowerCase().trim();
     final isOpenRec = recType.contains('open');
-    if ((recStart != null &&
-            recStart.isNotEmpty &&
-            recEnd != null &&
-            recEnd.isNotEmpty) ||
-        isOpenRec) {
+    final num? recWorkHours = (record['openWorkHours'] ?? shiftObj?['workHours']) as num?;
+
+    final bool validTimes = recStart != null &&
+        recStart.isNotEmpty &&
+        recStart != 'N/A' &&
+        recStart != 'null' &&
+        recStart != '-' &&
+        recEnd != null &&
+        recEnd.isNotEmpty &&
+        recEnd != 'N/A' &&
+        recEnd != 'null' &&
+        recEnd != '-';
+
+    if (validTimes || isOpenRec) {
+      final nameClean = (recName != null && recName.isNotEmpty && !recName.contains('N/A'))
+          ? recName
+          : (isOpenRec ? 'Open Shift' : 'General Shift');
       return EffectiveShiftDay(
-        displayName:
-            (recName != null && recName.isNotEmpty) ? recName : 'Shift',
+        displayName: nameClean,
         startTime: isOpenRec ? null : recStart,
         endTime: isOpenRec ? null : recEnd,
         shiftTypeLower: isOpenRec ? 'open' : 'standard',
-        openWorkHours: (record['openWorkHours'] as num?)?.toDouble() ?? 8.0,
+        openWorkHours: recWorkHours?.toDouble() ?? 8.0,
         isWeekOff: false,
       );
     }
@@ -4798,19 +4834,23 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     final eff = _resolveEffectiveShiftForAttendanceRecord(record);
     if (eff != null &&
         eff.displayName.trim().isNotEmpty &&
-        eff.displayName.trim().toLowerCase() != 'week off') {
+        eff.displayName.trim().toLowerCase() != 'week off' &&
+        eff.displayName.trim().toLowerCase() != 'shift' &&
+        !eff.displayName.trim().contains('N/A')) {
       return eff.displayName.trim();
     }
-    final fromRecord = (record['shiftName'] ?? '').toString().trim();
-    if (fromRecord.isNotEmpty) {
+    final fromRecord = (record['shiftName'] ?? (record['shift'] is Map ? record['shift']['name'] : null))?.toString().trim() ?? '';
+    if (fromRecord.isNotEmpty && !fromRecord.contains('N/A') && fromRecord.toLowerCase() != 'shift') {
       return fromRecord;
     }
     final tName =
         (_attendanceTemplate?['shiftName'] ?? _attendanceTemplate?['name'])
             ?.toString()
             .trim();
-    if (tName != null && tName.isNotEmpty) return tName;
-    return 'Shift';
+    if (tName != null && tName.isNotEmpty && !tName.contains('N/A') && tName.toLowerCase() != 'shift') return tName;
+    final mShiftName = (_monthData?['shift'] is Map ? _monthData!['shift']['name'] : null)?.toString().trim();
+    if (mShiftName != null && mShiftName.isNotEmpty && !mShiftName.contains('N/A') && mShiftName.toLowerCase() != 'shift') return mShiftName;
+    return 'General Shift';
   }
 
   String _shiftTimeLineForAttendanceDetail(Map<String, dynamic> record) {

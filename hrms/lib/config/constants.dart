@@ -5,12 +5,16 @@ class AppConstants {
   /// same dev host. Do NOT point at production (app.ektahr.com / my.ektahr.com).
   // Local-dev alt: `adb reverse tcp:2001 tcp:2001`, then 'http://127.0.0.1:2001/api'
   // (EHRMS backend PORT=2001 in app_backend/.env).
-  static const String baseUrl = 'https://uat.ektahr.com/api';
- // static const String baseUrl = 'http://127.0.0.1:5000/api';
-
+  // Production:
+  static const String baseUrl = 'https://my.ektahr.com/api';
+  // Testing / UAT:
+   //static const String baseUrl = 'https://uat.ektahr.com/api';
 
   /// Web/Interaction HRMS API — web companion of [baseUrl] (chat, polls, LMS).
-  static const String webBaseUrl = 'https://uat.ektahr.com/api';
+  // Production:
+  static const String webBaseUrl = 'https://my.ektahr.com/api';
+  // Testing / UAT:
+  //static const String webBaseUrl = 'https://uat.ektahr.com/api';
 
   /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
   /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
@@ -67,7 +71,7 @@ class AppConstants {
   /// This avoids relying only on proxy/origin headers for Spaces folder selection.
   static String get storageEnvironment {
     final host = Uri.tryParse(baseUrl)?.host.toLowerCase() ?? '';
-    const productionHosts = {'app.ektahr.com', 'my.ektahr.com', 'ektahr.com'};
+    const productionHosts = {'app.ektahr.com', 'my.ektahr.com','my1.ektahr.com', 'ektahr.com'};
     return productionHosts.contains(host) ? 'production' : 'development';
   }
 

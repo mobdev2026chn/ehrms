@@ -76,7 +76,10 @@ class BreakService {
     }
   }
 
-  static void _bumpStateRevision() => stateRevision.value++;
+  static void _bumpStateRevision() {
+    _lastBreakStatusResponse = null;
+    stateRevision.value++;
+  }
 
   static String _snapshotBreakRow(dynamic raw) {
     final m = _breakMapFrom(raw);
@@ -116,17 +119,29 @@ class BreakService {
   }
 
   /// Current break and today's summary both read /staff/attendance/break-status;
-  /// concurrent callers (shell + Home at startup) share one in-flight request.
+  /// concurrent callers (shell + Home at startup) share one in-flight request,
+  /// with a short 2-second cache so cascading startup callers don't flood the server.
   static Future<Response<Map<String, dynamic>>>? _breakStatusInFlight;
+  static Response<Map<String, dynamic>>? _lastBreakStatusResponse;
+  static DateTime? _lastBreakStatusAt;
 
   Future<Response<Map<String, dynamic>>> _getBreakStatus() {
+    final now = DateTime.now();
+    if (_lastBreakStatusResponse != null &&
+        _lastBreakStatusAt != null &&
+        now.difference(_lastBreakStatusAt!).inSeconds < 2) {
+      return Future.value(_lastBreakStatusResponse);
+    }
     final pending = _breakStatusInFlight;
     if (pending != null) return pending;
     final future = _api.dio.get<Map<String, dynamic>>(
       '/staff/attendance/break-status',
     );
     _breakStatusInFlight = future;
-    future.whenComplete(() {
+    future.then((res) {
+      _lastBreakStatusResponse = res;
+      _lastBreakStatusAt = DateTime.now();
+    }).catchError((_) {}).whenComplete(() {
       if (identical(_breakStatusInFlight, future)) _breakStatusInFlight = null;
     }).ignore();
     return future;

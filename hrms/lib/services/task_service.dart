@@ -1656,8 +1656,12 @@ class TaskService {
         return (body['data'] as List).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
       }
       return [];
-    } catch (_) {
-      return [];
+    } catch (e, st) {
+      // Previously returned [] on ANY failure (network, auth, server error), which
+      // looked identical to "no allowances yet" to the caller - rethrow so the
+      // Allowance tab can tell a real failure apart from a genuinely empty list.
+      debugPrint('[TaskService] /staff/geo-task/allowances failed: $e\n$st');
+      rethrow;
     }
   }
 
@@ -1676,8 +1680,9 @@ class TaskService {
             .toList();
       }
       return [];
-    } catch (_) {
-      return [];
+    } catch (e, st) {
+      debugPrint('[TaskService] /staff/geo-task/history failed: $e\n$st');
+      rethrow;
     }
   }
 

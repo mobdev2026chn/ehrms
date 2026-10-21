@@ -72,8 +72,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
   bool _isFieldEmployee = false;
   List<Map<String, dynamic>> _allowances = [];
   bool _isLoadingAllowances = false;
+  bool _allowancesFetchFailed = false;
   List<Task> _historyTasks = [];
   bool _isLoadingHistory = false;
+  bool _historyFetchFailed = false;
   Map<String, dynamic>? _activeJourney;
 
   /// Admin external Field-Out form fields, delivered by GET /journey as `requirements`.
@@ -1176,11 +1178,19 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       if (mounted) {
         setState(() {
           _allowances = list;
+          _allowancesFetchFailed = false;
           _isLoadingAllowances = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _isLoadingAllowances = false);
+      // A real failure (network/auth/server error) used to look identical to "no
+      // allowances yet" - now flagged so the empty state can tell them apart.
+      if (mounted) {
+        setState(() {
+          _allowancesFetchFailed = true;
+          _isLoadingAllowances = false;
+        });
+      }
     }
   }
 
@@ -1193,11 +1203,17 @@ class _MyTasksScreenState extends State<MyTasksScreen>
           _historyTasks = _isInternalStaff
               ? list.where((t) => (t.type ?? '').toLowerCase() == 'internal').toList()
               : list.where((t) => (t.type ?? 'external').toLowerCase() == 'external').toList();
+          _historyFetchFailed = false;
           _isLoadingHistory = false;
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _isLoadingHistory = false);
+      if (mounted) {
+        setState(() {
+          _historyFetchFailed = true;
+          _isLoadingHistory = false;
+        });
+      }
     }
   }
 
@@ -2053,6 +2069,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                     icon: Icon(Icons.add_circle_outline_rounded, color: AppColors.primary, size: 24),
                     tooltip: 'Add Customer',
                     onPressed: () {
+                      SnackBarUtils.dismiss(context);
                       Navigator.push(
                         context,
                         MaterialPageRoute(
@@ -2751,6 +2768,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                             ),
                           ).then((_) => _fetchTasks());
                         } else {
+                          SnackBarUtils.dismiss(context);
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -2887,16 +2905,24 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       color: AppColors.primary.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.payments_outlined, size: 28, color: AppColors.primaryText),
+                    child: Icon(
+                      _allowancesFetchFailed ? Icons.cloud_off_outlined : Icons.payments_outlined,
+                      size: 28,
+                      color: AppColors.primaryText,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'No travel allowances recorded yet',
+                    _allowancesFetchFailed
+                        ? 'Couldn\'t load travel allowances'
+                        : 'No travel allowances recorded yet',
                     style: const TextStyle(fontSize: 16, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Complete tasks or field journeys to earn allowances',
+                    _allowancesFetchFailed
+                        ? 'Check your connection and pull down to refresh.'
+                        : 'Complete tasks or field journeys to earn allowances',
                     style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ],
@@ -3071,16 +3097,22 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                       color: AppColors.primary.withValues(alpha: 0.12),
                       shape: BoxShape.circle,
                     ),
-                    child: Icon(Icons.history_rounded, size: 28, color: AppColors.primaryText),
+                    child: Icon(
+                      _historyFetchFailed ? Icons.cloud_off_outlined : Icons.history_rounded,
+                      size: 28,
+                      color: AppColors.primaryText,
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'No task history found',
+                    _historyFetchFailed ? 'Couldn\'t load task history' : 'No task history found',
                     style: const TextStyle(fontSize: 16, color: AppColors.textPrimary, fontWeight: FontWeight.w600),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Completed branch and customer visits will appear here',
+                    _historyFetchFailed
+                        ? 'Check your connection and pull down to refresh.'
+                        : 'Completed branch and customer visits will appear here',
                     style: const TextStyle(fontSize: 13, color: AppColors.textSecondary),
                   ),
                 ],

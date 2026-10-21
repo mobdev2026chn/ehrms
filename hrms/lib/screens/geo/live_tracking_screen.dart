@@ -162,6 +162,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   String _currentActivity = "Standing";
 
   double _totalDistanceCovered = 0.0;
+  LatLng? _lastOdometerPosition;
+
+  void _persistOdometerDistance() async {
+    final tid = widget.taskMongoId;
+    if (tid == null || tid.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setDouble('live_odometer_$tid', _totalDistanceCovered);
+    } catch (_) {}
+  }
 
   /// Resolved after [LiveTrackingService.startTracking] (wall clock; not timer-based).
   DateTime? _tripStartUtc;
@@ -298,6 +308,16 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       );
     }
     _tripStartUtc = resolved;
+    try {
+      final tid = widget.taskMongoId;
+      if (tid != null && tid.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        final savedMeters = prefs.getDouble('live_odometer_$tid');
+        if (savedMeters != null && savedMeters > _totalDistanceCovered) {
+          _totalDistanceCovered = savedMeters;
+        }
+      }
+    } catch (_) {}
     if (mounted) setState(() {});
 
     // Send first point after 2 sec, then periodically by configured capture interval.
@@ -339,10 +359,13 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
       );
       if (cleaned.length < 2) return;
       final meters = _pathLengthM(cleaned);
-      if (meters < _totalDistanceCovered) return;
       setState(() {
         _routePolyline = TravelledRouteStyle.polyline('traveled', cleaned);
-        _totalDistanceCovered = meters;
+        if (meters > _totalDistanceCovered) {
+          _totalDistanceCovered = meters;
+          _persistOdometerDistance();
+        }
+        _lastOdometerPosition ??= cleaned.last;
       });
     } catch (_) {
       // Keep the live line; the next sync will catch up.
@@ -421,6 +444,28 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
           mapController?.animateCamera(CameraUpdate.newLatLng(newLatLng));
 
+          // 1. Live movement odometer calculation:
+          // Filter out low accuracy GPS readings (> 45m).
+          final acc = location.accuracy;
+          if (acc == null || acc <= 45.0) {
+            if (_lastOdometerPosition != null) {
+              final deltaM = gl.Geolocator.distanceBetween(
+                _lastOdometerPosition!.latitude,
+                _lastOdometerPosition!.longitude,
+                newLatLng.latitude,
+                newLatLng.longitude,
+              );
+              // Reject stationary GPS jitter (< 3.5m) and reject wild cell-tower teleportation spikes (>= 350m in 1 tick)
+              if (deltaM >= 3.5 && deltaM < 350.0) {
+                _totalDistanceCovered += deltaM;
+                _lastOdometerPosition = newLatLng;
+                _persistOdometerDistance();
+              }
+            } else {
+              _lastOdometerPosition = newLatLng;
+            }
+          }
+
           _updateRoutePolyline(newLatLng, accuracyM: location.accuracy);
           // Dense, accurate route for the saved trail (uploaded in batches).
           final tid = widget.taskMongoId;
@@ -435,9 +480,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
               movementType: _currentActivity,
             ));
           }
-
-          // Total distance grows with the drawn travelled line (see
-          // _updateRoutePolyline), so the number always matches the route shown.
 
           final movementType = MovementClassificationService()
               .addLocationAndClassify(
@@ -891,22 +933,34 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
         });
       }
     } catch (_) {}
+
+    // Fallback: calculate estimated road distance from straight line if API failed
+    if (_plannedTripDistanceKm <= 0) {
+      final straightLineM = gl.Geolocator.distanceBetween(
+        widget.pickupLocation.latitude,
+        widget.pickupLocation.longitude,
+        _dropoffLatLng.latitude,
+        _dropoffLatLng.longitude,
+      );
+      if (straightLineM > 0 && mounted) {
+        setState(() {
+          _plannedTripDistanceKm = (straightLineM * 1.25) / 1000;
+          if (_remainingDistanceKm <= 0) {
+            _remainingDistanceKm = _plannedTripDistanceKm;
+          }
+        });
+      }
+    }
   }
 
   /// Minimum move before a new vertex is added to the traveled line (drops
   /// GPS jitter that would otherwise zig-zag the path while standing still).
-  static const double _minTraveledMoveMeters = 15;
-  static const double _maxPolylineAccuracyM = 25;
+  static const double _minTraveledMoveMeters = 6.0;
+  static const double _maxPolylineAccuracyM = 40.0;
 
   void _updateRoutePolyline(LatLng newLatLng, {double? accuracyM}) {
-    // Ignore low-accuracy fixes (> 25m) – they are the main source of zig-zags and jumps into buildings.
+    // Ignore low-accuracy fixes (> 40m) – they are the main source of zig-zags and jumps into buildings.
     if (accuracyM != null && accuracyM > _maxPolylineAccuracyM) {
-      _updateRemainingEta();
-      return;
-    }
-
-    // Do not append jittery points when stationary/stopped
-    if (_currentActivity.toLowerCase() == 'stop' || _currentActivity.toLowerCase() == 'standing') {
       _updateRemainingEta();
       return;
     }
@@ -924,20 +978,12 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
           newLatLng.latitude,
           newLatLng.longitude,
         );
-        // Skip near-duplicates / jitter; only extend on real movement (>= 15m).
+        // Skip near-duplicates / jitter; only extend polyline on real movement (>= 6m).
         if (movedM < _minTraveledMoveMeters) {
           _updateRemainingEta();
           _fetchRoadRoute(newLatLng.latitude, newLatLng.longitude);
           return;
         }
-      }
-      if (last != null) {
-        _totalDistanceCovered += gl.Geolocator.distanceBetween(
-          last.latitude,
-          last.longitude,
-          newLatLng.latitude,
-          newLatLng.longitude,
-        );
       }
       currentPoints.add(newLatLng);
       _routePolyline = _routePolyline?.copyWith(pointsParam: currentPoints);
@@ -948,8 +994,6 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   }
 
   void _updateRemainingEta() {
-    if (_remainingDistanceKm > 0) return;
-
     // Use last known location, or pickup if no location yet
     final fromLat = _lastLocation?.latitude ?? widget.pickupLocation.latitude;
     final fromLng = _lastLocation?.longitude ?? widget.pickupLocation.longitude;
@@ -1041,6 +1085,7 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
 
   @override
   void dispose() {
+    SnackBarUtils.dismiss();
     WidgetsBinding.instance.removeObserver(this);
     _locationSubscription?.cancel();
     _geofenceSubscription?.cancel();
@@ -1168,14 +1213,50 @@ class _LiveTrackingScreenState extends State<LiveTrackingScreen>
   /// background tracking and app restarts). Falls back to this screen's live
   /// odometer when the trail can't be read in time.
   Future<double> _travelledKm(String taskMongoId) async {
-    final odometerKm = _totalDistanceCovered / 1000;
+    double calculatedKm = 0.0;
     try {
       final trailKm = await TaskService()
           .getTravelledDistanceKm(taskMongoId)
-          .timeout(const Duration(seconds: 20));
-      if (trailKm != null && trailKm > 0) return double.parse(trailKm.toStringAsFixed(2));
+          .timeout(const Duration(seconds: 15));
+      if (trailKm != null && trailKm > 0) calculatedKm = double.parse(trailKm.toStringAsFixed(2));
     } catch (_) {}
-    return odometerKm;
+
+    if (calculatedKm <= 0.0) {
+      calculatedKm = _totalDistanceCovered / 1000;
+    }
+
+    // GPS fail-safe: if GPS was broken/zero but the trip moved between two distant locations,
+    // fallback to the exact road driving distance between pickup and dropoff.
+    final startLat = widget.pickupLocation.latitude;
+    final startLng = widget.pickupLocation.longitude;
+    final endLat = _lastLocation?.latitude ?? _dropoffLatLng.latitude;
+    final endLng = _lastLocation?.longitude ?? _dropoffLatLng.longitude;
+    final straightLineM = gl.Geolocator.distanceBetween(startLat, startLng, endLat, endLng);
+
+    if (calculatedKm < 0.1 && straightLineM > 300) {
+      if (_plannedTripDistanceKm > 0) {
+        calculatedKm = _plannedTripDistanceKm;
+      } else {
+        try {
+          final road = await DirectionsService.getRouteBetweenCoordinates(
+            originLat: startLat,
+            originLng: startLng,
+            destLat: endLat,
+            destLng: endLng,
+          );
+          if (road.distanceKm > 0) calculatedKm = road.distanceKm;
+        } catch (_) {
+          calculatedKm = (straightLineM * 1.2) / 1000;
+        }
+      }
+    }
+
+    // Filter wild cell-tower spikes (e.g. 50km for a 5km ride due to jumping towers)
+    if (_plannedTripDistanceKm > 0 && calculatedKm > (_plannedTripDistanceKm * 2.2)) {
+      calculatedKm = _plannedTripDistanceKm * 1.2;
+    }
+
+    return double.parse(calculatedKm.toStringAsFixed(2));
   }
 
   Future<void> _onArrived() async {

@@ -8,8 +8,10 @@ import 'punch_flow_log.dart';
 
 class SnackBarUtils {
   static OverlayEntry? _currentEntry;
+  static final List<OverlayEntry> _activeEntries = [];
   static Timer? _timer;
   static bool _currentIsError = false;
+  static bool isCustomerCreationActive = false;
 
   /// Closes routes' leftover error toasts when another screen opens. The toast
   /// lives on the root overlay, so without this an error from the previous
@@ -49,6 +51,16 @@ class SnackBarUtils {
         '[SnackBarUtils][trace] source=${debugSource ?? "(auto)"} isError=$isError msg=$preview',
       );
     }
+    // Task location and geofence errors belong strictly to an active task.
+    // Once tasks are exited and customer creation begins, suppress them completely.
+    final isTaskLocationError = lower.contains('task location') ||
+        (lower.contains('not within') && lower.contains('location'));
+    if (isTaskLocationError && isCustomerCreationActive) {
+      return;
+    }
+
+    if (!context.mounted) return;
+
     // An error belongs to the screen whose action caused it. When the response
     // lands after the user has already moved on (e.g. a task's geofence failure
     // arriving while Add Customer is open), showing it would blame the wrong
@@ -56,7 +68,7 @@ class SnackBarUtils {
     // added" right before navigating away is intentional).
     if (isError) {
       final route = ModalRoute.of(context);
-      if (route != null && !route.isCurrent) return;
+      if (route == null || !route.isCurrent) return;
     }
 
     // Attempt to find the top-level overlay
@@ -67,7 +79,7 @@ class SnackBarUtils {
     _clearMaterialSnackBars(context);
     _removeCurrentSnackBarSync();
 
-    _currentEntry = OverlayEntry(
+    final entry = OverlayEntry(
       builder: (context) => _TopSnackBarWidget(
         message: cleanMessage,
         backgroundColor: isError
@@ -78,8 +90,10 @@ class SnackBarUtils {
       ),
     );
 
+    _currentEntry = entry;
+    _activeEntries.add(entry);
     _currentIsError = isError;
-    overlay.insert(_currentEntry!);
+    overlay.insert(entry);
 
     // Auto-dismiss after [duration] or default 3 seconds
     _timer = Timer(duration ?? const Duration(milliseconds: 3000), () {
@@ -125,11 +139,17 @@ class SnackBarUtils {
   static void _removeCurrentSnackBarSync() {
     _timer?.cancel();
     _timer = null;
+    for (final entry in _activeEntries) {
+      try {
+        entry.remove();
+      } catch (_) {
+        // Already removed
+      }
+    }
+    _activeEntries.clear();
     if (_currentEntry != null) {
       try {
-        if (_currentEntry!.mounted) {
-          _currentEntry?.remove();
-        }
+        _currentEntry?.remove();
       } catch (e) {
         // Already removed or other issue
       }
@@ -155,6 +175,12 @@ class _ErrorToastRouteObserver extends NavigatorObserver {
   void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
     // Leaving a screen takes its error with it: a geofence failure shown on the
     // task screen must not still be on top after backing out to the task list.
+    if (route is PageRoute) SnackBarUtils.dismissError();
+  }
+
+  @override
+  void didRemove(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    // Routes removed in pushAndRemoveUntil (e.g. exiting external tasks back to MyTasksScreen).
     if (route is PageRoute) SnackBarUtils.dismissError();
   }
 }
@@ -211,6 +237,12 @@ class _TopSnackBarWidgetState extends State<_TopSnackBarWidget>
 
   @override
   Widget build(BuildContext context) {
+    if (widget.isError &&
+        SnackBarUtils.isCustomerCreationActive &&
+        (widget.message.toLowerCase().contains('task location') ||
+         widget.message.toLowerCase().contains('not within'))) {
+      return const SizedBox.shrink();
+    }
     return Positioned(
       top: MediaQuery.of(context).padding.top + 12,
       left: 16,

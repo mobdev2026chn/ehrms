@@ -18,6 +18,7 @@ import 'package:hrms/widgets/oriented_image.dart';
 import 'package:hrms/widgets/travelled_route_style.dart';
 import 'package:hrms/widgets/flag_marker_icon.dart';
 import 'package:hrms/utils/date_display_util.dart';
+import 'package:hrms/utils/snackbar_utils.dart';
 import 'package:hrms/widgets/app_tab_loader.dart';
 import 'package:hrms/widgets/bottom_navigation_bar.dart';
 
@@ -101,6 +102,12 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     _fetchReport();
     _loadTaskLeg();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadFlagIcons());
+  }
+
+  @override
+  void dispose() {
+    SnackBarUtils.dismiss();
+    super.dispose();
   }
 
   Future<void> _loadFlagIcons() async {
@@ -305,6 +312,7 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
   /// Back / "Return to Tasks": open Tasks on the History tab, where this
   /// completed task is listed.
   void _goToMyTasks(BuildContext context) {
+    SnackBarUtils.dismiss(context);
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (context) => const MyTasksScreen(openHistory: true)),
       (route) => false,
@@ -1244,7 +1252,15 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
     Set<Marker> markers,
   ) {
     final leg = (_leg != null && _leg!.line.length >= 2) ? _leg : null;
-    final fit = [...displayRoute, if (leg != null) ...leg.line];
+    // Show only ONE single route: prefer the snapped leg route, fallback to displayRoute
+    final singleRoute = (leg != null && leg.line.length >= 2)
+        ? leg.line
+        : (displayRoute.length >= 2 ? displayRoute : <LatLng>[]);
+    final fit = singleRoute.isNotEmpty ? singleRoute : displayRoute;
+    // Check if there was a GPS issue (sparse GPS points, only 1-2 pings, or missing trail)
+    final bool hasGpsIssue = (leg != null && (leg.path.length <= 2 || (leg.path.length <= 5 && (leg.km ?? 0) > 0.5))) ||
+        (_report != null && _report!.routePoints.length <= 2);
+
     return GoogleMap(
       initialCameraPosition: CameraPosition(target: center, zoom: 14),
       onMapCreated: (controller) {
@@ -1257,21 +1273,14 @@ class _CompletedTaskDetailScreenState extends State<CompletedTaskDetailScreen> {
         }
       },
       polylines: {
-        // The task's leg (Start → Stop) as the main green route line.
-        if (leg != null)
-          TravelledRouteStyle.polyline('task-leg', leg.line).copyWith(colorParam: _legColor),
-        // GPS recorded on the task itself (e.g. at the client): thinner blue, on top.
-        if (displayRoute.length > 1)
-          leg == null
-              ? TravelledRouteStyle.polyline('route', displayRoute)
-              : Polyline(
-                  polylineId: const PolylineId('route'),
-                  points: displayRoute,
-                  color: const Color(0xFF1565C0),
-                  width: 4,
-                  jointType: JointType.round,
-                  zIndex: 3,
-                ),
+        // Only one single route is displayed: solid for good GPS, dotted/dashed for GPS issue
+        if (singleRoute.length >= 2)
+          TravelledRouteStyle.polyline('route', singleRoute).copyWith(
+            colorParam: _legColor,
+            patternsParam: hasGpsIssue
+                ? [PatternItem.dash(14), PatternItem.gap(10)]
+                : const [],
+          ),
       },
       markers: markers,
       mapToolbarEnabled: false,

@@ -26,6 +26,7 @@ import '../../utils/attendance_selfie_compress.dart';
 import '../../utils/rotational_shift_util.dart';
 import '../../widgets/app_tab_loader.dart';
 import '../notifications/notifications_screen.dart';
+import '../admin/profile/admin_profile_screen.dart';
 import 'face_enroll_screen.dart';
 
 /// Hairline border for profile cards and read-only field boxes.
@@ -64,6 +65,10 @@ class _ProfileScreenState extends State<ProfileScreen>
   List<Map<String, dynamic>> _activeStaffCustomFields = [];
   bool _isLoading = true;
   bool _isLoadingDocs = false;
+  // Set when /staff/profile/documents itself fails (network/auth/parse) so the
+  // empty state can say "couldn't load" instead of the misleading "no documents
+  // found yet" - those used to look identical, hiding real failures from support.
+  bool _staffDocumentsFetchFailed = false;
   bool _profileImageError = false;
   String? _cachedAvatarUrl;
   // Some devices stored the first-punch selfie upside-down; flip on display when
@@ -85,10 +90,23 @@ class _ProfileScreenState extends State<ProfileScreen>
   };
   bool _isSavingSection = false;
   static final Map<String, String> _branchNameCache = {};
+  bool _isAdminRole = false;
+
+  bool get _isAdmin {
+    if (_isAdminRole) return true;
+    final role = (_userData?['role'] ?? '').toString().toLowerCase();
+    final staffType = (_userData?['staffType'] ?? '').toString().toLowerCase();
+    return role == 'admin' ||
+        role == 'superadmin' ||
+        role == 'hr' ||
+        role == 'hr_admin' ||
+        staffType == 'admin';
+  }
 
   @override
   void initState() {
     super.initState();
+    _checkAdminRole();
     _tabController = TabController(length: 3, vsync: this)
       ..addListener(() {
         // Rebuild so AppBar actions can react to tab changes
@@ -98,6 +116,28 @@ class _ProfileScreenState extends State<ProfileScreen>
       });
     _loadProfile();
     _loadDocuments();
+  }
+
+  Future<void> _checkAdminRole() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userStr = prefs.getString('user');
+      if (userStr != null) {
+        final u = jsonDecode(userStr);
+        if (u is Map) {
+          final role = (u['role'] ?? '').toString().toLowerCase();
+          final staffType = (u['staffType'] ?? '').toString().toLowerCase();
+          final isAdmin = role == 'admin' ||
+              role == 'superadmin' ||
+              role == 'hr' ||
+              role == 'hr_admin' ||
+              staffType == 'admin';
+          if (isAdmin && mounted) {
+            setState(() => _isAdminRole = true);
+          }
+        }
+      }
+    } catch (_) {}
   }
 
   @override
@@ -457,6 +497,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   Future<List<Map<String, dynamic>>> _fetchStaffDocuments() async {
     try {
       final res = await ApiClient().dio.get<dynamic>('/staff/profile/documents');
+      _staffDocumentsFetchFailed = false;
       final body = res.data is Map ? (res.data as Map) : {};
       final data = body['data'] is Map ? body['data'] as Map : {};
       final fields = (data['fields'] as List? ?? []).whereType<Map>().toList();
@@ -490,8 +531,12 @@ class _ProfileScreenState extends State<ProfileScreen>
         for (final d in extras)
           item(d['name']?.toString() ?? 'Document', false, d),
       ];
-    } catch (_) {
-      // Endpoint unreachable (old server): the onboarding list still shows.
+    } catch (e, st) {
+      // Previously swallowed completely, so a real failure (auth, network, a
+      // response shape change) looked identical to "nothing uploaded yet" -
+      // log it and flag it so the UI can tell the two apart.
+      debugPrint('[Profile] /staff/profile/documents failed: $e\n$st');
+      _staffDocumentsFetchFailed = true;
       return const [];
     }
   }
@@ -565,6 +610,12 @@ class _ProfileScreenState extends State<ProfileScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_isAdmin) {
+      return AdminProfileScreen(
+        dashboardTabIndex: widget.dashboardTabIndex,
+        onNavigateToIndex: widget.onNavigateToIndex,
+      );
+    }
     return Scaffold(
       backgroundColor: AppColors.background,
       drawer: AppDrawer(
@@ -2520,9 +2571,34 @@ class _ProfileScreenState extends State<ProfileScreen>
 
 
 
+  /// The staff member's own Education entries (self-entered, Profile > Exp & Edu), falling
+  /// back to their converted-recruitment-Candidate record when they have not entered any yet.
+  /// A candidate conversion still prefills the tab; typing something of their own replaces it
+  /// (and is what a staff member added directly from the Staff module - no candidate record at
+  /// all - needs to fill the tab in the first place).
+  List get _educationEntries {
+    final own = _staffData?['education'] as List?;
+    if (own != null && own.isNotEmpty) return own;
+    return _candidateData?['education'] as List? ?? const [];
+  }
+
+  List get _experienceEntries {
+    final own = _staffData?['experience'] as List?;
+    if (own != null && own.isNotEmpty) return own;
+    return _candidateData?['experience'] as List? ?? const [];
+  }
+
+  Widget _editSectionButton(VoidCallback onTap) {
+    return IconButton(
+      tooltip: 'Add / Edit',
+      icon: Icon(Icons.edit_outlined, size: 20, color: AppColors.primaryText),
+      onPressed: onTap,
+    );
+  }
+
   Widget _buildExpAndEduTab() {
-    final education = _candidateData?['education'] as List? ?? [];
-    final experience = _candidateData?['experience'] as List? ?? [];
+    final education = _educationEntries;
+    final experience = _experienceEntries;
 
     return RefreshIndicator(
       onRefresh: _refreshProfile,
@@ -2534,7 +2610,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             _buildCardSection(
               icon: Icons.school_outlined,
               title: 'Education',
-              trailing: null,
+              trailing: _editSectionButton(_showEditEducationSheet),
               content: education.isEmpty
                   ? _buildEmptyState(
                       Icons.school_outlined,
@@ -2552,7 +2628,7 @@ class _ProfileScreenState extends State<ProfileScreen>
             _buildCardSection(
               icon: Icons.business_center_outlined,
               title: 'Experience',
-              trailing: null,
+              trailing: _editSectionButton(_showEditExperienceSheet),
               content: experience.isEmpty
                   ? _buildEmptyState(
                       Icons.business_center_outlined,
@@ -2890,14 +2966,23 @@ class _ProfileScreenState extends State<ProfileScreen>
                     border: Border.all(color: _kHairline),
                     child: SizedBox(
                       width: double.infinity,
-                      child: _buildEmptyState(
-                        Icons.folder_outlined,
-                        'No documents found.',
-                        messages: const [
-                          'Documents will appear here for viewing once they are available.',
-                          'Once HR/Admin verifies them, they will show as Verified.',
-                        ],
-                      ),
+                      child: _staffDocumentsFetchFailed
+                          ? _buildEmptyState(
+                              Icons.cloud_off_outlined,
+                              'Couldn\'t load company documents.',
+                              messages: const [
+                                'Check your connection and pull down to refresh.',
+                                'If this keeps happening, let HR/Admin know.',
+                              ],
+                            )
+                          : _buildEmptyState(
+                              Icons.folder_outlined,
+                              'No documents found.',
+                              messages: const [
+                                'Documents will appear here for viewing once they are available.',
+                                'Once HR/Admin verifies them, they will show as Verified.',
+                              ],
+                            ),
                     ),
                   )
                 : Column(
@@ -3234,7 +3319,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   void _showEditEducationSheet() {
-    final education = _candidateData?['education'] as List? ?? [];
+    final education = _educationEntries;
     final list = education
         .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
         .toList();
@@ -3268,7 +3353,7 @@ class _ProfileScreenState extends State<ProfileScreen>
   }
 
   void _showEditExperienceSheet() {
-    final experience = _candidateData?['experience'] as List? ?? [];
+    final experience = _experienceEntries;
     final list = experience
         .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
         .toList();

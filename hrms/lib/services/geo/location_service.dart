@@ -545,9 +545,9 @@ class LocationService {
       );
       _lastLocationPermissionSyncAt = now;
     } catch (error) {
+      _lastLocationPermissionSyncAt = now;
       if (error is DioException && error.response?.statusCode == 429) {
         // Server rate-limited profile sync; avoid repeated spam and try later.
-        _lastLocationPermissionSyncAt = now;
         return;
       }
       if (kDebugMode) {

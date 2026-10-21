@@ -582,21 +582,39 @@ class AttendanceService {
       final start = _shiftTimeToHHmm(shift['startTime']);
       final end = _shiftTimeToHHmm(shift['endTime']);
       final name = shift['name']?.toString().trim();
-      if (start != null && end != null) {
-        final tmplRaw = data['template'];
-        final tmpl = tmplRaw is Map
-            ? Map<String, dynamic>.from(tmplRaw)
-            : <String, dynamic>{};
-        tmpl['shiftStartTime'] = start;
-        tmpl['shiftEndTime'] = end;
-        data['shiftStartTime'] = start;
-        data['shiftEndTime'] = end;
-        if (name != null && name.isNotEmpty) {
-          tmpl['shiftName'] = name;
-          data['shiftName'] = name;
+      final shiftType = (shift['shiftType'] ?? '').toString().toLowerCase().trim();
+      final isOpen = shiftType.contains('open');
+      final workHours = (shift['workHours'] as num?)?.toDouble();
+
+      final tmplRaw = data['template'];
+      final tmpl = tmplRaw is Map
+          ? Map<String, dynamic>.from(tmplRaw)
+          : <String, dynamic>{};
+
+      if (isOpen) {
+        tmpl['shiftType'] = 'open';
+        data['shiftType'] = 'open';
+        if (workHours != null && workHours > 0) {
+          tmpl['openWorkHours'] = workHours;
+          tmpl['workHours'] = workHours;
+          data['openWorkHours'] = workHours;
+          data['workHours'] = workHours;
         }
-        data['template'] = tmpl;
+      } else {
+        if (start != null && start.isNotEmpty) {
+          tmpl['shiftStartTime'] = start;
+          data['shiftStartTime'] = start;
+        }
+        if (end != null && end.isNotEmpty) {
+          tmpl['shiftEndTime'] = end;
+          data['shiftEndTime'] = end;
+        }
       }
+      if (name != null && name.isNotEmpty) {
+        tmpl['shiftName'] = name;
+        data['shiftName'] = name;
+      }
+      data['template'] = tmpl;
     }
 
     if (data['template'] != null) {
@@ -1305,6 +1323,22 @@ class AttendanceService {
           if (activityLogs != null) {
             m['activityLogs'] = activityLogs;
             m['logs'] = activityLogs;
+          }
+
+          if (m['shift'] is Map) {
+            final sMap = Map<String, dynamic>.from(m['shift'] as Map);
+            m['shiftStartTime'] ??= sMap['startTime'];
+            m['shiftEndTime'] ??= sMap['endTime'];
+            m['shiftName'] ??= sMap['name'];
+            m['shiftType'] ??= sMap['shiftType'];
+            m['openWorkHours'] ??= sMap['workHours'];
+          } else if (rawData['shift'] is Map) {
+            final sMap = Map<String, dynamic>.from(rawData['shift'] as Map);
+            m['shiftStartTime'] ??= sMap['startTime'];
+            m['shiftEndTime'] ??= sMap['endTime'];
+            m['shiftName'] ??= sMap['name'];
+            m['shiftType'] ??= sMap['shiftType'];
+            m['openWorkHours'] ??= sMap['workHours'];
           }
 
           normalizedList.add(m);

@@ -23,10 +23,10 @@ class RouteRecorder {
   RouteRecorder._();
 
   /// Fixes worse than this are GPS guesses (inside buildings, under cover).
-  static const double maxAccuracyM = 25;
+  static const double maxAccuracyM = 40;
 
   /// Minimum real movement between kept points (filters standing-still jitter).
-  static const double minMoveM = 10;
+  static const double minMoveM = 6;
 
   /// A jump needing more than this speed is a GPS glitch, not travel.
   static const double maxSpeedKmh = 160;

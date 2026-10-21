@@ -345,6 +345,7 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
       if (!mounted) return;
       setState(() => _isLoading = false);
       if (Platform.isAndroid && !await Permission.locationAlways.isGranted) {
+        if (!mounted) return;
         await LocationService.showBackgroundLocationDisclosureAndRequest(
           context,
           title: 'Background location for attendance',

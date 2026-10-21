@@ -105,6 +105,28 @@ def _load_antispoof():
         sys.stderr.flush()
 
 
+def _reduce_glare_for_antispoof(bgr):
+    """CLAHE-normalizes the frame's lightness channel before the anti-spoof model
+    sees it, so a strong overhead light's specular hot spots on the forehead/cheeks
+    don't get misread as a screen-reflection artifact (a known false-positive
+    trigger for this model). Only the anti-spoof model's copy of the frame is
+    touched - face detection/recognition still run on the original, unaltered
+    image, so recognition accuracy is unaffected. CLAHE flattens local exposure
+    without erasing texture, so it does not weaken detection of an actual printed
+    photo or phone/monitor screen (moire, paper texture, colour banding all
+    survive). Fail-safe: any error returns the original frame unchanged.
+    """
+    import cv2
+    try:
+        lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l = clahe.apply(l)
+        return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
+    except Exception:
+        return bgr
+
+
 def ensure_weights():
     # dlib's models are bundled with face_recognition_models; no download step needed.
     return True
@@ -374,8 +396,10 @@ def embed_live(img):
         if _anti_spoof_test is not None:
             try:
                 model_dir = os.path.join(_ANTISPOOF_DIR, 'resources', 'anti_spoof_models')
-                # Silent-Face expects a cv2 (BGR) frame — pass the un-converted img.
-                label = _anti_spoof_test(img, model_dir, 0)
+                # Silent-Face expects a cv2 (BGR) frame — pass the un-converted img,
+                # glare-corrected (see _reduce_glare_for_antispoof) so strong overhead
+                # lighting doesn't false-positive as a screen/print spoof.
+                label = _anti_spoof_test(_reduce_glare_for_antispoof(img), model_dir, 0)
                 if label != 1:
                     return None, "Spoof Alert! Digital screens or printed photos are not allowed."
             except Exception as ase:

@@ -4,6 +4,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../../../config/app_colors.dart';
 import '../../../services/admin_celebration_service.dart';
@@ -516,11 +517,20 @@ class _EntryCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(entry.staffName,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary)),
+                  Text(
+                    entry.staffName,
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                   if (sub.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(sub, style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary)),
+                    Text(
+                      sub,
+                      style: const TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ],
                   const SizedBox(height: 8),
                   Wrap(
@@ -528,12 +538,25 @@ class _EntryCard extends StatelessWidget {
                     runSpacing: 6,
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
-                      _pill(Icons.event_outlined, '${formatOccasionDate(entry.date)} · $_when',
-                          entry.daysAway == 0 ? AppColors.warningBg : AppColors.inputFill,
-                          entry.daysAway == 0 ? AppColors.warning : AppColors.textSecondary),
+                      _pill(
+                        Icons.event_outlined,
+                        entry.date == null ? '' : DateFormat('d MMM yyyy').format(entry.date!.toUtc()),
+                        entry.daysAway == 0 ? AppColors.warningBg : AppColors.inputFill,
+                        entry.daysAway == 0 ? AppColors.warning : AppColors.textSecondary,
+                      ),
+                      _pill(
+                        Icons.schedule_rounded,
+                        _when,
+                        entry.daysAway == 0 ? AppColors.warningBg : AppColors.inputFill,
+                        entry.daysAway == 0 ? AppColors.warning : AppColors.textSecondary,
+                      ),
                       if (entry.kind == 'anniversary' && entry.yearsOfService != null)
-                        _pill(Icons.workspace_premium_outlined,
-                            '${entry.yearsOfService} ${entry.yearsOfService == 1 ? 'year' : 'years'}', AppColors.indigoBg, AppColors.indigo),
+                        _pill(
+                          Icons.workspace_premium_outlined,
+                          '${entry.yearsOfService} ${entry.yearsOfService == 1 ? 'yr' : 'yrs'}',
+                          AppColors.indigoBg,
+                          AppColors.indigo,
+                        ),
                       _status(entry.status),
                     ],
                   ),
@@ -574,12 +597,22 @@ class _EntryCard extends StatelessWidget {
   }
 
   Widget _pill(IconData icon, String text, Color bg, Color fg) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
         decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(999)),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 13, color: fg),
-          const SizedBox(width: 4),
-          Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
-        ]),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 13, color: fg),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                text,
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: fg),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       );
 }

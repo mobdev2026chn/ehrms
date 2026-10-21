@@ -93,6 +93,14 @@ class HomeDashboardScreen extends StatefulWidget {
   final bool isBreakActionInProgress;
   final int? completedBreakSecondsToday;
 
+  /// Start/End Permission - the dashboard's inline counterpart to the web app's
+  /// "Start Permission" / "Stop Permission" button (see dashboard_screen.dart
+  /// _permissionActionFlow). Handles both start and end: which one depends on
+  /// today's permissionStatus (read directly from _todayAttendance below), the same
+  /// way onEndBreakTap only ever ends - this one branches internally.
+  final VoidCallback? onPermissionActionTap;
+  final bool isPermissionActionInProgress;
+
   const HomeDashboardScreen({
     super.key,
     this.onNavigate,
@@ -108,6 +116,8 @@ class HomeDashboardScreen extends StatefulWidget {
     this.onEndBreakTap,
     this.isBreakActionInProgress = false,
     this.completedBreakSecondsToday,
+    this.onPermissionActionTap,
+    this.isPermissionActionInProgress = false,
   });
 
   @override
@@ -196,6 +206,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   /// Whether a salary structure is assigned (Salary Overview shows "not assigned" otherwise).
   bool _hasSalaryStructure = false;
+  // Masked by default, like the web dashboard's Salary Overview card - toggled with its own
+  // Show/Hide eye button rather than by tapping the card itself (which used to navigate away).
+  bool _salaryAmountsVisible = false;
   num? _payableDaysMonth;
   num? _totalPayableDaysMonth;
 
@@ -2486,7 +2499,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _buildWebQuickActionsCard(),
             const SizedBox(height: 12),
 
-            // 3. Today's Punch Status Banner (Web styled)
+            // 3. Today's Punch Status Banner (Web styled) - Start/End Permission is an
+            // inline button inside this card now (matching the web app's placement next
+            // to Punch Out / Take Break), not a separate card.
             _buildWebTodayPunchBanner(),
             const SizedBox(height: 12),
 
@@ -3184,6 +3199,34 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         ? totalHoursRaw.toDouble()
         : double.tryParse(totalHoursRaw?.toString() ?? '');
 
+    // Custom permission state for today (today-punch `permissionStatus`) - the dashboard's
+    // "Start Permission" / "Stop Permission" button, matching the web app. Only relevant on a
+    // day the employee has a Custom permission request; see
+    // HRMSbackend services/attendance/staffPermissionService.ts.
+    final ps = _todayAttendance?['permissionStatus'];
+    final hasPermissionRequest = ps is Map && ps['hasRequest'] == true;
+    final isOnPermission = ps is Map && ps['isOnPermission'] == true;
+    final permissionRequestStatus = ps is Map ? ps['requestStatus']?.toString() : null;
+    final permissionAllowedMin = ps is Map ? ((ps['allowedMinutes'] as num?)?.toInt() ?? 0) : 0;
+    final permissionRemainingMin = ps is Map ? ((ps['remainingMinutes'] as num?)?.toInt() ?? 0) : 0;
+    DateTime? activePermissionStartAt;
+    if (isOnPermission) {
+      final active = ps['activePermission'];
+      final startAtRaw = active is Map ? active['startAt'] : null;
+      if (startAtRaw != null) {
+        activePermissionStartAt = DateTime.tryParse(startAtRaw.toString())?.toLocal();
+      }
+    }
+    // Matches PermissionWindowStatus.actionLabel (services/permission_service.dart) and the
+    // web app's exact wording.
+    final permissionButtonLabel = isOnPermission
+        ? 'Stop Permission'
+        : !hasPermissionRequest
+            ? 'Apply for Permission'
+            : permissionRequestStatus == 'Pending'
+                ? 'Start Permission (Pending)'
+                : 'Start Permission';
+
     final isOnBreak = _isCurrentBreakActive;
     final breakStart = _activeBreakStartTime();
     final breakStartStr = breakStart != null
@@ -3284,6 +3327,40 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
               ),
             ],
           ),
+          if (hasPermissionRequest) ...[
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              onPressed: widget.isPermissionActionInProgress ? null : widget.onPermissionActionTap,
+              icon: widget.isPermissionActionInProgress
+                  ? SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
+                    )
+                  : Icon(isOnPermission ? Icons.stop_circle_outlined : Icons.badge_outlined, size: 18),
+              label: Text(
+                permissionButtonLabel,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size.fromHeight(44),
+                backgroundColor: isOnPermission ? AppColors.error : AppColors.primary,
+                foregroundColor: AppColors.onPrimary,
+                elevation: 0,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+            if (isOnPermission && activePermissionStartAt != null) ...[
+              const SizedBox(height: 8),
+              _InlinePermissionTimer(startTime: activePermissionStartAt),
+            ] else if (!isOnPermission && permissionRequestStatus == 'Approved') ...[
+              const SizedBox(height: 6),
+              Text(
+                '$permissionRemainingMin / $permissionAllowedMin min remaining today',
+                style: const TextStyle(fontSize: 11.5, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+              ),
+            ],
+          ],
           if (shiftLine != null) ...[
             const SizedBox(height: 8),
             Row(
@@ -4540,13 +4617,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     final ctc = _totalCTC > 0
         ? '₹ ${formatter.format(_totalCTC)}'
         : '--';
+    // Masked form mirrors web's dot mask: the currency symbol stays visible, the figure doesn't.
+    const masked = '₹ ●●●●●●';
 
     return AppCard(
-      onTap: () => Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => const SalaryStructureDetailScreen(),
-        ),
-      ),
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -4572,7 +4646,24 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   style: AppTextStyles.headingSmall.copyWith(fontSize: 15),
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, size: 20, color: AppColors.textCaption),
+              // Show/Hide toggle, like the web card - the card itself no longer navigates away
+              // on tap, so this is the only way to reveal the figures.
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _salaryAmountsVisible = !_salaryAmountsVisible),
+                icon: Icon(
+                  _salaryAmountsVisible ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                  size: 15,
+                ),
+                label: Text(_salaryAmountsVisible ? 'Hide' : 'Show'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.textPrimary,
+                  backgroundColor: AppColors.inputFill,
+                  side: BorderSide.none,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  minimumSize: const Size(0, 32),
+                  textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
@@ -4598,15 +4689,15 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Expanded(
-                    child: _buildSalaryItemBox('Gross', gross),
+                    child: _buildSalaryItemBox('Gross', _salaryAmountsVisible ? gross : masked),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: _buildSalaryItemBox('Net', net),
+                    child: _buildSalaryItemBox('Net', _salaryAmountsVisible ? net : masked),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: _buildSalaryItemBox('CTC', ctc),
+                    child: _buildSalaryItemBox('CTC', _salaryAmountsVisible ? ctc : masked),
                   ),
                 ],
               ),
@@ -5056,8 +5147,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           ),
                           const SizedBox(height: 8),
                         ],
-                        if (_isAdminLike &&
-                            _upcomingCelebrations.isNotEmpty) ...[
+                        // Shown to every staff member, not just admins: the dashboard
+                        // card above already falls back to showing an upcoming
+                        // celebration to anyone when there's none today (see the
+                        // "Celebrations (Dark Card)" block), so gating this section to
+                        // _isAdminLike made the detail sheet hide the exact item the
+                        // card had just shown, landing on a false "No celebrations".
+                        if (_upcomingCelebrations.isNotEmpty) ...[
                           _buildCelebrationSectionLabel('Upcoming'),
                           const SizedBox(height: 8),
                           ..._buildGroupedCelebrationTiles(
@@ -5066,8 +5162,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           ),
                         ],
                         if (_todayCelebrations.isEmpty &&
-                            (!_isAdminLike ||
-                                _upcomingCelebrations.isEmpty))
+                            _upcomingCelebrations.isEmpty)
                           Padding(
                             padding: const EdgeInsets.symmetric(vertical: 32),
                             child: Center(
@@ -7973,4 +8068,82 @@ class _WorkDialPainter extends CustomPainter {
   @override
   bool shouldRepaint(_WorkDialPainter old) =>
       old.progress != progress || old.showArc != showArc;
+}
+
+/// Live "mm:ss" (or "h:mm:ss") elapsed since [startTime] - the dashboard's inline
+/// "PERMISSION ● 00:06" row shown while on a permission window, matching the web app's
+/// live timer next to "Stop Permission".
+class _InlinePermissionTimer extends StatefulWidget {
+  final DateTime startTime;
+
+  const _InlinePermissionTimer({required this.startTime});
+
+  @override
+  State<_InlinePermissionTimer> createState() => _InlinePermissionTimerState();
+}
+
+class _InlinePermissionTimerState extends State<_InlinePermissionTimer> {
+  Timer? _timer;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
+  }
+
+  @override
+  void didUpdateWidget(covariant _InlinePermissionTimer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.startTime != widget.startTime) _tick();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _tick() {
+    if (!mounted) return;
+    final diff = DateTime.now().difference(widget.startTime);
+    setState(() => _elapsed = diff.isNegative ? Duration.zero : diff);
+  }
+
+  String _format(Duration d) {
+    final h = d.inHours;
+    final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = d.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const Icon(Icons.fiber_manual_record, size: 9, color: AppColors.error),
+        const SizedBox(width: 6),
+        const Text(
+          'PERMISSION',
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.error, letterSpacing: 0.4),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          _format(_elapsed),
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: AppColors.error,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+        const SizedBox(width: 6),
+        const Text(
+          '(Active Session)',
+          style: TextStyle(fontSize: 11, color: AppColors.textSecondary, fontWeight: FontWeight.w500),
+        ),
+      ],
+    );
+  }
 }

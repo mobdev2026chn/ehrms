@@ -180,6 +180,14 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
   bool _isRefreshingLocation = false;
   bool _isHandlingBack = false;
   String? _capturedFilePath;
+  // Set when closing straight from the live camera (skipReview, e.g. punch/break)
+  // without the review screen in between. The native camera surface (CameraX) is
+  // still live right up to the pop, and on some devices tearing it down DURING the
+  // pop's slide transition paints one black frame before the dashboard shows —
+  // reported as a brief black screen right after End Break's selfie closes, across
+  // multiple devices. Swapping the camera widget out of the tree first, letting that
+  // frame paint, THEN popping avoids ever tearing down a live surface mid-transition.
+  bool _closingCamera = false;
   CameraState? _cameraState;
   String? _infoText;
   // Live face count from the camera stream (-1 = not yet analysed). Drives the
@@ -273,7 +281,24 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
     super.dispose();
   }
 
-  void _useSystemCamera() => Navigator.of(context).pop(useImagePickerFallback);
+  void _useSystemCamera() => _closeCamera(useImagePickerFallback);
+
+  /// Removes the live camera from the tree first (letting its platform surface
+  /// release while this route is still fully on top, not mid pop-transition),
+  /// then pops with [result] on the next frame. See [_closingCamera].
+  void _closeCamera(Object? result) {
+    if (!mounted || _closingCamera) return;
+    if (_capturedFilePath != null) {
+      // Review screen is already showing a static image, not a live camera
+      // surface — nothing to settle first.
+      Navigator.of(context).pop(result);
+      return;
+    }
+    setState(() => _closingCamera = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.of(context).pop(result);
+    });
+  }
 
   void _handleBackPressed() {
     if (_isHandlingBack || !mounted) return;
@@ -286,7 +311,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       return;
     }
     _isHandlingBack = true;
-    Navigator.of(context).pop();
+    _closeCamera(null);
   }
 
   void _retry() {
@@ -429,7 +454,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
       }
     }
     if (widget.skipReview) {
-      Navigator.of(context).pop(File(path));
+      _closeCamera(File(path));
       return;
     }
     setState(() => _capturedFilePath = path);
@@ -633,7 +658,9 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
               ),
         body: _capturedFilePath != null
             ? _buildPreviewBody()
-            : Stack(
+            : _closingCamera
+                ? const SizedBox.shrink()
+                : Stack(
                 fit: StackFit.expand,
                 children: [
                   CameraAwesomeBuilder.awesome(
@@ -1169,7 +1196,7 @@ class _SelfieCameraScreenState extends State<SelfieCameraScreen>
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: () => Navigator.of(context).pop(File(path)),
+                    onPressed: () => _closeCamera(File(path)),
                     icon: const Icon(Icons.check_rounded),
                     label: const Text('Confirm & Submit'),
                     style: FilledButton.styleFrom(

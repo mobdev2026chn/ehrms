@@ -97,7 +97,17 @@ class _AddCustomerScreenState extends State<AddCustomerScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // Exiting tasks and opening customer creation must never inherit or display leftover toasts.
+    SnackBarUtils.isCustomerCreationActive = true;
+    SnackBarUtils.dismiss();
+  }
+
+  @override
   void dispose() {
+    SnackBarUtils.isCustomerCreationActive = false;
+    SnackBarUtils.dismiss();
     _nameController.dispose();
     _numberController.dispose();
     _companyController.dispose();

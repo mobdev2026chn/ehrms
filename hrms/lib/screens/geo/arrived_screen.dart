@@ -105,6 +105,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
 
   @override
   void dispose() {
+    SnackBarUtils.dismiss();
     _descriptionController.dispose();
     super.dispose();
   }
@@ -890,6 +891,7 @@ class _ArrivedScreenState extends State<ArrivedScreen> {
     // LiveTrackingScreen exit: land on Tasks list.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      SnackBarUtils.dismiss(context);
       Navigator.of(context).pushAndRemoveUntil(
         MaterialPageRoute(builder: (_) => const MyTasksScreen()),
         (route) => false,

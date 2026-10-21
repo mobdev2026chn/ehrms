@@ -115,6 +115,205 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
     }
   }
 
+  /// Mirrors the web staff portal's "View OT Details" modal (Schedule ID, OT Hours,
+  /// Check In/Out, Total Work Hours, OT Rate Multiplier, Requested By, Response Date,
+  /// Purpose/Manager Notes) - the list screen previously showed only the summary card
+  /// with no way to open this breakdown at all.
+  void _showOvertimeDetails(Map<String, dynamic> item) {
+    String fmtDate(String? raw) {
+      if (raw == null || raw.isEmpty) return '—';
+      try {
+        return DateFormat('yyyy-MM-dd').format(DateTime.parse(raw).toLocal());
+      } catch (_) {
+        return raw;
+      }
+    }
+
+    String fmtHours(num? h) {
+      if (h == null) return '0h 0m';
+      final totalMinutes = (h * 60).round();
+      final hh = totalMinutes ~/ 60;
+      final mm = totalMinutes % 60;
+      return '${hh}h ${mm}m';
+    }
+
+    final id = (item['_id'] ?? item['id'] ?? '').toString();
+    final status = (item['status'] ?? 'Pending').toString();
+    final otHours = (item['otHoursWorked'] as num?) ?? 0;
+    final actualWorkHours = (item['actualWorkHours'] as num?) ?? 0;
+    final configuredWorkHours = item['configuredWorkHours'] as num?;
+    final punchIn = (item['punchIn'] ?? '').toString();
+    final punchOut = (item['punchOut'] ?? '').toString();
+    final otRateMultiplier = item['otRateMultiplier'] as num?;
+    final requestedBy = (item['requestedBy'] ?? 'Admin').toString();
+    final responseDate = item['responseDate']?.toString();
+    final notes = (item['notes'] ?? item['remarks'] ?? '').toString();
+    final date = (item['date'] ?? item['startDate'] ?? '').toString();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.75,
+        minChildSize: 0.4,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Container(
+          decoration: const BoxDecoration(
+            color: AppColors.background,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: ListView(
+            controller: scrollController,
+            padding: const EdgeInsets.all(20),
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    status.toLowerCase() == 'accepted'
+                        ? Icons.check_circle_rounded
+                        : Icons.schedule_rounded,
+                    color: _getStatusTextColor(status),
+                  ),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text('Overtime Details', style: AppTextStyles.headingSmall),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () => Navigator.of(ctx).pop(),
+                  ),
+                ],
+              ),
+              if (id.isNotEmpty)
+                Text('Schedule ID: $id',
+                    style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary)),
+              const SizedBox(height: 16),
+              AppCard(
+                border: Border.all(color: _hairline),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: _otDetailField('OT DATE', fmtDate(date))),
+                        Expanded(child: _otDetailField('OT HOURS', fmtHours(otHours))),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _getStatusBgColor(status),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: _getStatusTextColor(status),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              AppCard(
+                border: Border.all(color: _hairline),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Attendance & Punch Details', style: AppTextStyles.headingSmall),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _otDetailField(
+                            'CHECK IN / OUT',
+                            '${punchIn.isEmpty ? '--' : punchIn} → ${punchOut.isEmpty ? '--' : punchOut}',
+                          ),
+                        ),
+                        Expanded(
+                          child: _otDetailField(
+                            'TOTAL WORK HOURS',
+                            fmtHours(actualWorkHours),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        if (configuredWorkHours != null)
+                          Expanded(
+                            child: _otDetailField(
+                              'SHIFT HOURS',
+                              fmtHours(configuredWorkHours),
+                            ),
+                          ),
+                        Expanded(
+                          child: _otDetailField(
+                            'OT RATE MULTIPLIER',
+                            otRateMultiplier != null ? '${otRateMultiplier}x' : 'Auto Calculate',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              AppCard(
+                border: Border.all(color: _hairline),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(child: _otDetailField('REQUESTED BY', requestedBy)),
+                        Expanded(
+                          child: _otDetailField(
+                            'RESPONSE DATE',
+                            responseDate != null ? fmtDate(responseDate) : '—',
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (notes.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _otDetailField('PURPOSE / MANAGER NOTES', notes),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _otDetailField(String label, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(value, style: AppTextStyles.bodySmall.copyWith(color: AppColors.textPrimary)),
+          ],
+        ),
+      );
+
   void _prevMonth() {
     setState(() {
       _selectedMonth = DateTime(
@@ -465,6 +664,7 @@ class _OvertimeScreenState extends State<OvertimeScreen> {
 
                   return AppCard(
                     border: Border.all(color: _hairline),
+                    onTap: () => _showOvertimeDetails(item),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
