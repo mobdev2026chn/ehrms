@@ -2449,6 +2449,10 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
 
   List<Map<String, dynamic>> _holidays = [];
   List<dynamic> _existingRequests = [];
+  // A staff account whose own `role` is Admin/HR/Senior HR may backdate their own leave
+  // request (recording something after the fact is part of that role); an ordinary employee
+  // may not - see _pickDateFor and _handleApplyLeaveSubmit.
+  bool _isAdminLike = false;
 
   @override
   void initState() {
@@ -2546,6 +2550,12 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
             data?['staffData']?['holidayTemplate'] as Map<String, dynamic>?;
         final hols = template?['holidays'] as List? ?? [];
         _holidays = hols.map((h) => Map<String, dynamic>.from(h as Map)).toList();
+        final role = (data?['role'] ?? data?['staffData']?['role'] ?? '').toString().toLowerCase().trim();
+        _isAdminLike = role == 'admin' ||
+            role == 'super admin' ||
+            role == 'superadmin' ||
+            role == 'hr' ||
+            role == 'senior hr';
       }
     } catch (_) {}
   }
@@ -2590,12 +2600,18 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
     final DateTime initial = (isStart ? _startDate : _endDate) ?? DateTime.now();
     final today = DateTime.now();
     final todayOnly = DateTime(today.year, today.month, today.day);
-    // Leave is for time not yet worked - today or later only. Previously allowed a date up to
-    // 30 days in the past, which let an employee file a leave request for a day already over.
+    // Leave is for time not yet worked - today or later only, for an ordinary employee.
+    // Previously allowed a date up to 30 days in the past for everyone, which let an employee
+    // file a leave request for a day already over. An Admin/HR account applying their own
+    // leave may still record one after the fact (e.g. a sick day taken before they got to the
+    // app) - see _isAdminLike and the matching backend allowance in applyLeaveRequest.
+    final earliestSelectable = _isAdminLike
+        ? todayOnly.subtract(const Duration(days: 30))
+        : todayOnly;
     final DateTime? picked = await _showWebStyledDatePicker(
       context: context,
-      initialDate: initial.isBefore(todayOnly) ? todayOnly : initial,
-      firstDate: todayOnly,
+      initialDate: initial.isBefore(earliestSelectable) ? earliestSelectable : initial,
+      firstDate: earliestSelectable,
       lastDate: today.add(const Duration(days: 365)),
     );
 
@@ -2720,11 +2736,23 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                             selectedDate!.year == currentDay.year &&
                             selectedDate!.month == currentDay.month &&
                             selectedDate!.day == currentDay.day;
+                        // firstDate/lastDate used to be accepted but never actually checked here -
+                        // every day in the grid was tappable regardless of the caller's range, so
+                        // restricting a caller's `firstDate` (e.g. to today, to block past dates)
+                        // had no visible effect. Compared as dates only: firstDate/lastDate may
+                        // carry a time-of-day component the day cell itself never has.
+                        final currentDayOnly = DateTime(currentDay.year, currentDay.month, currentDay.day);
+                        final firstDateOnly = DateTime(firstDate.year, firstDate.month, firstDate.day);
+                        final lastDateOnly = DateTime(lastDate.year, lastDate.month, lastDate.day);
+                        final isDisabled = currentDayOnly.isBefore(firstDateOnly) ||
+                            currentDayOnly.isAfter(lastDateOnly);
 
                         return InkWell(
-                          onTap: () {
-                            Navigator.pop(ctx, currentDay);
-                          },
+                          onTap: isDisabled
+                              ? null
+                              : () {
+                                  Navigator.pop(ctx, currentDay);
+                                },
                           borderRadius: BorderRadius.circular(100),
                           child: Container(
                             alignment: Alignment.center,
@@ -2737,7 +2765,9 @@ class _ApplyLeaveDialogState extends State<ApplyLeaveDialog> {
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                color: isSelected ? AppColors.onPrimary : AppColors.textPrimary,
+                                color: isDisabled
+                                    ? AppColors.textCaption.withValues(alpha: 0.4)
+                                    : (isSelected ? AppColors.onPrimary : AppColors.textPrimary),
                               ),
                             ),
                           ),

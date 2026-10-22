@@ -71,19 +71,37 @@ int getGraceTimeMinutes(ShiftTiming? shiftTiming, int defaultGraceTimeMinutes) {
   return defaultGraceTimeMinutes;
 }
 
+/// Minutes since midnight from either "HH:mm" (24-hour) or "hh:mm AM/PM" (12-hour) - shift
+/// templates are stored and resolved in both forms depending on the path (e.g. a plain
+/// ShiftTiming vs. a template read straight off an appliedShiftId), and this used to assume
+/// 24-hour only: a 12-hour string like "09:00 AM" made `int.parse('00 AM')` throw
+/// FormatException, crashing the attendance calendar's work-hours check.
+int _minutesSinceMidnight(String time) {
+  final trimmed = time.trim();
+  final meridiemMatch = RegExp(r'(am|pm)$', caseSensitive: false).firstMatch(trimmed);
+  final meridiem = meridiemMatch?.group(1)?.toLowerCase();
+  final clockPart = meridiem == null
+      ? trimmed
+      : trimmed.substring(0, meridiemMatch!.start).trim();
+
+  final parts = clockPart.split(':');
+  var hours = int.parse(parts[0]);
+  final minutes = parts.length > 1 ? int.parse(parts[1]) : 0;
+
+  if (meridiem == 'am' && hours == 12) {
+    hours = 0;
+  } else if (meridiem == 'pm' && hours != 12) {
+    hours += 12;
+  }
+
+  return hours * 60 + minutes;
+}
+
 /// Calculate shift hours from start and end time
 /// Handles overnight shifts correctly
 double calculateShiftHours(String startTime, String endTime) {
-  final startParts = startTime.split(':');
-  final endParts = endTime.split(':');
-
-  final startHours = int.parse(startParts[0]);
-  final startMinutes = int.parse(startParts[1]);
-  final endHours = int.parse(endParts[0]);
-  final endMinutes = int.parse(endParts[1]);
-
-  final startTotalMinutes = startHours * 60 + startMinutes;
-  final endTotalMinutes = endHours * 60 + endMinutes;
+  final startTotalMinutes = _minutesSinceMidnight(startTime);
+  final endTotalMinutes = _minutesSinceMidnight(endTime);
 
   // Handle overnight shifts
   var diffMinutes = endTotalMinutes - startTotalMinutes;
