@@ -1719,7 +1719,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            customer.customerName,
+                            customer.displayName,
                             style: const TextStyle(
                               fontSize: 18,
                               fontWeight: FontWeight.w600,
@@ -2522,10 +2522,10 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                                                                       .customer!
                                                                       .customerNumber!
                                                                       .isNotEmpty
-                                                              ? '${task.customer!.customerName} · ${task.customer!.customerNumber}'
+                                                              ? '${task.customer!.displayName} · ${task.customer!.customerNumber}'
                                                               : task
                                                                     .customer!
-                                                                    .customerName,
+                                                                    .displayName,
                                                         ),
                                                       ],
                                                       _buildTaskCardDetailRow(
@@ -3188,7 +3188,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
                           const SizedBox(width: 6),
                           Expanded(
                             child: Text(
-                              task.customer!.customerName,
+                              task.customer!.displayName,
                               style: TextStyle(fontSize: 12, color: AppColors.textPrimary),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,

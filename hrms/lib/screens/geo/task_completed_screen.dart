@@ -346,7 +346,7 @@ class _TaskCompletedScreenState extends State<TaskCompletedScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final customerName = _task?.customer?.customerName ?? '—';
+    final customerName = _task?.customer?.displayName ?? '—';
     final taskTitle = _task?.taskTitle ?? 'Customer Visit';
 
     if (_loading) {

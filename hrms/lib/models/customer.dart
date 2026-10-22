@@ -17,6 +17,14 @@ class Customer {
 
   /// Email for OTP - uses emailId when email is null (customers collection uses emailId).
   String? get effectiveEmail => email ?? emailId;
+
+  /// The name to show for this customer - same priority as the task list's own resolution
+  /// (HRMSbackend geoTaskController formatStaffTaskResponse: `companyName || name`), so a
+  /// customer with both set shows the same name here as it does on the web's task list and
+  /// task detail. [customerName] itself stays the raw contact-person name other screens
+  /// (the customer list/edit form) rely on.
+  String get displayName =>
+      (companyName != null && companyName!.trim().isNotEmpty) ? companyName! : customerName;
   final String city;
   final String pincode;
 

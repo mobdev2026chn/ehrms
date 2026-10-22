@@ -593,7 +593,7 @@ class _StartRideScreenState extends State<StartRideScreen> {
                 value: _destinationAddress.isEmpty
                     ? 'Set destination'
                     : _destinationAddress,
-                subtitle: _customer?.customerName ?? 'Customer',
+                subtitle: _customer?.displayName ?? 'Customer',
                 trailing: TextButton.icon(
                   onPressed: _loadingDestination
                       ? null

@@ -916,8 +916,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       return const SizedBox.shrink();
     }
 
-    final initial = _customer!.customerName.isNotEmpty
-        ? _customer!.customerName[0].toUpperCase()
+    final initial = _customer!.displayName.isNotEmpty
+        ? _customer!.displayName[0].toUpperCase()
         : '?';
 
     return Container(
@@ -961,7 +961,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _customer!.customerName,
+                      _customer!.displayName,
                       style: AppTextStyles.bodyLarge.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -1173,13 +1173,51 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
   }
 
+  /// One chip per field actually configured on the admin's Form Template (requirements),
+  /// instead of the old fixed OTP/Photo/Form/GeoFence set - that set silently dropped any
+  /// other field an admin added (Email, Description, a custom dropdown, ...) because it only
+  /// ever checked four hardcoded booleans, never the real field list the task already carries.
   Widget _buildTaskRequirements() {
-    final hasAny =
+    final requirements = task.requirements;
+    final hasLegacyFlags =
         task.isOtpRequired ||
         task.isGeoFenceRequired ||
         task.isPhotoRequired ||
         task.isFormRequired;
-    if (!hasAny) return const SizedBox.shrink();
+    if (requirements.isEmpty && !hasLegacyFlags) return const SizedBox.shrink();
+
+    final chips = <Widget>[];
+    if (requirements.isNotEmpty) {
+      for (final r in requirements) {
+        if (r.isOtp) {
+          chips.add(_chip('✓ ${r.name}', AppColors.success));
+        } else if (r.isImage) {
+          chips.add(_chip('📷 ${r.name}', AppColors.warning));
+        } else if (r.isEmail) {
+          chips.add(_chip('✉️ ${r.name}', Colors.blue));
+        } else if (r.isGps) {
+          chips.add(_chip('📍 ${r.name}', Colors.purple));
+        } else if (r.isDropdown) {
+          chips.add(_chip('▾ ${r.name}', Colors.teal));
+        } else {
+          // Text area, numeric and anything else not specifically iconed above.
+          chips.add(_chip('📝 ${r.name}', Colors.teal));
+        }
+      }
+      // GeoFence is a location constraint, not a submitted field, so it never appears in
+      // requirements - shown alongside the field chips when the task actually carries it.
+      if (task.isGeoFenceRequired) {
+        chips.add(_chip('📍 Geo-Fence (500m)', Colors.purple));
+      }
+    } else {
+      // No template loaded for this task (older data) - fall back to the legacy flags.
+      if (task.isOtpRequired) chips.add(_chip('✓ OTP Required', AppColors.success));
+      if (task.isGeoFenceRequired) {
+        chips.add(_chip('📍 Geo-Fence (500m)', Colors.purple));
+      }
+      if (task.isPhotoRequired) chips.add(_chip('📷 Photo Required', AppColors.warning));
+      if (task.isFormRequired) chips.add(_chip('📝 Fill Form', Colors.teal));
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1192,13 +1230,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          children: [
-            if (task.isOtpRequired) _chip('✓ OTP Required', AppColors.success),
-            if (task.isGeoFenceRequired)
-              _chip('📍 Geo-Fence (500m)', Colors.purple),
-            if (task.isPhotoRequired) _chip('📷 Photo Required', AppColors.warning),
-            if (task.isFormRequired) _chip('📝 Fill Form', Colors.teal),
-          ],
+          children: chips,
         ),
       ],
     );

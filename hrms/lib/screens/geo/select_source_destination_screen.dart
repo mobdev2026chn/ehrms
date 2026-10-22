@@ -331,7 +331,7 @@ class _SelectSourceDestinationScreenState
                         value: _destinationAddress.isEmpty
                             ? 'Set destination'
                             : _destinationAddress,
-                        subtitle: _customer?.customerName ?? 'Customer',
+                        subtitle: _customer?.displayName ?? 'Customer',
                         showChange: true,
                         onChange: _onChangeDestinationTap,
                         loading: _loadingDestination,
