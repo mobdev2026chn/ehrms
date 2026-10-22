@@ -6,15 +6,15 @@ class AppConstants {
   // Local-dev alt: `adb reverse tcp:2001 tcp:2001`, then 'http://127.0.0.1:2001/api'
   // (EHRMS backend PORT=2001 in app_backend/.env).
   // Production:
-  static const String baseUrl = 'https://my.ektahr.com/api';
+  //static const String baseUrl = 'https://my.ektahr.com/api';
   // Testing / UAT:
-   //static const String baseUrl = 'https://uat.ektahr.com/api';
+   static const String baseUrl = 'https://uat.ektahr.com/api';
 
   /// Web/Interaction HRMS API — web companion of [baseUrl] (chat, polls, LMS).
   // Production:
-  static const String webBaseUrl = 'https://my.ektahr.com/api';
+  //static const String webBaseUrl = 'https://my.ektahr.com/api';
   // Testing / UAT:
-  //static const String webBaseUrl = 'https://uat.ektahr.com/api';
+  static const String webBaseUrl = 'https://uat.ektahr.com/api';
 
   /// When **true** (default): Interaction REST + Socket use [webBaseUrl] like the web.
   /// With a different [baseUrl], [AuthService] performs a second `/auth/login` against [webBaseUrl]
