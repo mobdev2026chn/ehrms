@@ -225,7 +225,13 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
               const Text('Attachments', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: kInteractionInk)),
               const SizedBox(height: 8),
               for (final att in a.attachments)
-                ListTile(
+                // The surrounding Container's own `decoration` (_cardDecoration) paints a
+                // background, which intercepts the ListTile's tap ink before it reaches a
+                // Material ancestor to render on - wrapping it in its own transparent Material
+                // gives the ink splash somewhere to actually paint.
+                Material(
+                  type: MaterialType.transparency,
+                  child: ListTile(
                   contentPadding: EdgeInsets.zero,
                   dense: true,
                   leading: Container(
@@ -263,6 +269,7 @@ class _StaffAnnouncementDetailScreenState extends State<StaffAnnouncementDetailS
                           label: const Text('View'),
                         ),
                   onTap: () => viewAttachment(context, att),
+                  ),
                 ),
             ],
           ),
