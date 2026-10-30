@@ -39,6 +39,21 @@ const NetworkBadge = ({ network }) => {
   );
 };
 
+// Agent version of a connected PC. Agents from before auto-update report none: those PCs need the new
+// EktaHR-Agent.exe copied once, after that they update themselves. (Older servers send no version at all.)
+const AgentVersionText = ({ device }) => {
+  if (!device.connected || device.agentVersion === undefined) return null;
+  const old = !device.agentVersion;
+  return (
+    <div
+      title={old ? 'Old agent without auto-update: copy the new EktaHR-Agent.exe to this PC once' : 'This agent updates itself automatically'}
+      style={{ fontSize: '0.72rem', color: old ? '#b45309' : '#94a3b8', marginTop: '2px' }}
+    >
+      {old ? 'Agent: old version — update by hand once' : `Agent ${device.agentVersion}`}
+    </div>
+  );
+};
+
 const NETWORK_FILTERS = [
   { key: 'ALL', label: 'All' },
   { key: 'LAN', label: 'LAN' },
@@ -389,6 +404,7 @@ export default function DeviceGrid({
                         <Wifi size={14} color="#64748b" />
                         <span>{device.ipAddress}</span>
                       </div>
+                      <AgentVersionText device={device} />
                     </td>
 
                     {/* Status Column */}
@@ -552,6 +568,7 @@ export default function DeviceGrid({
                       <Wifi size={15} color="#64748b" />
                       <span>{device.network === 'LAN' ? 'LAN IP' : 'IP'}: <strong style={{ color: '#0f172a', fontWeight: 500 }}>{device.ipAddress}</strong></span>
                     </div>
+                    <AgentVersionText device={device} />
                   </div>
                 </div>
 

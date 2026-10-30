@@ -92,6 +92,12 @@ namespace EktaDMAAgent
         private const uint KEYEVENTF_KEYDOWN = 0x0000;
         private const uint KEYEVENTF_KEYUP = 0x0002;
 
+        // Agent version - RAISE IT FOR EVERY RELEASE (e.g. 1.1.0 -> 1.1.1). DMA servers read it from the
+        // published exe (VersionTag below is compiled into it) and tell older agents to update themselves.
+        public const string AgentVersion = "1.1.0";
+        public const string VersionTagPrefix = "EKTA-AGENT-VERSION:";
+        public static readonly string VersionTag = VersionTagPrefix + AgentVersion;
+
         // Global Agent State
         public static bool IsLoggedIn = false;
         public static bool IsPaused = false;
@@ -190,6 +196,9 @@ namespace EktaDMAAgent
                     catch { }
                     return;
                 }
+
+                // A newer agent was downloaded last time: install it now, before anyone signs in
+                if (InstallStagedUpdate(true)) return;
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
@@ -655,109 +664,9 @@ namespace EktaDMAAgent
         }
 
         // ================= AUTHENTICATION & DEVICE REGISTRATION =================
-        // True when the last login attempt got an answer from a DMA server (even a rejection)
-        public static bool LastLoginReachedServer = false;
-
-        public static bool ValidateAndRegister(string email, string password, string userEnteredUrl, out string displayName, out string errorMsg)
-        {
-            LastLoginReachedServer = false;
-            displayName = email;
-            errorMsg = "";
-
-            if (string.IsNullOrEmpty(ServerHttpUrl) || ServerHttpUrl.Contains(":9000") || ServerHttpUrl.Contains("192.168.16.121") || !IsLanUrl(ServerHttpUrl))
-            {
-                ServerHttpUrl = "";
-                ServerWsUrl = "";
-            }
-
-            List<string> candidateUrls = new List<string>();
-
-            // 1. Option B: Read domain.txt / domain_config.txt / server_ip.txt / server.txt if present next to EXE
-            try
-            {
-                string[] legacyFiles = new string[] { "server_ip.txt", "server.txt", "admin_config.txt" };
-                foreach (string f in legacyFiles)
-                {
-                    string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, f);
-                    if (File.Exists(path))
-                    {
-                        string content = File.ReadAllText(path);
-                        if (content.Contains(":9000") || content.Contains("192.168.16.121"))
-                        {
-                            try { File.Delete(path); } catch { }
-                        }
-                    }
-                }
-
-                string ipTxt = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "domain.txt");
-                if (!File.Exists(ipTxt)) ipTxt = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "domain_config.txt");
-                if (!File.Exists(ipTxt)) ipTxt = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server_ip.txt");
-                if (!File.Exists(ipTxt)) ipTxt = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.txt");
-                if (File.Exists(ipTxt))
-                {
-                    string fileUrl = File.ReadAllText(ipTxt).Trim();
-                    if (fileUrl.Contains(":9000") || fileUrl.Contains("192.168.16.121"))
-                    {
-                        try { File.Delete(ipTxt); } catch { }
-                        fileUrl = "";
-                    }
-                    if (!string.IsNullOrEmpty(fileUrl))
-                    {
-                        candidateUrls.Add(NormalizeLanServerUrl(fileUrl));
-                    }
-                }
-            }
-            catch { }
-
-            if (!string.IsNullOrEmpty(ServerHttpUrl) && !candidateUrls.Contains(ServerHttpUrl.TrimEnd('/'))) candidateUrls.Add(ServerHttpUrl.TrimEnd('/'));
-            candidateUrls.Add("http://127.0.0.1:2005");
-            candidateUrls.Add("http://localhost:2005");
-
-            if (!string.IsNullOrEmpty(userEnteredUrl) && !candidateUrls.Contains(userEnteredUrl.TrimEnd('/'))) candidateUrls.Add(userEnteredUrl.TrimEnd('/'));
-
-            string discoveredUrl = DiscoverActiveLanServerUrl();
-            if (!string.IsNullOrEmpty(discoveredUrl) && !candidateUrls.Contains(discoveredUrl)) candidateUrls.Add(discoveredUrl);
-
-            candidateUrls.Add("http://192.168.0.31:2005");
-
-            string localIp = GetLocalIPAddress();
-            if (!string.IsNullOrEmpty(localIp)) candidateUrls.Add("http://" + localIp + ":2005");
-
-            foreach (string targetUrl in candidateUrls)
-            {
-                if (string.IsNullOrEmpty(targetUrl) || !IsLanUrl(targetUrl)) continue;
-                bool isSuccess = TryValidateAndRegisterSingle(email, password, targetUrl, out displayName, out errorMsg);
-                if (isSuccess)
-                {
-                    ServerHttpUrl = targetUrl;
-                    string wsScheme = targetUrl.StartsWith("https://") ? "wss://" : "ws://";
-                    string domainAndPort = targetUrl.Replace("http://", "").Replace("https://", "");
-                    ServerWsUrl = wsScheme + domainAndPort;
-                    SaveLocalConfig(ServerHttpUrl, ServerWsUrl);
-                    return true;
-                }
-
-                // A server answered and rejected the login (wrong password, deactivated account, ...):
-                // show its message, don't try other servers or ask for a server address
-                if (!string.IsNullOrEmpty(errorMsg) && !errorMsg.StartsWith("Unable to connect"))
-                {
-                    LastLoginReachedServer = true;
-                    return false;
-                }
-            }
-
-            if (string.IsNullOrEmpty(errorMsg) || errorMsg.StartsWith("Unable to connect"))
-            {
-                errorMsg = string.IsNullOrEmpty(ServerHttpUrl)
-                    ? "No EktaHR server found on this LAN."
-                    : "Unable to connect to LAN server at " + ServerHttpUrl;
-            }
-            return false;
-        }
-
-        // Signs in straight against the EktaHR backend (no DMA server needed), so login never
-        // blocks when the office has no server running yet. Sets the session identity; the agent
-        // then discovers and attaches to a DMA server in the background (RegisterWhenServerAppearsLoop).
+        // Signs in straight against the EktaHR backend (no DMA server needed) when the online server
+        // is not reachable. Sets the session identity; the agent then attaches to the online server
+        // (OnlineConnectionLoop) and the office LAN server (FindOfficeServerLoop) in the background.
         public static bool AuthenticateDirectWithHrms(string email, string password, out string displayName, out string errorMsg)
         {
             displayName = email;
@@ -834,29 +743,30 @@ namespace EktaDMAAgent
             }
         }
 
-        // After a serverless login: keep looking for a DMA server on the LAN, and register with it
-        // the moment it appears, to obtain the device token (for screenshot/idle upload). Live view
-        // works as soon as the WebSocket connects, even before this succeeds.
-        private static async Task RegisterWhenServerAppearsLoop(CancellationToken token)
+        // Office LAN detection runs here, after login (login never waits for it). Once an office LAN
+        // server answers, ConnectionLoop attaches to it and the admin sees this PC under LAN.
+        // The LAN connection needs no login of its own: the office server knows the employee and
+        // company from the connection. A saved office address is tried by ConnectionLoop directly.
+        private static async Task FindOfficeServerLoop(CancellationToken token)
         {
-            while (!token.IsCancellationRequested && IsLoggedIn && string.IsNullOrEmpty(DeviceToken))
+            int attempt = 0;
+            while (!token.IsCancellationRequested && IsLoggedIn && string.IsNullOrEmpty(ServerWsUrl))
             {
                 try
                 {
-                    string found = DiscoverActiveLanServerUrl(false);
-                    if (!string.IsNullOrEmpty(found) && !string.IsNullOrEmpty(PendingEmail))
+                    // Broadcast + known addresses every 15 s; the slower subnet scan (for networks that
+                    // block broadcasts) right after login and then about every 5 minutes
+                    string found = DiscoverActiveLanServerUrl(attempt % 20 == 0);
+                    if (!string.IsNullOrEmpty(found))
                     {
-                        string dn, er;
-                        if (TryValidateAndRegisterSingle(PendingEmail, PendingPassword, found, out dn, out er) && !string.IsNullOrEmpty(DeviceToken))
-                        {
-                            ServerHttpUrl = found.TrimEnd('/');
-                            ServerWsUrl = ToWsUrl(ServerHttpUrl);
-                            SaveLocalConfig(ServerHttpUrl, ServerWsUrl);
-                        }
+                        ServerHttpUrl = found.TrimEnd('/');
+                        ServerWsUrl = ToWsUrl(ServerHttpUrl);
+                        SaveLocalConfig(ServerHttpUrl, ServerWsUrl);
+                        break;
                     }
                 }
                 catch { }
-                if (!string.IsNullOrEmpty(DeviceToken)) break;
+                attempt++;
                 await Task.Delay(15000, token);
             }
         }
@@ -898,7 +808,7 @@ namespace EktaDMAAgent
                     "\"deviceId\":\"" + EscapeJson(deviceId) + "\"," +
                     "\"machineName\":\"" + EscapeJson(hostname) + "\"," +
                     "\"osVersion\":\"Windows 11 x64\"," +
-                    "\"agentVersion\":\"1.0.1\"," +
+                    "\"agentVersion\":\"" + AgentVersion + "\"," +
                     "\"systemIp\":\"127.0.0.1\"," +
                     "\"systemModel\":\"EktaHR Desktop Client\"" +
                     "}";
@@ -982,8 +892,8 @@ namespace EktaDMAAgent
             ServerWsUrl = wsUrl;
             if (!string.IsNullOrEmpty(httpUrl)) SaveLocalConfig(httpUrl, wsUrl);
 
-            // Keep the credentials (memory only) so the agent can register with an office LAN server
-            // or the online server that is not reachable yet, and renew an expired online token.
+            // Keep the credentials (memory only) so the agent can register with the online server when
+            // it was not reachable at login, and renew an expired online token.
             PendingEmail = pendingEmail ?? "";
             PendingPassword = pendingPassword ?? "";
 
@@ -996,14 +906,16 @@ namespace EktaDMAAgent
             string fullWsUrl = (string.IsNullOrEmpty(wsUrl) ? "" : wsUrl.TrimEnd('/')) + "/agent?deviceId=" + Uri.EscapeDataString(deviceId) +
                             "&hostname=" + Uri.EscapeDataString(hostname) +
                             "&user=" + Uri.EscapeDataString(user) +
-                            "&businessId=" + Uri.EscapeDataString(BusinessId ?? "");
+                            "&businessId=" + Uri.EscapeDataString(BusinessId ?? "") +
+                            "&version=" + AgentVersion;
 
             Task.Run(() => ConnectionLoop(fullWsUrl, connCts.Token));
             Task.Run(() => OnlineConnectionLoop(deviceId, hostname, connCts.Token));
             Task.Run(() => SendHeartbeatHttpLoop(connCts.Token));
             Task.Run(() => PeriodicScreenshotLoop(connCts.Token));
             Task.Run(() => WorkTimerLoop(connCts.Token));
-            if (!string.IsNullOrEmpty(PendingEmail)) Task.Run(() => RegisterWhenServerAppearsLoop(connCts.Token));
+            // No saved office address: look for the office LAN server in the background
+            if (string.IsNullOrEmpty(wsUrl)) Task.Run(() => FindOfficeServerLoop(connCts.Token));
         }
 
         public static void StopSession()
@@ -1198,6 +1110,7 @@ namespace EktaDMAAgent
                         "&user=" + Uri.EscapeDataString(LoggedUser ?? "") +
                         "&businessId=" + Uri.EscapeDataString(BusinessId ?? "") +
                         "&network=" + NetworkFor(Online) +
+                        "&version=" + AgentVersion +
                         "&token=" + Uri.EscapeDataString(OnlineToken);
                     using (ClientWebSocket ws = new ClientWebSocket())
                     {
@@ -1300,6 +1213,7 @@ namespace EktaDMAAgent
                 "\"idleSeconds\":" + IdleSeconds + "," +
                 "\"activeWindow\":\"" + EscapeJson(ActiveWindowTitle) + "\"," +
                 "\"network\":\"" + NetworkFor(link) + "\"," +
+                "\"version\":\"" + AgentVersion + "\"," +
                 "\"isPaused\":" + (IsPaused ? "true" : "false") +
                 "}";
         }
@@ -1668,9 +1582,11 @@ namespace EktaDMAAgent
                         {
                             HandleInputEvent(json, link);
                         }
-                        else if (json.Contains("AUTO_UPDATE_AGENT"))
+                        else if (json.Contains("AGENT_UPDATE_AVAILABLE"))
                         {
-                            Task.Run((Action)TriggerAutoUpdate);
+                            // Download from the server that offered it; installed later (InstallStagedUpdate)
+                            string offeredBy = link == Online ? OnlineServerUrl : ServerHttpUrl;
+                            Task.Run(() => DownloadOfferedUpdate(json, offeredBy));
                         }
                         else if (json.Contains("FORCE_LOGOUT") || json.Contains("LOGGED_IN_ON_ANOTHER_DEVICE"))
                         {
@@ -1702,37 +1618,136 @@ namespace EktaDMAAgent
             }
         }
 
-        private static void TriggerAutoUpdate()
+        // ================= AUTO-UPDATE =================
+        // A DMA server offers a newer agent (AGENT_UPDATE_AVAILABLE: version, sha256, size of the exe it
+        // serves at /api/v1/download/agent). It is downloaded in the background, checked, and kept in
+        // %LOCALAPPDATA%\EktaHR Agent\update until it can be installed without interrupting anyone:
+        // at the next agent start, at logout, on Exit, or with the Update button in Settings.
+        private static readonly string UpdateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR Agent", "update");
+        private static readonly string StagedExe = Path.Combine(UpdateDir, "EktaHR-Agent.exe");
+        private static readonly string StagedVersionFile = Path.Combine(UpdateDir, "version.txt");
+        private static int updateDownloading = 0;
+
+        public static bool IsNewerVersion(string candidate, string current)
+        {
+            Version a, b;
+            return Version.TryParse(candidate ?? "", out a) && Version.TryParse(current ?? "", out b) && a > b;
+        }
+
+        // Version of the downloaded update waiting to be installed, or null
+        public static string StagedUpdateVersion()
         {
             try
             {
-                string baseServer = string.IsNullOrEmpty(ServerHttpUrl) ? "http://127.0.0.1:2005" : ServerHttpUrl.TrimEnd('/');
-                string downloadUrl = baseServer + "/api/v1/download/agent";
-                string tempPath = Path.Combine(Path.GetTempPath(), "EktaHR-Agent-New.exe");
-                using (System.Net.WebClient wc = new System.Net.WebClient())
+                if (!File.Exists(StagedExe) || !File.Exists(StagedVersionFile)) return null;
+                string v = File.ReadAllText(StagedVersionFile).Trim();
+                return IsNewerVersion(v, AgentVersion) ? v : null;
+            }
+            catch { return null; }
+        }
+
+        // The version tag compiled into an agent exe ("EKTA-AGENT-VERSION:1.2.0", UTF-16), or null
+        private static string ReadVersionTag(byte[] exe)
+        {
+            byte[] marker = Encoding.Unicode.GetBytes(VersionTagPrefix);
+            for (int i = 0; i + marker.Length < exe.Length; i++)
+            {
+                int k = 0;
+                while (k < marker.Length && exe[i + k] == marker[k]) k++;
+                if (k < marker.Length) continue;
+
+                StringBuilder sb = new StringBuilder();
+                for (int j = i + marker.Length; j + 1 < exe.Length; j += 2)
                 {
-                    wc.DownloadFile(downloadUrl, tempPath);
+                    char c = (char)(exe[j] | (exe[j + 1] << 8));
+                    if ((c >= '0' && c <= '9') || c == '.') sb.Append(c); else break;
                 }
-                if (File.Exists(tempPath) && new FileInfo(tempPath).Length > 100000)
+                // The bare prefix is in the exe too (this search); the tag is the one with a version after it
+                string v = sb.ToString();
+                Version parsed;
+                if (v.IndexOf('.') > 0 && Version.TryParse(v, out parsed)) return v;
+            }
+            return null;
+        }
+
+        private static void DownloadOfferedUpdate(string json, string serverHttpUrl)
+        {
+            string version = ExtractJsonValue(json, "version");
+            string sha256 = (ExtractJsonValue(json, "sha256") ?? "").ToLowerInvariant();
+            long size = ExtractLong(json, "size");
+            if (string.IsNullOrEmpty(serverHttpUrl) || string.IsNullOrEmpty(sha256) || !IsNewerVersion(version, AgentVersion)) return;
+            // Already have this version (or a newer one) waiting
+            string staged = StagedUpdateVersion();
+            if (staged != null && !IsNewerVersion(version, staged)) return;
+            // Both connections may offer it at once
+            if (Interlocked.Exchange(ref updateDownloading, 1) == 1) return;
+            try
+            {
+                Directory.CreateDirectory(UpdateDir);
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(serverHttpUrl.TrimEnd('/') + "/api/v1/download/agent");
+                req.Timeout = 30000;
+                req.ReadWriteTimeout = 120000;
+                byte[] exe;
+                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                using (Stream rs = resp.GetResponseStream())
+                using (MemoryStream ms = new MemoryStream())
                 {
-                    string currentExe = System.Reflection.Assembly.GetExecutingAssembly().Location;
-                    string batchScript = Path.Combine(Path.GetTempPath(), "update_agent.bat");
-                    string batchContent = string.Format(
-                        "@echo off\r\ntimeout /t 2 /nobreak >nul\r\ncopy /y \"{0}\" \"{1}\"\r\nstart \"\" \"{1}\"\r\ndel \"{2}\"\r\n",
-                        tempPath, currentExe, batchScript
-                    );
-                    File.WriteAllText(batchScript, batchContent);
-                    ProcessStartInfo psi = new ProcessStartInfo()
-                    {
-                        FileName = batchScript,
-                        WindowStyle = ProcessWindowStyle.Hidden,
-                        CreateNoWindow = true
-                    };
-                    Process.Start(psi);
-                    Environment.Exit(0);
+                    rs.CopyTo(ms);
+                    exe = ms.ToArray();
                 }
+
+                // Only a complete, unchanged copy of exactly the offered version is kept
+                string hash;
+                using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+                {
+                    hash = BitConverter.ToString(sha.ComputeHash(exe)).Replace("-", "").ToLowerInvariant();
+                }
+                if ((size > 0 && exe.Length != size) || hash != sha256 || ReadVersionTag(exe) != version) return;
+
+                File.WriteAllBytes(StagedExe, exe);
+                File.WriteAllText(StagedVersionFile, version);
             }
             catch { }
+            finally
+            {
+                Interlocked.Exchange(ref updateDownloading, 0);
+            }
+        }
+
+        // Installs the waiting update: a hidden script waits for this agent to close, copies the new exe
+        // over this one and (restart) starts it again. The caller then exits. Returns false - nothing to
+        // install, or this exe's folder is not writable (e.g. Program Files) - and the agent keeps running.
+        public static bool InstallStagedUpdate(bool restart)
+        {
+            try
+            {
+                if (StagedUpdateVersion() == null) return false;
+                string currentExe = Application.ExecutablePath;
+                string probe = Path.Combine(Path.GetDirectoryName(currentExe), ".ektahr-update-check");
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+
+                int pid = Process.GetCurrentProcess().Id;
+                string script = Path.Combine(UpdateDir, "install-update.cmd");
+                // The staged copy is removed even if the copy fails, so a failed install can never repeat
+                // at every start; the server offers the update again later.
+                File.WriteAllText(script,
+                    "@echo off\r\n" +
+                    ":wait\r\n" +
+                    "tasklist /FI \"PID eq " + pid + "\" 2>nul | find \"" + pid + "\" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)\r\n" +
+                    "copy /y \"" + StagedExe + "\" \"" + currentExe + "\" >nul\r\n" +
+                    "del /q \"" + StagedExe + "\" \"" + StagedVersionFile + "\"\r\n" +
+                    (restart ? "start \"\" \"" + currentExe + "\"\r\n" : "") +
+                    "del /q \"%~f0\"\r\n");
+                Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"")
+                {
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+                return true;
+            }
+            catch { return false; }
         }
 
         private static Rectangle GetPhysicalScreenBounds()
@@ -2439,6 +2454,7 @@ namespace EktaDMAAgent
         private Label lblProfBranch;
         private Label lblProfStatus;
         private EktaToggleSwitch swAutoUpdate;
+        private Label lblLatestVersion;
 
         private System.Windows.Forms.Timer uiTimer;
 
@@ -2477,7 +2493,8 @@ namespace EktaDMAAgent
             trayMenu.Items.Add("Open Monitoring Window", null, (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; });
             trayMenu.Items.Add("Pause Activity Tracking", null, (s, e) => { swPause.Checked = !swPause.Checked; });
             trayMenu.Items.Add("-");
-            trayMenu.Items.Add("Exit", null, (s, e) => { trayIcon.Visible = false; Program.StopSession(); Application.Exit(); });
+            // Exit also installs a downloaded update (without restarting the agent)
+            trayMenu.Items.Add("Exit", null, (s, e) => { trayIcon.Visible = false; Program.StopSession(); Program.InstallStagedUpdate(false); Application.Exit(); });
             trayIcon.ContextMenuStrip = trayMenu;
             trayIcon.DoubleClick += (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; };
 
@@ -2777,6 +2794,7 @@ namespace EktaDMAAgent
                 else
                 {
                     if (trayIcon != null) trayIcon.Visible = false;
+                    Program.InstallStagedUpdate(false);
                     Application.Exit();
                 }
             };
@@ -2936,11 +2954,12 @@ namespace EktaDMAAgent
             Label l1;
             CreateDataRow(cardApp, "Tracking", "Enabled", 12, out l1);
             CreateDataRow(cardApp, "Screenshot frequency", "5 minute(s)", 42, out l1);
-            CreateDataRow(cardApp, "Version", "1.0.1", 72, out l1);
-            CreateDataRow(cardApp, "Latest version", "1.0.2", 102, out l1);
+            CreateDataRow(cardApp, "Version", Program.AgentVersion, 72, out l1);
+            CreateDataRow(cardApp, "Latest version", Program.AgentVersion, 102, out lblLatestVersion);
 
+            // Updates always install automatically (DMA server offers them); the switch only shows that
             Label lblAutoUpd = new Label() { Text = "Auto update", Font = new Font("Segoe UI", 9.5f), ForeColor = Color.FromArgb(156, 163, 175), Location = new Point(14, 136), AutoSize = true };
-            swAutoUpdate = new EktaToggleSwitch() { Location = new Point(330, 134) };
+            swAutoUpdate = new EktaToggleSwitch() { Location = new Point(330, 134), Checked = true, Enabled = false };
             cardApp.Controls.Add(lblAutoUpd); cardApp.Controls.Add(swAutoUpdate);
 
             EktaPillButton btnUpdate = new EktaPillButton()
@@ -2954,6 +2973,7 @@ namespace EktaDMAAgent
                 Location = new Point(14, 170),
                 Radius = 19
             };
+            btnUpdate.Click += BtnUpdate_Click;
             cardApp.Controls.Add(btnUpdate);
 
             Label lblHelp = new Label()
@@ -3101,7 +3121,10 @@ namespace EktaDMAAgent
             return null;
         }
 
-        private void BtnLogin_Click(object sender, EventArgs e)
+        // Login does not look for the office LAN server: it signs in and is done. The office server
+        // is found in the background afterwards (saved address / FindOfficeServerLoop), and the
+        // admin sees this PC under LAN once it is connected there.
+        private async void BtnLogin_Click(object sender, EventArgs e)
         {
             string email = txtEmail.Text.Trim();
             string pass = txtPassword.Text.Trim();
@@ -3112,47 +3135,24 @@ namespace EktaDMAAgent
                 return;
             }
 
+            Control loginButton = sender as Control;
+            if (loginButton != null) loginButton.Enabled = false;
             lblLoginError.Text = "Signing in...";
-            Application.DoEvents();
 
-            string displayName;
-            string err;
-            // 1. Office LAN server (LAN detection). A server that answered and rejected the login
-            //    (wrong password) is shown as-is, not bypassed.
-            bool ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
-            if (!ok && Program.LastLoginReachedServer)
+            // Off the window's thread, so the window stays responsive while signing in
+            string displayName = email;
+            string err = "";
+            // 1. Online server, from any network. A rejection (wrong password, logged in on another
+            //    PC, ...) is shown as-is.
+            bool ok = await Task.Run(() => Program.RegisterWithOnlineServer(email, pass, out err));
+            // 2. Online server not reachable (or turned off with online.txt): sign in straight against
+            //    EktaHR; the agent keeps trying the online server in the background.
+            if (!ok && !Program.LastOnlineLoginReachedServer)
             {
-                lblLoginError.Text = err;
-                return;
+                ok = await Task.Run(() => Program.AuthenticateDirectWithHrms(email, pass, out displayName, out err));
             }
 
-            // 2. Online server, from any network - the admin sees this PC wherever the employee works
-            string onlineErr;
-            bool onlineOk = Program.RegisterWithOnlineServer(email, pass, out onlineErr);
-
-            if (!ok)
-            {
-                // No office server on this network (working from home, or the admin PC is not open)
-                Program.ServerHttpUrl = "";
-                Program.ServerWsUrl = "";
-                if (onlineOk)
-                {
-                    ok = true;
-                    displayName = email;
-                }
-                else if (Program.LastOnlineLoginReachedServer)
-                {
-                    lblLoginError.Text = onlineErr;
-                    return;
-                }
-                else
-                {
-                    // Neither server reachable: do NOT block. Sign in straight against EktaHR and keep
-                    // looking for a server in the background - the admin sees the agent once one is reachable.
-                    ok = Program.AuthenticateDirectWithHrms(email, pass, out displayName, out err);
-                }
-            }
-
+            if (loginButton != null) loginButton.Enabled = true;
             if (!ok)
             {
                 lblLoginError.Text = err;
@@ -3196,9 +3196,41 @@ namespace EktaDMAAgent
             }
         }
 
+        // Settings > Update: install a downloaded update now (the agent restarts; sign in again)
+        private void BtnUpdate_Click(object sender, EventArgs e)
+        {
+            string staged = Program.StagedUpdateVersion();
+            if (staged == null)
+            {
+                MessageBox.Show("ektaHr Agent " + Program.AgentVersion + " is up to date.\n\nNew versions download automatically and install the next time the agent starts.",
+                    "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (Program.IsLoggedIn && MessageBox.Show("Install version " + staged + " now?\n\nThe agent restarts and you sign in again.",
+                    "ektaHr", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+            if (!Program.InstallStagedUpdate(true))
+            {
+                MessageBox.Show("The update cannot be installed in this folder (no write access). It will be installed when the agent is run from a folder you can write to, or ask your admin for the new EktaHR-Agent.exe.",
+                    "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            Program.StopSession();
+            trayIcon.Visible = false;
+            Application.Exit();
+        }
+
         private void BtnLogout_Click(object sender, EventArgs e)
         {
             Program.StopSession();
+
+            // Logged out = nobody is working in the agent: install a downloaded update (restarts at the login screen)
+            if (Program.InstallStagedUpdate(true))
+            {
+                trayIcon.Visible = false;
+                Application.Exit();
+                return;
+            }
 
             SwitchToView("LOGIN");
             lblLoginError.Text = "Logged out successfully.";
@@ -3243,6 +3275,9 @@ namespace EktaDMAAgent
 
         private void UpdateUI()
         {
+            string stagedUpdate = Program.StagedUpdateVersion();
+            lblLatestVersion.Text = stagedUpdate == null ? Program.AgentVersion : stagedUpdate + " (installs at next start)";
+
             if (Program.IsLoggedIn)
             {
                 Program.RecalculateShiftSeconds();

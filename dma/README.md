@@ -85,6 +85,29 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -resource:ektaHr_icon_256.png,EktaHr.AppIcon.png -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
   ```
 
+## 🔄 Agent Auto-Update (agent 1.1.0 and later)
+
+Employee PCs update themselves; only the first 1.1.0 agent has to be copied by hand.
+
+**Releasing a new agent version**
+
+1. In `agent/AgentSingle.cs`, raise `AgentVersion`, for example `"1.1.0"` → `"1.1.1"`. Every release needs a higher number.
+2. Build it into `agent/publish/EktaHR-Agent.exe` with the `csc` command above.
+3. Commit and push, then on the online server run `git pull`. No restart is needed: the server reads the version from the exe itself.
+
+**What happens next**
+
+- When an agent connects, the server compares the agent's version with the published exe. Already-connected PCs are checked again every 10 minutes.
+- If the published exe is newer, the agent downloads it from `/api/v1/download/agent` in the background. It checks size, SHA-256 and version, and keeps the copy in `%LOCALAPPDATA%\EktaHR Agent\update`.
+- It installs when nobody is working in it: at the next agent start, at logout, on Exit, or from **Settings → Update**.
+- Older or same-version agents are never offered, so an office server built earlier can't downgrade a PC.
+- If the exe's folder isn't writable (for example Program Files), the update waits.
+
+**Notes**
+
+- Agents from before 1.1.0 report no version and can't auto-update. The Admin Console marks them "Agent: old version — update by hand once".
+- An office server (inside the Admin Console exe) offers the agent it was built with. Rebuild the Admin Console when you want office servers to carry the new agent too, though the online server alone is enough.
+
 ## ⚙️ Idle Time Setting (one place)
 
 Set in `server/.env` only, then restart the server:

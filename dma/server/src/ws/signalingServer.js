@@ -8,8 +8,23 @@ const idleTracker = require('../db/idleTracker');
 const { allowLanUpgrade } = require('../lanGuard');
 const { IDLE_THRESHOLD_SECONDS, IS_ONLINE } = require('../config');
 const { verifyToken, isAdminUser } = require('../controllers/authController');
+const { updateOfferFor } = require('../agentUpdate');
 
 const agentSockets = new Map();
+const UPDATE_RECHECK_MS = 10 * 60 * 1000;
+
+// Offer a newer agent (once per version per connection); re-checked every 10 minutes, so a newly
+// published agent reaches PCs that are already connected
+function offerAgentUpdate(ws) {
+  ws.updateCheckedAt = Date.now();
+  const offer = updateOfferFor(ws.agentVersion);
+  if (!offer || ws.offeredVersion === offer.version || ws.readyState !== WebSocket.OPEN) return;
+  ws.offeredVersion = offer.version;
+  try {
+    ws.send(JSON.stringify(offer));
+    console.log(`[Update] Offered agent ${offer.version} to ${ws.deviceId} (has ${ws.agentVersion})`);
+  } catch (e) {}
+}
 const viewerSockets = new Map();
 
 // A viewer reaches only the agents of its own company (super admins reach all)
@@ -212,7 +227,9 @@ function handleAgentConnection(ws, query, request) {
   ws.businessId = auth ? String(auth.businessId) : (query.businessId || query.orgId || query.companyId);
   // A LAN server only sees office PCs; on the online server the agent says whether it also reached an office LAN server
   ws.network = !IS_ONLINE || query.network === 'LAN' ? 'LAN' : 'ONLINE';
-  console.log(`[WebSocket] Agent connected: ${deviceId} (${ws.hostname} @ ${clientIp}, ${ws.network})`);
+  // Agents from before auto-update report no version
+  ws.agentVersion = query.version || '';
+  console.log(`[WebSocket] Agent connected: ${deviceId} (${ws.hostname} @ ${clientIp}, ${ws.network}, agent ${ws.agentVersion || 'old'})`);
 
   if (agentSockets.has(deviceId)) {
     try {
@@ -229,6 +246,7 @@ function handleAgentConnection(ws, query, request) {
   try {
     ws.send(JSON.stringify({ type: 'CONFIG', idleThresholdSeconds: IDLE_THRESHOLD_SECONDS }));
   } catch (e) {}
+  offerAgentUpdate(ws);
 
   const updatedDev = registerOrUpdateDevice(deviceId, {
     hostname: ws.hostname,
@@ -265,6 +283,8 @@ function handleAgentConnection(ws, query, request) {
             if (data.businessId || query.businessId) ws.businessId = data.businessId || query.businessId;
           }
           if (IS_ONLINE) ws.network = data.network === 'LAN' ? 'LAN' : 'ONLINE';
+          if (data.version) ws.agentVersion = data.version;
+          if (Date.now() - (ws.updateCheckedAt || 0) > UPDATE_RECHECK_MS) offerAgentUpdate(ws);
 
           const hbDev = registerOrUpdateDevice(deviceId, {
             hostname: data.hostname || data.machineName,
@@ -380,12 +400,12 @@ async function handleViewerConnection(ws, query, request) {
   });
 }
 
-// Agents with an open WebSocket right now: deviceId -> { hostname, ipAddress, connectedAt, network }
+// Agents with an open WebSocket right now: deviceId -> { hostname, ipAddress, connectedAt, network, agentVersion }
 function getConnectedAgents() {
   const connected = new Map();
   for (const [id, socket] of agentSockets.entries()) {
     if (socket.readyState === WebSocket.OPEN) {
-      connected.set(id, { hostname: socket.hostname, ipAddress: socket.clientIp, connectedAt: socket.connectedAt, network: socket.network });
+      connected.set(id, { hostname: socket.hostname, ipAddress: socket.clientIp, connectedAt: socket.connectedAt, network: socket.network, agentVersion: socket.agentVersion });
     }
   }
   return connected;

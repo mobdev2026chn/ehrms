@@ -32,10 +32,21 @@ Admin PC
 
 Employee PCs
 - Replace EktaHR-Agent.exe on EVERY employee PC (older agents never connect online).
-- Run it and sign in. In the office it connects to the office server and to the
-  online server; anywhere else it connects to the online server only.
+- Run it and sign in. Sign-in only checks the email/password (a few seconds) - it
+  does not search the office network. After sign-in the agent connects to the online
+  server and, in the office, also finds the office server in the background; the PC
+  then shows under LAN in the Admin Console (anywhere else: under Online).
+
+Automatic updates (agent 1.1.0 in this folder and later)
+- Copy this agent to every employee PC ONCE. From then on, new agent versions
+  published on the server download by themselves and install at the next agent
+  start / logout / exit (or Settings -> Update) - no more copying.
+- Admin Console > Live Devices shows each PC's agent version; "old version" means
+  that PC still needs this agent copied by hand.
 
 Notes
+- Do not run the agent from this folder and then hand the folder out: the agent
+  saves config.json and daily_session_*.json next to itself.
 - Screenshots/logs: %LOCALAPPDATA%\EktaHR DMA on the admin PC, and on the online
   server for every employee who reaches it.
 - No database password on the admin PC; logins and staff list go through EktaHR.

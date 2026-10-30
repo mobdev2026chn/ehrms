@@ -1,6 +1,7 @@
 const { getDevicesList, liveDevices } = require('../db/mongo');
 const { saveScreenshot, listScreenshots, resolveScreenshotFile } = require('../storage/fileStore');
 const { getConnectedAgents } = require('../ws/signalingServer');
+const { AGENT_EXE, getPublishedAgent } = require('../agentUpdate');
 
 const NOT_LOGGED_IN_USERS = ['', 'ektahr employee', 'logged out', '—'];
 
@@ -30,12 +31,15 @@ async function getLanAgents(req, res) {
         idleSeconds: liveInfo.idleSeconds || 0,
         activeWindow: liveInfo.activeWindow || '',
         network: live.network || 'LAN',
+        agentVersion: live.agentVersion || '',
         connected: true,
         connectedAt: live.connectedAt
       });
     }
 
-    res.json({ success: true, scannedAt: new Date(), agents });
+    // Newest agent this server hands out (Admin Console marks PCs still on an older one)
+    const published = getPublishedAgent();
+    res.json({ success: true, scannedAt: new Date(), agents, latestAgentVersion: published ? published.version : null });
   } catch (err) {
     console.error('[LAN Scan] Error listing connected agents:', err);
     res.status(500).json({ success: false, error: 'Failed to scan LAN agents' });
@@ -106,11 +110,10 @@ async function getScreenshots(req, res) {
 
 async function downloadAgent(req, res) {
   try {
-    const path = require('path');
+    // Also what agents download when they update themselves (see agentUpdate.js)
     const fs = require('fs');
-    const agentPath = path.join(__dirname, '../../../agent/publish/EktaHR-Agent.exe');
-    if (fs.existsSync(agentPath)) {
-      return res.download(agentPath, 'EktaHR-Agent.exe');
+    if (fs.existsSync(AGENT_EXE)) {
+      return res.download(AGENT_EXE, 'EktaHR-Agent.exe');
     }
     res.status(404).json({ error: 'Agent binary not found' });
   } catch (err) {
