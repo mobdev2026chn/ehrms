@@ -94,7 +94,7 @@ namespace EktaDMAAgent
 
         // Agent version - RAISE IT FOR EVERY RELEASE (e.g. 1.1.0 -> 1.1.1). DMA servers read it from the
         // published exe (VersionTag below is compiled into it) and tell older agents to update themselves.
-        public const string AgentVersion = "1.1.2";
+        public const string AgentVersion = "1.1.3";
         public const string VersionTagPrefix = "EKTA-AGENT-VERSION:";
         public static readonly string VersionTag = VersionTagPrefix + AgentVersion;
 
@@ -156,16 +156,19 @@ namespace EktaDMAAgent
         public static string ServerHttpUrl = "";
         public static string ServerWsUrl = "";
 
-        // Online DMA server for employees outside the office (home, other networks).
+        // Environment values (production / development) come from dma/environments.json: build.ps1 -Env
+        // <name> writes them into BuildEnv, compiled together with this file.
+
+        // Online DMA server for employees outside the office (home, other networks); empty = LAN only.
         // An online.txt next to the exe overrides it: another URL, or "off" to keep this PC LAN-only.
-        public const string DefaultOnlineServerUrl = "https://track.ektahr.com";
+        public const string DefaultOnlineServerUrl = BuildEnv.OnlineServerUrl;
         public static string OnlineServerUrl = DefaultOnlineServerUrl;
         public static string OnlineToken = "";
 
-        // EktaHR backend (production): lets an employee sign in even when no DMA server is reachable
-        // yet. Login is NOT blocked; the agent then keeps looking for a DMA server and attaches to it
-        // once it appears, so the admin can view the agent. (UAT/testing: https://uat.ektahr.com)
-        public const string HrmsApiUrl = "https://my.ektahr.com";
+        // EktaHR backend: lets an employee sign in even when no DMA server is reachable yet. Login is
+        // NOT blocked; the agent then keeps looking for a DMA server and attaches to it once it appears,
+        // so the admin can view the agent.
+        public const string HrmsApiUrl = BuildEnv.HrmsApiUrl;
 
         // Credentials of the current session, kept in memory only, so the agent can register with
         // an office or online server that appears later (or renew an expired online token).
@@ -3044,7 +3047,8 @@ namespace EktaDMAAgent
             Label l1;
             CreateDataRow(cardApp, "Tracking", "Enabled", 12, out l1);
             CreateDataRow(cardApp, "Screenshot frequency", "5 minute(s)", 42, out l1);
-            CreateDataRow(cardApp, "Version", Program.AgentVersion, 72, out l1);
+            // Non-production builds say so next to the version
+            CreateDataRow(cardApp, "Version", Program.AgentVersion + (BuildEnv.Name == "production" ? "" : " (" + BuildEnv.Name + ")"), 72, out l1);
             CreateDataRow(cardApp, "Latest version", Program.AgentVersion, 102, out lblLatestVersion);
 
             // Auto update ON (default): updates download by themselves, are offered when the agent opens and

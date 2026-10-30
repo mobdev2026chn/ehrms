@@ -34,7 +34,7 @@ export function getServerWsUrl() {
 
 const SERVER_INFO_KEY = 'ektahr_server_info';
 const ONLINE_TOKEN_KEY = 'ektahr_online_token';
-const LAN_ONLY_INFO = { mode: 'lan', onlineServerUrl: '' };
+const LAN_ONLY_INFO = { mode: 'lan', env: 'production', onlineServerUrl: '' };
 
 // GET /api/v1/server-info -> { mode: 'lan' | 'online', onlineServerUrl }, remembered for the session.
 // Servers older than this console have no such route: they are plain LAN servers.
@@ -46,6 +46,7 @@ export async function loadServerInfo() {
       const data = await res.json();
       info = {
         mode: data.mode === 'online' ? 'online' : 'lan',
+        env: data.env || 'production',
         onlineServerUrl: (data.onlineServerUrl || '').replace(/\/$/, '')
       };
     }

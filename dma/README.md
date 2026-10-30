@@ -67,10 +67,6 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   - The server refuses to start with a missing or default secret.
   - In online mode, agents and viewers must send a valid DMA token.
   - The LAN guard and UDP discovery are off.
-- **Production login:** `HRMS_API_URL=https://my.ektahr.com` and **no `MONGODB_URI`**, so every login and the staff list come from production EktaHR. This applies to the online server and to the office server inside the Admin Console.
-  - `MONGODB_URI` is for development only: it checks logins in the old `DEV_HRMS` database first.
-  - For UAT testing, use `https://uat.ektahr.com`.
-  - The agent's built-in direct EktaHR login (`HrmsApiUrl` in `AgentSingle.cs`) is `https://my.ektahr.com` as well.
 - **Every live view needs the admin's token.** On both servers, an admin only reaches their own company's PCs.
 
 ## 🔒 LAN-Only Mode (office LAN server)
@@ -92,6 +88,29 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   ```
   - `-Release <folder name>` picks the release folder.
   - `-HrmsApiUrl https://uat.ektahr.com` builds an Admin Console whose office server logs in through UAT.
+
+## 🌍 Environments: production / development
+
+One switch picks the environment for the whole DMA. Its values live in [`environments.json`](environments.json):
+
+| | production | development |
+|---|---|---|
+| EktaHR login service (`hrmsApiUrl`) | `https://my.ektahr.com` | `https://uat.ektahr.com` |
+| Online DMA server (`onlineServerUrl`) | `https://track.ektahr.com` | none: office LAN only, until you set up a test online server |
+| `MONGODB_URI` / old `DEV_HRMS` database (`useDatabase`) | ignored | allowed (logins checked there first) |
+
+**Where it is picked**
+
+- **DMA server** (online server, or the repo server on a dev PC): `DMA_ENV=production` or `DMA_ENV=development` in `server/.env`.
+  - The server prints `[Env] ...` at start, and `/api/v1/server-info` reports `env`.
+  - The Admin Console shows a purple badge on non-production servers.
+  - Without `DMA_ENV`, an older `.env` keeps working as before, reading `HRMS_API_URL` and `MONGODB_URI` directly.
+- **Agent and Admin Console exes:** `build.ps1 -Env production` (the default) or `-Env development`.
+  - The values are compiled into the agent (`BuildEnv`), and the office server inside the Admin Console gets `DMA_ENV=<env>`.
+  - A development agent shows "1.1.3 (development)" in Settings.
+  - Development builds go to `release\EktaHR-DMA-<date>-development` and never to `agent\publish`, so servers only ever hand out production agents.
+
+To change a URL, edit `environments.json`, then restart the servers and rebuild the exes.
 
 ## 🔄 Agent Auto-Update (agent 1.1.0 and later)
 

@@ -13,8 +13,11 @@ const { getActivitySummary, getEmployeeActivity } = require('./controllers/activ
 const { getAlerts } = require('./alerts');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
-const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL } = require('./config');
+const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, HRMS_API_URL, USE_DATABASE } = require('./config');
 const { getPublishedAgent } = require('./agentUpdate');
+
+console.log(`[Env] ${DMA_ENV}${ENV_EXPLICIT ? '' : ' (DMA_ENV not set - using .env values)'}: logins via ${HRMS_API_URL}` +
+  `${USE_DATABASE && process.env.MONGODB_URI ? ' (DEV_HRMS database first)' : ''}`);
 
 // The online server is reachable from the internet: tokens signed with the public fallback secret
 // could be forged by anyone, so it refuses to start without its own JWT_SECRET.
@@ -46,7 +49,7 @@ app.get('/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'Ek
 app.get('/api/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
 // Tells the Admin Console whether this is an office LAN server or the online server, and (on a LAN
 // server) which online server to also sign in to for employees on other networks
-app.get('/api/v1/server-info', (req, res) => res.json({ success: true, mode: DMA_MODE, onlineServerUrl: ONLINE_SERVER_URL }));
+app.get('/api/v1/server-info', (req, res) => res.json({ success: true, mode: DMA_MODE, env: DMA_ENV, onlineServerUrl: ONLINE_SERVER_URL }));
 app.get('/api/v1/download/agent', downloadAgent);
 app.get('/download/agent', downloadAgent);
 // Newest agent this server hands out: { version, sha256, size } - used by Settings > Update in the

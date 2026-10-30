@@ -1,11 +1,17 @@
 const http = require('http');
 const mongoose = require('mongoose');
 const { getCompanyStaff } = require('../hrmsDirectory');
+const { USE_DATABASE, DMA_ENV } = require('../config');
 
 async function connectMongo() {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
     console.log('[Mongo] No MONGODB_URI found, running with local user auth mode');
+    return;
+  }
+  // Production never logs in against the old DEV_HRMS database, even if MONGODB_URI is left in .env
+  if (!USE_DATABASE) {
+    console.log(`[Mongo] MONGODB_URI ignored in ${DMA_ENV}: logins and staff list come from EktaHR`);
     return;
   }
 

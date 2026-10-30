@@ -7,7 +7,7 @@ import IdleAlerts from './components/IdleAlerts';
 import { LogOut, Monitor, Activity, Wifi, RefreshCw, CalendarDays } from 'lucide-react';
 
 import {
-  loadServerInfo, isOnlineOrigin, hasSeparateOnlineServer,
+  loadServerInfo, getServerInfo, isOnlineOrigin, hasSeparateOnlineServer,
   getOnlineToken, setOnlineToken, routeServer, getDataServer
 } from './config';
 
@@ -218,6 +218,12 @@ export default function App() {
           <div>
             <h1 style={{ fontSize: '1.2rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em' }}>
               EktaHR DMA Portal
+              {/* Non-production server (DMA_ENV): say so, so test data is never mistaken for live */}
+              {getServerInfo().env && getServerInfo().env !== 'production' && (
+                <span style={{ marginLeft: '10px', fontSize: '0.7rem', fontWeight: 700, color: '#ffffff', background: '#7c3aed', padding: '2px 8px', borderRadius: '10px', verticalAlign: 'middle', textTransform: 'uppercase' }}>
+                  {getServerInfo().env}
+                </span>
+              )}
             </h1>
             <span style={{ fontSize: '0.75rem', color: '#d97706', fontWeight: 600 }}>
               Desktop Monitoring & Remote Access

@@ -18,10 +18,35 @@ const IDLE_THRESHOLD_SECONDS = intFromEnv('IDLE_THRESHOLD_SECONDS', 300, 30, 720
 const DMA_MODE = (process.env.DMA_MODE || 'lan').toLowerCase() === 'online' ? 'online' : 'lan';
 const IS_ONLINE = DMA_MODE === 'online';
 
+// ---- Environment: production / development (dma/environments.json) ----
+// DMA_ENV=<name> in .env picks the EktaHR login service, the online server and whether the old
+// DEV_HRMS database may be used - in one place. Agents and the Admin Console get the same values at
+// build time (build.ps1 -Env <name>).
+// Without DMA_ENV (an older .env) the server keeps its old behaviour: HRMS_API_URL / BACKEND_URL /
+// ONLINE_SERVER_URL / MONGODB_URI from .env, production values otherwise.
+const ENVIRONMENTS = require('../../environments.json');
+const DMA_ENV = (process.env.DMA_ENV || 'production').trim().toLowerCase();
+const ENV_EXPLICIT = !!process.env.DMA_ENV;
+const envSettings = ENVIRONMENTS[DMA_ENV];
+if (!envSettings || DMA_ENV.startsWith('_')) {
+  throw new Error(`DMA_ENV=${DMA_ENV} is not defined in dma/environments.json (use ${Object.keys(ENVIRONMENTS).filter(k => !k.startsWith('_')).join(' / ')})`);
+}
+const trimUrl = (u) => String(u || '').trim().replace(/\/$/, '');
+
+// EktaHR login service (POST {HRMS_API_URL}/api/auth/login) and staff directory
+const HRMS_API_URL = ENV_EXPLICIT
+  ? trimUrl(envSettings.hrmsApiUrl)
+  : trimUrl(process.env.HRMS_API_URL || process.env.BACKEND_URL || envSettings.hrmsApiUrl);
+
+// MONGODB_URI (old DEV_HRMS database) is only used where the environment allows it - never in production
+const USE_DATABASE = ENV_EXPLICIT ? !!envSettings.useDatabase : true;
+
 // Online server that a LAN server's Admin Console also signs in to, so the admin sees employees on
-// any network next to the office LAN. Set ONLINE_SERVER_URL= (empty) to keep a LAN server offline-only.
+// any network next to the office LAN. Empty = the office server stays offline-only.
 const ONLINE_SERVER_URL = IS_ONLINE
   ? ''
-  : (process.env.ONLINE_SERVER_URL ?? 'https://track.ektahr.com').trim().replace(/\/$/, '');
+  : ENV_EXPLICIT
+    ? trimUrl(envSettings.onlineServerUrl)
+    : trimUrl(process.env.ONLINE_SERVER_URL ?? envSettings.onlineServerUrl);
 
-module.exports = { IDLE_THRESHOLD_SECONDS, DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL };
+module.exports = { IDLE_THRESHOLD_SECONDS, DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, HRMS_API_URL, USE_DATABASE };

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const { IDLE_THRESHOLD_SECONDS, IS_ONLINE } = require('../config');
+const { IDLE_THRESHOLD_SECONDS, IS_ONLINE, HRMS_API_URL } = require('../config');
 const { liveDevices } = require('../db/mongo');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'AEvaHRMS@123';
@@ -11,8 +11,7 @@ const activeUserSessions = new Map();
 // Contract: POST {HRMS_API_URL}/api/auth/login { email, password }
 //   -> 200 { success, token, user: { id, email, name, role: 'superAdmin'|'admin'|'staff'|'candidate', adminId, ... } }
 //   -> 401 / 403 / 404 { success: false, message }
-// Production: https://my.ektahr.com (UAT/testing: set HRMS_API_URL=https://uat.ektahr.com)
-const HRMS_API_URL = (process.env.HRMS_API_URL || process.env.BACKEND_URL || 'https://my.ektahr.com').replace(/\/$/, '');
+// HRMS_API_URL comes from the environment (DMA_ENV, see config.js / dma/environments.json)
 const HRMS_LOGIN_ENDPOINT = `${HRMS_API_URL}/api/auth/login`;
 
 // HRMS role -> DMA role
