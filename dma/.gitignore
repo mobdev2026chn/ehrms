@@ -1,0 +1,6 @@
+# Files the agent writes next to its exe when it is run from a repo folder (employee emails and work
+# times, saved server address) - never commit them
+release/**/config.json
+release/**/daily_session_*.json
+agent/publish/config.json
+agent/publish/daily_session_*.json
