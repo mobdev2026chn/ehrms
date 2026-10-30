@@ -110,7 +110,7 @@ $agentOut = Join-Path $env:TEMP "EktaHR-Agent-build.exe"
 Push-Location (Join-Path $dma "agent")
 try {
   Invoke-Csc @('-nologo', '-target:winexe', '-win32icon:ektaHr.ico', '-resource:ektaHr_icon_256.png,EktaHr.AppIcon.png',
-    '-r:System.Windows.Forms.dll', '-r:System.Drawing.dll', '-r:Microsoft.VisualBasic.dll', "-out:$agentOut", 'AgentSingle.cs', $buildEnvCs, $agentInfoCs) 'Agent'
+    '-r:System.Windows.Forms.dll', '-r:System.Drawing.dll', '-r:Microsoft.VisualBasic.dll', '-r:System.Security.dll', "-out:$agentOut", 'AgentSingle.cs', $buildEnvCs, $agentInfoCs) 'Agent'
 } finally { Pop-Location }
 Copy-Built $agentOut (Join-Path $rel "EktaHR-Agent.exe")
 if ($isProduction) {

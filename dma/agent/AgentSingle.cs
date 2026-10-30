@@ -1585,11 +1585,14 @@ namespace EktaDMAAgent
                         {
                             HandleInputEvent(json, link);
                         }
-                        else if (json.Contains("AGENT_UPDATE_AVAILABLE") && AutoUpdateEnabled)
+                        else if (json.Contains("AGENT_UPDATE_AVAILABLE"))
                         {
-                            // Download from the server that offered it; installed later (InstallStagedUpdate)
+                            // Auto update ON: download from the server that offered it - the window installs it
+                            // right away. OFF: only remembered, so Settings shows it as available.
+                            string offered = ExtractJsonValue(json, "version");
+                            if (IsNewerVersion(offered, AvailableAgentVersion ?? AgentVersion)) AvailableAgentVersion = offered;
                             string offeredBy = link == Online ? OnlineServerUrl : ServerHttpUrl;
-                            Task.Run(() => DownloadOfferedUpdate(json, offeredBy));
+                            if (AutoUpdateEnabled) Task.Run(() => DownloadOfferedUpdate(json, offeredBy));
                         }
                         else if (json.Contains("FORCE_LOGOUT") || json.Contains("LOGGED_IN_ON_ANOTHER_DEVICE"))
                         {
@@ -1624,12 +1627,59 @@ namespace EktaDMAAgent
         // ================= AUTO-UPDATE =================
         // A DMA server offers a newer agent (AGENT_UPDATE_AVAILABLE: version, sha256, size of the exe it
         // serves at /api/v1/download/agent). It is downloaded in the background, checked, and kept in
-        // %LOCALAPPDATA%\EktaHR Agent\update until it can be installed without interrupting anyone:
-        // offered when the agent opens, installed at logout / Exit, or with the Update button in Settings.
-        // Settings > Auto update OFF: nothing happens automatically; only the Update button updates.
+        // %LOCALAPPDATA%\EktaHR Agent\update.
+        // Settings > Auto update ON: installed right away (not while the admin is viewing the screen); the
+        // agent restarts and signs the employee back in (ResumeSession), so tracking carries on.
+        // OFF: nothing happens automatically; the Update button checks and installs.
         private static readonly string UpdateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR Agent", "update");
         private static readonly string StagedExe = Path.Combine(UpdateDir, "EktaHR-Agent.exe");
         private static readonly string StagedVersionFile = Path.Combine(UpdateDir, "version.txt");
+        // Sign-in kept across the update restart: encrypted for this Windows user (DPAPI), read once
+        private static readonly string ResumeFile = Path.Combine(UpdateDir, "resume.bin");
+        private static readonly byte[] ResumeEntropy = Encoding.UTF8.GetBytes("EktaHR-Agent-update-resume");
+
+        // Newest version a server has offered (shown in Settings when Auto update is off)
+        public static volatile string AvailableAgentVersion = null;
+
+        // Saves this session's sign-in so the updated agent can continue it. False when there is none.
+        public static bool SaveResumeSession()
+        {
+            try
+            {
+                if (!IsLoggedIn || string.IsNullOrEmpty(PendingEmail) || string.IsNullOrEmpty(PendingPassword)) return false;
+                Directory.CreateDirectory(UpdateDir);
+                byte[] plain = Encoding.UTF8.GetBytes(DateTime.UtcNow.Ticks + "\n" + PendingEmail + "\n" + PendingPassword);
+                File.WriteAllBytes(ResumeFile, System.Security.Cryptography.ProtectedData.Protect(plain, ResumeEntropy, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // The sign-in saved before an update restart (removed as it is read; only valid for 10 minutes)
+        public static bool TakeResumeSession(out string email, out string password)
+        {
+            email = null;
+            password = null;
+            try
+            {
+                if (!File.Exists(ResumeFile)) return false;
+                byte[] protectedBytes = File.ReadAllBytes(ResumeFile);
+                File.Delete(ResumeFile);
+                string[] parts = Encoding.UTF8.GetString(System.Security.Cryptography.ProtectedData.Unprotect(protectedBytes, ResumeEntropy, System.Security.Cryptography.DataProtectionScope.CurrentUser)).Split(new[] { '\n' }, 3);
+                long ticks;
+                if (parts.Length != 3 || !long.TryParse(parts[0], out ticks)) return false;
+                if (DateTime.UtcNow - new DateTime(ticks, DateTimeKind.Utc) > TimeSpan.FromMinutes(10)) return false;
+                email = parts[1];
+                password = parts[2];
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public static void ClearResumeSession()
+        {
+            try { if (File.Exists(ResumeFile)) File.Delete(ResumeFile); } catch { }
+        }
         // Present = Auto update switched OFF on this PC (kept outside the update folder)
         private static readonly string AutoUpdateOffFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR Agent", "auto-update-off");
 
@@ -1733,20 +1783,12 @@ namespace EktaDMAAgent
 
                 File.WriteAllBytes(StagedExe, exe);
                 File.WriteAllText(StagedVersionFile, version);
-                Interlocked.Exchange(ref newlyStagedVersion, version);
             }
             catch { }
             finally
             {
                 Interlocked.Exchange(ref updateDownloading, 0);
             }
-        }
-
-        // Update downloaded in the background since the last call (the window shows a tray message once)
-        private static string newlyStagedVersion = null;
-        public static string TakeNewlyStagedVersion()
-        {
-            return Interlocked.Exchange(ref newlyStagedVersion, null);
         }
 
         // Settings > Update: ask the online and office servers for their newest agent right now (normally
@@ -2587,29 +2629,66 @@ namespace EktaDMAAgent
             this.WindowState = FormWindowState.Normal;
             this.BringToFront();
             this.Activate();
-            if (Program.AutoUpdateEnabled) CheckForUpdateAtStart();
+            StartAfterShown();
         }
 
-        // Agent opened: ask the servers for a newer version in the background (the login screen stays
-        // usable) and offer to install it. "No" keeps it for logout / Exit / next start.
-        private async void CheckForUpdateAtStart()
+        private System.Windows.Forms.Timer updateCheckTimer;
+        private bool updateInstalling = false;
+        private string installFailedVersion = null;
+
+        // Just updated while signed in: continue that session. Then, with Auto update on, look for a newer
+        // version now and every 30 minutes (servers also offer one on connect); UpdateUI installs it.
+        private async void StartAfterShown()
         {
+            string email, password;
+            if (Program.TakeResumeSession(out email, out password))
+            {
+                txtEmail.Text = email;
+                txtPassword.Text = password;
+                if (await SignInAsync(email, password, null))
+                {
+                    // Back to work where the employee left off: in the tray, not a window in their face
+                    this.Hide();
+                    ShowTrayBalloon("ektaHr Agent updated", "Now on version " + Program.AgentVersion + " - you are still signed in.");
+                }
+            }
+
+            updateCheckTimer = new System.Windows.Forms.Timer { Interval = 30 * 60 * 1000 };
+            updateCheckTimer.Tick += (s, e) => CheckForUpdatesInBackground();
+            updateCheckTimer.Start();
+            CheckForUpdatesInBackground();
+        }
+
+        private async void CheckForUpdatesInBackground()
+        {
+            if (!Program.AutoUpdateEnabled) return;
             bool reachedServer = false;
-            string ready = await Task.Run(() => Program.CheckForUpdateNow(out reachedServer));
-            Program.TakeNewlyStagedVersion(); // asked here - no extra tray message
-            if (ready == null) return;
-            if (MessageBox.Show(this, "A new version of ektaHr Agent is available: " + ready + " (you have " + Program.AgentVersion + ").\n\nUpdate now? It takes a few seconds." +
-                    (Program.IsLoggedIn ? "\nYou sign in again afterwards." : ""),
-                    "ektaHr - Update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
+            await Task.Run(() => Program.CheckForUpdateNow(out reachedServer));
+        }
+
+        // Installs the downloaded update and restarts the agent; a signed-in employee is signed straight
+        // back in by the new agent. Automatic installs wait while the admin is viewing / controlling this
+        // screen, and never retry a version this folder could not take (no write access).
+        private bool InstallUpdateAndRestart(bool fromButton)
+        {
+            string staged = Program.StagedUpdateVersion();
+            if (staged == null || updateInstalling) return false;
+            if (!fromButton && (staged == installFailedVersion || Program.Lan.IsStreaming || Program.Online.IsStreaming)) return false;
+
+            updateInstalling = true;
+            bool resume = Program.SaveResumeSession();
             if (!Program.InstallStagedUpdate(true))
             {
-                MessageBox.Show(this, "The update cannot be installed in this folder (no write access). Ask your admin for the new EktaHR-Agent.exe.",
-                    "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
+                if (resume) Program.ClearResumeSession();
+                installFailedVersion = staged;
+                updateInstalling = false;
+                return false;
             }
-            if (Program.IsLoggedIn) Program.StopSession();
+            // Today's totals carry on in the updated agent (it is not a logout)
+            Program.SaveDailyStats();
             trayIcon.Visible = false;
             Application.Exit();
+            return true;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -3062,6 +3141,8 @@ namespace EktaDMAAgent
                 ShowTrayBalloon("ektaHr Agent", swAutoUpdate.Checked
                     ? "Auto update is on: new versions download and install by themselves."
                     : "Auto update is off: use Settings > Update to update the agent.");
+                // Switched on: look right away (a server offers each version only once per connection)
+                if (swAutoUpdate.Checked) CheckForUpdatesInBackground();
             };
             cardApp.Controls.Add(lblAutoUpd); cardApp.Controls.Add(swAutoUpdate);
 
@@ -3237,8 +3318,12 @@ namespace EktaDMAAgent
                 lblLoginError.Text = "Please enter both email and password.";
                 return;
             }
+            await SignInAsync(email, pass, sender as Control);
+        }
 
-            Control loginButton = sender as Control;
+        // Signs in (Login button, or automatically right after an update restart) and starts tracking
+        private async Task<bool> SignInAsync(string email, string pass, Control loginButton)
+        {
             if (loginButton != null) loginButton.Enabled = false;
             lblLoginError.Text = "Signing in...";
 
@@ -3259,7 +3344,7 @@ namespace EktaDMAAgent
             if (!ok)
             {
                 lblLoginError.Text = err;
-                return;
+                return false;
             }
 
             lblLoginError.Text = "";
@@ -3267,6 +3352,7 @@ namespace EktaDMAAgent
 
             SwitchToView("HOME");
             trayIcon.Text = "ektaHr Agent - Active (" + displayName + ")";
+            return true;
         }
 
         // Prompts for the DMA server IP, verifies it on the LAN and saves it to domain.txt for future logins
@@ -3299,8 +3385,8 @@ namespace EktaDMAAgent
             }
         }
 
-        // Settings > Update: check the servers now, download a newer agent, and install it (the agent
-        // restarts; sign in again)
+        // Settings > Update: check the servers now, download a newer agent and install it right away (the
+        // agent restarts and signs back in by itself)
         private async void BtnUpdate_Click(object sender, EventArgs e)
         {
             Control updateButton = sender as Control;
@@ -3317,18 +3403,15 @@ namespace EktaDMAAgent
                     "ektaHr", MessageBoxButtons.OK, reachedServer ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
                 return;
             }
-            if (MessageBox.Show("Version " + staged + " is ready. Install it now?" + (Program.IsLoggedIn ? "\n\nThe agent restarts and you sign in again." : ""),
-                    "ektaHr", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
-            if (!Program.InstallStagedUpdate(true))
+            // Pressing Update is the go-ahead: install now; the agent restarts and signs back in by itself
+            if (updateButton != null) updateButton.Text = "Updating...";
+            if (!InstallUpdateAndRestart(true))
             {
-                MessageBox.Show("The update cannot be installed in this folder (no write access). It will be installed when the agent is run from a folder you can write to, or ask your admin for the new EktaHR-Agent.exe.",
+                if (updateButton != null) updateButton.Text = "Update";
+                MessageBox.Show("The update cannot be installed in this folder (no write access). Run the agent from a folder you can write to, or ask your admin for the new EktaHR-Agent.exe.",
                     "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
             }
-            Program.StopSession();
-            trayIcon.Visible = false;
-            Application.Exit();
         }
 
         private void BtnLogout_Click(object sender, EventArgs e)
@@ -3388,14 +3471,16 @@ namespace EktaDMAAgent
         private void UpdateUI()
         {
             string stagedUpdate = Program.StagedUpdateVersion();
-            lblLatestVersion.Text = stagedUpdate == null ? Program.AgentVersion : stagedUpdate + " (ready - press Update)";
-            // Downloaded in the background while working: tell the employee once, without interrupting
-            string justStaged = Program.TakeNewlyStagedVersion();
-            if (justStaged != null)
-            {
-                ShowTrayBalloon("ektaHr Agent update ready",
-                    "Version " + justStaged + " is downloaded. Settings > Update installs it now; otherwise it installs when you log out or close the agent.");
-            }
+            string availableUpdate = Program.IsNewerVersion(Program.AvailableAgentVersion, Program.AgentVersion) ? Program.AvailableAgentVersion : null;
+            bool autoUpdate = Program.AutoUpdateEnabled;
+            lblLatestVersion.Text =
+                stagedUpdate != null ? stagedUpdate + (autoUpdate ? " (installing...)" : " (ready - press Update)")
+                : availableUpdate != null ? availableUpdate + (autoUpdate ? " (downloading...)" : " (available - press Update)")
+                : Program.AgentVersion;
+
+            // Auto update on: install a downloaded update right away (waits while the admin is viewing
+            // this screen); the agent restarts and signs the employee straight back in
+            if (stagedUpdate != null && autoUpdate) InstallUpdateAndRestart(false);
 
             if (Program.IsLoggedIn)
             {
