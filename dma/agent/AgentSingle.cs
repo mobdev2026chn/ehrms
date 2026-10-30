@@ -94,7 +94,7 @@ namespace EktaDMAAgent
 
         // Agent version - RAISE IT FOR EVERY RELEASE (e.g. 1.1.0 -> 1.1.1). DMA servers read it from the
         // published exe (VersionTag below is compiled into it) and tell older agents to update themselves.
-        public const string AgentVersion = "1.1.3";
+        public const string AgentVersion = "1.2.0";
         public const string VersionTagPrefix = "EKTA-AGENT-VERSION:";
         public static readonly string VersionTag = VersionTagPrefix + AgentVersion;
 
