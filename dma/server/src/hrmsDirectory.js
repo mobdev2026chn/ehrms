@@ -1,10 +1,10 @@
 // Company staff directory read from the EktaHR backend (HRMSbackend GET /api/admin/dma/staff)
 // with the signed-in admin's own EktaHR token.
 //
-// Used when this DMA server has no MongoDB connection (the normal case for a server started
-// by the Admin Console on an admin's PC): no database credentials are needed on that PC.
+// Used when this DMA server has no MongoDB connection - every production server (online and the
+// one started by the Admin Console on an admin's PC): no database credentials are needed.
 
-const HRMS_API_URL = (process.env.HRMS_API_URL || process.env.BACKEND_URL || 'https://uat.ektahr.com').replace(/\/$/, '');
+const HRMS_API_URL = (process.env.HRMS_API_URL || process.env.BACKEND_URL || 'https://my.ektahr.com').replace(/\/$/, '');
 const CACHE_MS = 60 * 1000;
 const cache = new Map(); // hrmsToken -> { at, staff }
 

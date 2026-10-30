@@ -94,7 +94,7 @@ namespace EktaDMAAgent
 
         // Agent version - RAISE IT FOR EVERY RELEASE (e.g. 1.1.0 -> 1.1.1). DMA servers read it from the
         // published exe (VersionTag below is compiled into it) and tell older agents to update themselves.
-        public const string AgentVersion = "1.1.0";
+        public const string AgentVersion = "1.1.2";
         public const string VersionTagPrefix = "EKTA-AGENT-VERSION:";
         public static readonly string VersionTag = VersionTagPrefix + AgentVersion;
 
@@ -162,11 +162,10 @@ namespace EktaDMAAgent
         public static string OnlineServerUrl = DefaultOnlineServerUrl;
         public static string OnlineToken = "";
 
-        // EktaHR backend: lets an employee sign in even when no DMA server is on the LAN yet
-        // (e.g. the admin PC that hosts the server has not been opened). Login is NOT blocked;
-        // the agent then keeps looking for a DMA server and attaches to it once it appears, so
-        // the admin can view the agent.
-        public const string HrmsApiUrl = "https://uat.ektahr.com";
+        // EktaHR backend (production): lets an employee sign in even when no DMA server is reachable
+        // yet. Login is NOT blocked; the agent then keeps looking for a DMA server and attaches to it
+        // once it appears, so the admin can view the agent. (UAT/testing: https://uat.ektahr.com)
+        public const string HrmsApiUrl = "https://my.ektahr.com";
 
         // Credentials of the current session, kept in memory only, so the agent can register with
         // an office or online server that appears later (or renew an expired online token).
@@ -197,8 +196,8 @@ namespace EktaDMAAgent
                     return;
                 }
 
-                // A newer agent was downloaded last time: install it now, before anyone signs in
-                if (InstallStagedUpdate(true)) return;
+                // A newer agent (downloaded earlier or found now) is offered when the window opens -
+                // see EktaAgentForm.CheckForUpdateAtStart
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
@@ -1582,7 +1581,7 @@ namespace EktaDMAAgent
                         {
                             HandleInputEvent(json, link);
                         }
-                        else if (json.Contains("AGENT_UPDATE_AVAILABLE"))
+                        else if (json.Contains("AGENT_UPDATE_AVAILABLE") && AutoUpdateEnabled)
                         {
                             // Download from the server that offered it; installed later (InstallStagedUpdate)
                             string offeredBy = link == Online ? OnlineServerUrl : ServerHttpUrl;
@@ -1622,10 +1621,34 @@ namespace EktaDMAAgent
         // A DMA server offers a newer agent (AGENT_UPDATE_AVAILABLE: version, sha256, size of the exe it
         // serves at /api/v1/download/agent). It is downloaded in the background, checked, and kept in
         // %LOCALAPPDATA%\EktaHR Agent\update until it can be installed without interrupting anyone:
-        // at the next agent start, at logout, on Exit, or with the Update button in Settings.
+        // offered when the agent opens, installed at logout / Exit, or with the Update button in Settings.
+        // Settings > Auto update OFF: nothing happens automatically; only the Update button updates.
         private static readonly string UpdateDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR Agent", "update");
         private static readonly string StagedExe = Path.Combine(UpdateDir, "EktaHR-Agent.exe");
         private static readonly string StagedVersionFile = Path.Combine(UpdateDir, "version.txt");
+        // Present = Auto update switched OFF on this PC (kept outside the update folder)
+        private static readonly string AutoUpdateOffFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR Agent", "auto-update-off");
+
+        public static bool AutoUpdateEnabled
+        {
+            get
+            {
+                try { return !File.Exists(AutoUpdateOffFile); } catch { return true; }
+            }
+            set
+            {
+                try
+                {
+                    if (value) { if (File.Exists(AutoUpdateOffFile)) File.Delete(AutoUpdateOffFile); }
+                    else
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(AutoUpdateOffFile));
+                        File.WriteAllText(AutoUpdateOffFile, "Auto update switched off in Settings " + DateTime.Now.ToString("s"));
+                    }
+                }
+                catch { }
+            }
+        }
         private static int updateDownloading = 0;
 
         public static bool IsNewerVersion(string candidate, string current)
@@ -1706,12 +1729,20 @@ namespace EktaDMAAgent
 
                 File.WriteAllBytes(StagedExe, exe);
                 File.WriteAllText(StagedVersionFile, version);
+                Interlocked.Exchange(ref newlyStagedVersion, version);
             }
             catch { }
             finally
             {
                 Interlocked.Exchange(ref updateDownloading, 0);
             }
+        }
+
+        // Update downloaded in the background since the last call (the window shows a tray message once)
+        private static string newlyStagedVersion = null;
+        public static string TakeNewlyStagedVersion()
+        {
+            return Interlocked.Exchange(ref newlyStagedVersion, null);
         }
 
         // Settings > Update: ask the online and office servers for their newest agent right now (normally
@@ -1737,6 +1768,11 @@ namespace EktaDMAAgent
                     }
                     reachedServer = true;
                     if (IsNewerVersion(ExtractJsonValue(json, "version"), AgentVersion)) DownloadOfferedUpdate(json, server);
+                }
+                catch (WebException wex)
+                {
+                    // An older server answers without this route: reached, it just has no update to offer
+                    if (wex.Response != null) reachedServer = true;
                 }
                 catch { }
             }
@@ -2524,8 +2560,8 @@ namespace EktaDMAAgent
             trayMenu.Items.Add("Open Monitoring Window", null, (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; });
             trayMenu.Items.Add("Pause Activity Tracking", null, (s, e) => { swPause.Checked = !swPause.Checked; });
             trayMenu.Items.Add("-");
-            // Exit also installs a downloaded update (without restarting the agent)
-            trayMenu.Items.Add("Exit", null, (s, e) => { trayIcon.Visible = false; Program.StopSession(); Program.InstallStagedUpdate(false); Application.Exit(); });
+            // Exit also installs a downloaded update (without restarting the agent) when Auto update is on
+            trayMenu.Items.Add("Exit", null, (s, e) => { trayIcon.Visible = false; Program.StopSession(); if (Program.AutoUpdateEnabled) Program.InstallStagedUpdate(false); Application.Exit(); });
             trayIcon.ContextMenuStrip = trayMenu;
             trayIcon.DoubleClick += (s, e) => { this.Show(); this.WindowState = FormWindowState.Normal; };
 
@@ -2547,6 +2583,29 @@ namespace EktaDMAAgent
             this.WindowState = FormWindowState.Normal;
             this.BringToFront();
             this.Activate();
+            if (Program.AutoUpdateEnabled) CheckForUpdateAtStart();
+        }
+
+        // Agent opened: ask the servers for a newer version in the background (the login screen stays
+        // usable) and offer to install it. "No" keeps it for logout / Exit / next start.
+        private async void CheckForUpdateAtStart()
+        {
+            bool reachedServer = false;
+            string ready = await Task.Run(() => Program.CheckForUpdateNow(out reachedServer));
+            Program.TakeNewlyStagedVersion(); // asked here - no extra tray message
+            if (ready == null) return;
+            if (MessageBox.Show(this, "A new version of ektaHr Agent is available: " + ready + " (you have " + Program.AgentVersion + ").\n\nUpdate now? It takes a few seconds." +
+                    (Program.IsLoggedIn ? "\nYou sign in again afterwards." : ""),
+                    "ektaHr - Update available", MessageBoxButtons.YesNo, MessageBoxIcon.Information) != DialogResult.Yes) return;
+            if (!Program.InstallStagedUpdate(true))
+            {
+                MessageBox.Show(this, "The update cannot be installed in this folder (no write access). Ask your admin for the new EktaHR-Agent.exe.",
+                    "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            if (Program.IsLoggedIn) Program.StopSession();
+            trayIcon.Visible = false;
+            Application.Exit();
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -2825,7 +2884,7 @@ namespace EktaDMAAgent
                 else
                 {
                     if (trayIcon != null) trayIcon.Visible = false;
-                    Program.InstallStagedUpdate(false);
+                    if (Program.AutoUpdateEnabled) Program.InstallStagedUpdate(false);
                     Application.Exit();
                 }
             };
@@ -2988,9 +3047,17 @@ namespace EktaDMAAgent
             CreateDataRow(cardApp, "Version", Program.AgentVersion, 72, out l1);
             CreateDataRow(cardApp, "Latest version", Program.AgentVersion, 102, out lblLatestVersion);
 
-            // Updates always install automatically (DMA server offers them); the switch only shows that
+            // Auto update ON (default): updates download by themselves, are offered when the agent opens and
+            // install at logout / Exit. OFF: only the Update button below updates. Saved on this PC.
             Label lblAutoUpd = new Label() { Text = "Auto update", Font = new Font("Segoe UI", 9.5f), ForeColor = Color.FromArgb(156, 163, 175), Location = new Point(14, 136), AutoSize = true };
-            swAutoUpdate = new EktaToggleSwitch() { Location = new Point(330, 134), Checked = true, Enabled = false };
+            swAutoUpdate = new EktaToggleSwitch() { Location = new Point(330, 134), Checked = Program.AutoUpdateEnabled };
+            swAutoUpdate.CheckedChanged += (s, e) =>
+            {
+                Program.AutoUpdateEnabled = swAutoUpdate.Checked;
+                ShowTrayBalloon("ektaHr Agent", swAutoUpdate.Checked
+                    ? "Auto update is on: new versions download and install by themselves."
+                    : "Auto update is off: use Settings > Update to update the agent.");
+            };
             cardApp.Controls.Add(lblAutoUpd); cardApp.Controls.Add(swAutoUpdate);
 
             EktaPillButton btnUpdate = new EktaPillButton()
@@ -3263,8 +3330,9 @@ namespace EktaDMAAgent
         {
             Program.StopSession();
 
-            // Logged out = nobody is working in the agent: install a downloaded update (restarts at the login screen)
-            if (Program.InstallStagedUpdate(true))
+            // Logged out = nobody is working in the agent: install a downloaded update (restarts at the
+            // login screen) when Auto update is on
+            if (Program.AutoUpdateEnabled && Program.InstallStagedUpdate(true))
             {
                 trayIcon.Visible = false;
                 Application.Exit();
@@ -3315,7 +3383,14 @@ namespace EktaDMAAgent
         private void UpdateUI()
         {
             string stagedUpdate = Program.StagedUpdateVersion();
-            lblLatestVersion.Text = stagedUpdate == null ? Program.AgentVersion : stagedUpdate + " (installs at next start)";
+            lblLatestVersion.Text = stagedUpdate == null ? Program.AgentVersion : stagedUpdate + " (ready - press Update)";
+            // Downloaded in the background while working: tell the employee once, without interrupting
+            string justStaged = Program.TakeNewlyStagedVersion();
+            if (justStaged != null)
+            {
+                ShowTrayBalloon("ektaHr Agent update ready",
+                    "Version " + justStaged + " is downloaded. Settings > Update installs it now; otherwise it installs when you log out or close the agent.");
+            }
 
             if (Program.IsLoggedIn)
             {

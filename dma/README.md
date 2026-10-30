@@ -67,6 +67,10 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   - The server refuses to start with a missing or default secret.
   - In online mode, agents and viewers must send a valid DMA token.
   - The LAN guard and UDP discovery are off.
+- **Production login:** `HRMS_API_URL=https://my.ektahr.com` and **no `MONGODB_URI`**, so every login and the staff list come from production EktaHR. This applies to the online server and to the office server inside the Admin Console.
+  - `MONGODB_URI` is for development only: it checks logins in the old `DEV_HRMS` database first.
+  - For UAT testing, use `https://uat.ektahr.com`.
+  - The agent's built-in direct EktaHR login (`HrmsApiUrl` in `AgentSingle.cs`) is `https://my.ektahr.com` as well.
 - **Every live view needs the admin's token.** On both servers, an admin only reaches their own company's PCs.
 
 ## 🔒 LAN-Only Mode (office LAN server)
@@ -80,10 +84,14 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   New-NetFirewallRule -DisplayName "EktaDMA UDP 9002" -Direction Inbound -Protocol UDP -LocalPort 9002 -Profile Private -Action Allow
   ```
 - Admins open the console at `http://<server-lan-ip>:2005`.
-- Rebuild the agent (no .NET SDK needed):
-  ```bash
-  C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe -nologo -target:winexe -win32icon:ektaHr.ico -resource:ektaHr_icon_256.png,EktaHr.AppIcon.png -r:System.Windows.Forms.dll -r:System.Drawing.dll -r:Microsoft.VisualBasic.dll -out:publish/EktaHR-Agent.exe AgentSingle.cs
+- Build the exes with `dma/build.ps1`. No .NET SDK is needed; it uses the C# compiler that ships with Windows.
+  ```powershell
+  cd dma
+  powershell -ExecutionPolicy Bypass -File .\build.ps1 -AgentOnly   # agent only -> agent\publish + release\EktaHR-DMA-<today>
+  powershell -ExecutionPolicy Bypass -File .\build.ps1              # agent + Admin Console (office server, console, Node packed inside)
   ```
+  - `-Release <folder name>` picks the release folder.
+  - `-HrmsApiUrl https://uat.ektahr.com` builds an Admin Console whose office server logs in through UAT.
 
 ## 🔄 Agent Auto-Update (agent 1.1.0 and later)
 
@@ -92,7 +100,7 @@ Employee PCs update themselves; only the first 1.1.0 agent has to be copied by h
 **Releasing a new agent version**
 
 1. In `agent/AgentSingle.cs`, raise `AgentVersion`, for example `"1.1.0"` → `"1.1.1"`. Every release needs a higher number.
-2. Build it into `agent/publish/EktaHR-Agent.exe` with the `csc` command above.
+2. Build it: `powershell -ExecutionPolicy Bypass -File .\build.ps1 -AgentOnly`. This writes `agent/publish/EktaHR-Agent.exe`, the copy servers hand out.
 3. Commit and push, then on the online server run `git pull`. No restart is needed: the server reads the version from the exe itself.
 
 **What happens next**
@@ -142,4 +150,4 @@ npm run dev
 * Log in using your **EktaHR credentials** (or fallback admin login: `admin` / `admin123`).
 
 ### 3. Start the Windows Agent
-Build it with the `csc` command under **LAN-Only Mode**, then run `EktaHR-Agent.exe` on employee PCs and sign in to enable live screen viewing and remote access. Ready-made builds are in `dma/release/`.
+Build it with `build.ps1` (see **LAN-Only Mode**), then run `EktaHR-Agent.exe` on employee PCs and sign in to enable live screen viewing and remote access. Ready-made builds are in `dma/release/`.

@@ -11,7 +11,8 @@ const activeUserSessions = new Map();
 // Contract: POST {HRMS_API_URL}/api/auth/login { email, password }
 //   -> 200 { success, token, user: { id, email, name, role: 'superAdmin'|'admin'|'staff'|'candidate', adminId, ... } }
 //   -> 401 / 403 / 404 { success: false, message }
-const HRMS_API_URL = (process.env.HRMS_API_URL || process.env.BACKEND_URL || 'https://uat.ektahr.com').replace(/\/$/, '');
+// Production: https://my.ektahr.com (UAT/testing: set HRMS_API_URL=https://uat.ektahr.com)
+const HRMS_API_URL = (process.env.HRMS_API_URL || process.env.BACKEND_URL || 'https://my.ektahr.com').replace(/\/$/, '');
 const HRMS_LOGIN_ENDPOINT = `${HRMS_API_URL}/api/auth/login`;
 
 // HRMS role -> DMA role
@@ -66,7 +67,9 @@ function postJson(urlStr, payloadData) {
   });
 }
 
-// Authenticates credentials directly against EktaHR MongoDB database (DEV_HRMS)
+// Authenticates credentials directly against the old development database (DEV_HRMS). Only used when
+// MONGODB_URI is set - development only. Production servers run without MONGODB_URI, so every login
+// goes to the EktaHR backend (HRMS_API_URL) and matches the production accounts.
 async function authenticateWithMongo(cleanUsername, password) {
   if (mongoose.connection.readyState !== 1) {
     return { ok: false, error: 'Database not connected' };
@@ -236,7 +239,7 @@ async function login(req, res) {
     const cleanUsername = rawInput.toLowerCase();
     const isAgentLogin = req.path.includes('/device/');
 
-    // Primary: Authenticate directly against EktaHR MongoDB database (DEV_HRMS)
+    // Development only (MONGODB_URI set): the DEV_HRMS database first. Production: no database, EktaHR below.
     let auth = await authenticateWithMongo(cleanUsername, password);
 
     // Fallback: Check HRMS API endpoint if not authenticated directly via MongoDB
