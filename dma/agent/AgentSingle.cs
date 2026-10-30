@@ -1714,6 +1714,37 @@ namespace EktaDMAAgent
             }
         }
 
+        // Settings > Update: ask the online and office servers for their newest agent right now (normally
+        // they offer it on connect and every 10 minutes) and download it when newer. Returns the version
+        // waiting to be installed, or null; reachedServer = at least one server answered.
+        public static string CheckForUpdateNow(out bool reachedServer)
+        {
+            reachedServer = false;
+            List<string> servers = new List<string>();
+            if (!string.IsNullOrEmpty(OnlineServerUrl)) servers.Add(OnlineServerUrl);
+            if (!string.IsNullOrEmpty(ServerHttpUrl)) servers.Add(ServerHttpUrl);
+            foreach (string server in servers)
+            {
+                try
+                {
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(server.TrimEnd('/') + "/api/v1/agent/latest");
+                    req.Timeout = 10000;
+                    string json;
+                    using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                    using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                    {
+                        json = sr.ReadToEnd();
+                    }
+                    reachedServer = true;
+                    if (IsNewerVersion(ExtractJsonValue(json, "version"), AgentVersion)) DownloadOfferedUpdate(json, server);
+                }
+                catch { }
+            }
+            // A background download of the same update may still be running
+            for (int i = 0; i < 240 && Interlocked.CompareExchange(ref updateDownloading, 0, 0) == 1; i++) Thread.Sleep(500);
+            return StagedUpdateVersion();
+        }
+
         // Installs the waiting update: a hidden script waits for this agent to close, copies the new exe
         // over this one and (restart) starts it again. The caller then exits. Returns false - nothing to
         // install, or this exe's folder is not writable (e.g. Program Files) - and the agent keeps running.
@@ -3196,17 +3227,25 @@ namespace EktaDMAAgent
             }
         }
 
-        // Settings > Update: install a downloaded update now (the agent restarts; sign in again)
-        private void BtnUpdate_Click(object sender, EventArgs e)
+        // Settings > Update: check the servers now, download a newer agent, and install it (the agent
+        // restarts; sign in again)
+        private async void BtnUpdate_Click(object sender, EventArgs e)
         {
-            string staged = Program.StagedUpdateVersion();
+            Control updateButton = sender as Control;
+            if (updateButton != null) { updateButton.Enabled = false; updateButton.Text = "Checking..."; }
+            bool reachedServer = false;
+            string staged = await Task.Run(() => Program.CheckForUpdateNow(out reachedServer));
+            if (updateButton != null) { updateButton.Enabled = true; updateButton.Text = "Update"; }
+
             if (staged == null)
             {
-                MessageBox.Show("ektaHr Agent " + Program.AgentVersion + " is up to date.\n\nNew versions download automatically and install the next time the agent starts.",
-                    "ektaHr", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                MessageBox.Show(reachedServer
+                        ? "ektaHr Agent " + Program.AgentVersion + " is up to date."
+                        : "Could not check for updates: the EktaHR server is not reachable. Updates also download automatically once it is.",
+                    "ektaHr", MessageBoxButtons.OK, reachedServer ? MessageBoxIcon.Information : MessageBoxIcon.Warning);
                 return;
             }
-            if (Program.IsLoggedIn && MessageBox.Show("Install version " + staged + " now?\n\nThe agent restarts and you sign in again.",
+            if (MessageBox.Show("Version " + staged + " is ready. Install it now?" + (Program.IsLoggedIn ? "\n\nThe agent restarts and you sign in again." : ""),
                     "ektaHr", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
             if (!Program.InstallStagedUpdate(true))

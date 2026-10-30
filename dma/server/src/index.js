@@ -14,6 +14,7 @@ const { getAlerts } = require('./alerts');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL } = require('./config');
+const { getPublishedAgent } = require('./agentUpdate');
 
 // The online server is reachable from the internet: tokens signed with the public fallback secret
 // could be forged by anyone, so it refuses to start without its own JWT_SECRET.
@@ -48,6 +49,9 @@ app.get('/api/health', (req, res) => res.json({ status: 'OK', ok: true, message:
 app.get('/api/v1/server-info', (req, res) => res.json({ success: true, mode: DMA_MODE, onlineServerUrl: ONLINE_SERVER_URL }));
 app.get('/api/v1/download/agent', downloadAgent);
 app.get('/download/agent', downloadAgent);
+// Newest agent this server hands out: { version, sha256, size } - used by Settings > Update in the
+// agent, and handy in a browser to see which version is hosted
+app.get('/api/v1/agent/latest', (req, res) => res.json({ success: true, ...(getPublishedAgent() || { version: null }) }));
 
 // Devices API
 app.get('/api/v1/devices', verifyTokenMiddleware, requireAdminRole, getAllDevices);

@@ -103,6 +103,12 @@ Employee PCs update themselves; only the first 1.1.0 agent has to be copied by h
 - Older or same-version agents are never offered, so an office server built earlier can't downgrade a PC.
 - If the exe's folder isn't writable (for example Program Files), the update waits.
 
+**Checking for updates**
+
+- **Employee:** Settings → **Update** asks the servers right away, downloads a newer agent and offers to install it. Otherwise it says "up to date".
+- **Admin:** Live Devices shows each PC's agent version.
+- **Anyone:** `https://track.ektahr.com/api/v1/agent/latest` shows the version the server is hosting.
+
 **Notes**
 
 - Agents from before 1.1.0 report no version and can't auto-update. The Admin Console marks them "Agent: old version — update by hand once".
