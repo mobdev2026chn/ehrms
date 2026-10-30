@@ -18,18 +18,20 @@ const IDLE_THRESHOLD_SECONDS = intFromEnv('IDLE_THRESHOLD_SECONDS', 300, 30, 720
 const DMA_MODE = (process.env.DMA_MODE || 'lan').toLowerCase() === 'online' ? 'online' : 'lan';
 const IS_ONLINE = DMA_MODE === 'online';
 
-// ---- Environment: production / development (dma/environments.json) ----
-// DMA_ENV=<name> in .env picks the EktaHR login service, the online server and whether the old
-// DEV_HRMS database may be used - in one place. Agents and the Admin Console get the same values at
-// build time (build.ps1 -Env <name>).
-// Without DMA_ENV (an older .env) the server keeps its old behaviour: HRMS_API_URL / BACKEND_URL /
-// ONLINE_SERVER_URL / MONGODB_URI from .env, production values otherwise.
-const ENVIRONMENTS = require('../../environments.json');
-const DMA_ENV = (process.env.DMA_ENV || 'production').trim().toLowerCase();
-const ENV_EXPLICIT = !!process.env.DMA_ENV;
+// ---- Environment: production / development (dma/dma.config.json) ----
+// The environment picks the EktaHR login service, the online server and whether the old DEV_HRMS
+// database may be used - in one place. It is DMA_ENV in .env when set (pins this server), otherwise
+// "environment" in dma/dma.config.json (changes with a push + git pull). The agent and Admin Console
+// get the same values at build time (build.ps1).
+// Neither set (very old setup): HRMS_API_URL / BACKEND_URL / ONLINE_SERVER_URL / MONGODB_URI from .env.
+const DMA_CONFIG = require('../../dma.config.json');
+const ENVIRONMENTS = DMA_CONFIG.environments || {};
+const ENV_SOURCE = process.env.DMA_ENV ? '.env (DMA_ENV)' : DMA_CONFIG.environment ? 'dma.config.json' : 'default';
+const DMA_ENV = (process.env.DMA_ENV || DMA_CONFIG.environment || 'production').trim().toLowerCase();
+const ENV_EXPLICIT = ENV_SOURCE !== 'default';
 const envSettings = ENVIRONMENTS[DMA_ENV];
-if (!envSettings || DMA_ENV.startsWith('_')) {
-  throw new Error(`DMA_ENV=${DMA_ENV} is not defined in dma/environments.json (use ${Object.keys(ENVIRONMENTS).filter(k => !k.startsWith('_')).join(' / ')})`);
+if (!envSettings) {
+  throw new Error(`Environment "${DMA_ENV}" (from ${ENV_SOURCE}) is not defined in dma/dma.config.json (use ${Object.keys(ENVIRONMENTS).join(' / ')})`);
 }
 const trimUrl = (u) => String(u || '').trim().replace(/\/$/, '');
 
@@ -49,4 +51,4 @@ const ONLINE_SERVER_URL = IS_ONLINE
     ? trimUrl(envSettings.onlineServerUrl)
     : trimUrl(process.env.ONLINE_SERVER_URL ?? envSettings.onlineServerUrl);
 
-module.exports = { IDLE_THRESHOLD_SECONDS, DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, HRMS_API_URL, USE_DATABASE };
+module.exports = { IDLE_THRESHOLD_SECONDS, DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, ENV_SOURCE, HRMS_API_URL, USE_DATABASE };

@@ -13,10 +13,10 @@ const { getActivitySummary, getEmployeeActivity } = require('./controllers/activ
 const { getAlerts } = require('./alerts');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
-const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, HRMS_API_URL, USE_DATABASE } = require('./config');
+const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_SOURCE, HRMS_API_URL, USE_DATABASE } = require('./config');
 const { getPublishedAgent } = require('./agentUpdate');
 
-console.log(`[Env] ${DMA_ENV}${ENV_EXPLICIT ? '' : ' (DMA_ENV not set - using .env values)'}: logins via ${HRMS_API_URL}` +
+console.log(`[Env] ${DMA_ENV} (from ${ENV_SOURCE}): logins via ${HRMS_API_URL}` +
   `${USE_DATABASE && process.env.MONGODB_URI ? ' (DEV_HRMS database first)' : ''}`);
 
 // The online server is reachable from the internet: tokens signed with the public fallback secret

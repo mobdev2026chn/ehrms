@@ -11,7 +11,7 @@ const activeUserSessions = new Map();
 // Contract: POST {HRMS_API_URL}/api/auth/login { email, password }
 //   -> 200 { success, token, user: { id, email, name, role: 'superAdmin'|'admin'|'staff'|'candidate', adminId, ... } }
 //   -> 401 / 403 / 404 { success: false, message }
-// HRMS_API_URL comes from the environment (DMA_ENV, see config.js / dma/environments.json)
+// HRMS_API_URL comes from the environment (see config.js / dma/dma.config.json)
 const HRMS_LOGIN_ENDPOINT = `${HRMS_API_URL}/api/auth/login`;
 
 // HRMS role -> DMA role

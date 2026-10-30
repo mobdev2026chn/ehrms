@@ -88,9 +88,10 @@ namespace EktaHR.AdminConsole
         /// Why the bundled server could not be started (shown to the admin), or null.
         private static string BundledServerProblem = null;
 
-        // Version stamp of the embedded server payload. Bump it whenever the embedded zip changes
-        // so the unpacked copy is refreshed on the next run.
-        private const string ServerPayloadVersion = "2026.10.30.7";
+        // Version stamp of the embedded server payload: "adminConsoleVersion" in dma/dma.config.json
+        // (raise it for every new Admin Console so the unpacked copy is refreshed on the next run);
+        // build.ps1 compiles it in via AdminBuild.
+        private const string ServerPayloadVersion = AdminBuild.PayloadVersion;
 
         /// Returns the folder holding node\node.exe and server\src\index.js:
         ///  - a "dma-server" folder next to the exe, if one was shipped that way; else

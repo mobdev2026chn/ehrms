@@ -92,9 +92,10 @@ namespace EktaDMAAgent
         private const uint KEYEVENTF_KEYDOWN = 0x0000;
         private const uint KEYEVENTF_KEYUP = 0x0002;
 
-        // Agent version - RAISE IT FOR EVERY RELEASE (e.g. 1.1.0 -> 1.1.1). DMA servers read it from the
-        // published exe (VersionTag below is compiled into it) and tell older agents to update themselves.
-        public const string AgentVersion = "1.2.0";
+        // Agent version: set "agentVersion" in dma/dma.config.json (raise it for every release); build.ps1
+        // compiles it in via BuildEnv. DMA servers read it from the published exe (VersionTag below) and
+        // tell older agents to update themselves.
+        public const string AgentVersion = BuildEnv.AgentVersion;
         public const string VersionTagPrefix = "EKTA-AGENT-VERSION:";
         public static readonly string VersionTag = VersionTagPrefix + AgentVersion;
 
@@ -156,8 +157,8 @@ namespace EktaDMAAgent
         public static string ServerHttpUrl = "";
         public static string ServerWsUrl = "";
 
-        // Environment values (production / development) come from dma/environments.json: build.ps1 -Env
-        // <name> writes them into BuildEnv, compiled together with this file.
+        // Environment values (production / development) come from dma/dma.config.json: build.ps1 writes
+        // them into BuildEnv, compiled together with this file.
 
         // Online DMA server for employees outside the office (home, other networks); empty = LAN only.
         // An online.txt next to the exe overrides it: another URL, or "off" to keep this PC LAN-only.

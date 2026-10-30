@@ -4,7 +4,7 @@
 // Used when this DMA server has no MongoDB connection - every production server (online and the
 // one started by the Admin Console on an admin's PC): no database credentials are needed.
 
-// From the environment (DMA_ENV, see config.js / dma/environments.json)
+// From the environment (see config.js / dma/dma.config.json)
 const { HRMS_API_URL } = require('./config');
 const CACHE_MS = 60 * 1000;
 const cache = new Map(); // hrmsToken -> { at, staff }

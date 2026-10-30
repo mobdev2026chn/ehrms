@@ -86,12 +86,39 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   powershell -ExecutionPolicy Bypass -File .\build.ps1 -AgentOnly   # agent only -> agent\publish + release\EktaHR-DMA-<today>
   powershell -ExecutionPolicy Bypass -File .\build.ps1              # agent + Admin Console (office server, console, Node packed inside)
   ```
-  - `-Release <folder name>` picks the release folder.
-  - `-HrmsApiUrl https://uat.ektahr.com` builds an Admin Console whose office server logs in through UAT.
+  - Versions and environment come from [`dma.config.json`](dma.config.json) (see **Release config** below).
+  - `-Env development` builds another environment than the config file's; `-Release <folder name>` picks the release folder.
+  - Each exe gets Windows file details (right-click → **Properties → Details**): description, version, and in **Comments** the environment, login service, online server and build time.
+
+## 🚀 Release config: `dma.config.json`
+
+Everything a release changes is in one file, [`dma.config.json`](dma.config.json):
+
+```json
+"environment": "production",            // production | development
+"agentVersion": "1.2.0",                // raise for every new agent: 1.2.0 -> 1.2.1
+"adminConsoleVersion": "2026.10.30.7",  // raise for every new Admin Console
+"environments": { "production": { ... }, "development": { ... } }
+```
+
+**Release steps** (PowerShell, in the `dma` folder):
+
+```powershell
+# 1. edit dma.config.json (version / environment)
+# 2. build
+powershell -ExecutionPolicy Bypass -File .\build.ps1              # or: .\build.ps1 -AgentOnly
+# 3. push
+git add .
+git commit -m "DMA: agent 1.2.1"
+git push origin main
+```
+
+4. **Deploy:** on the online server, `cd <repo>; git pull --ff-only`. Restart the DMA app (`pm2 restart <dma-app>`) only when server code or the environment changed.
+5. **Check:** `https://track.ektahr.com/api/v1/agent/latest` shows the new version, and the agent's **Settings → Update** offers it.
 
 ## 🌍 Environments: production / development
 
-One switch picks the environment for the whole DMA. Its values live in [`environments.json`](environments.json):
+One switch picks the environment for the whole DMA. Its values live in `environments` in [`dma.config.json`](dma.config.json):
 
 | | production | development |
 |---|---|---|
@@ -101,16 +128,16 @@ One switch picks the environment for the whole DMA. Its values live in [`environ
 
 **Where it is picked**
 
-- **DMA server** (online server, or the repo server on a dev PC): `DMA_ENV=production` or `DMA_ENV=development` in `server/.env`.
-  - The server prints `[Env] ...` at start, and `/api/v1/server-info` reports `env`.
+- **DMA server** (online server, or the repo server on a dev PC): `"environment"` in `dma.config.json`, so it changes with a push and `git pull` plus a restart.
+  - To pin one server regardless of the file, set `DMA_ENV=production` (or `development`) in that server's `server/.env`.
+  - The server prints `[Env] production (from dma.config.json)` at start, and `/api/v1/server-info` reports `env`.
   - The Admin Console shows a purple badge on non-production servers.
-  - Without `DMA_ENV`, an older `.env` keeps working as before, reading `HRMS_API_URL` and `MONGODB_URI` directly.
-- **Agent and Admin Console exes:** `build.ps1 -Env production` (the default) or `-Env development`.
+- **Agent and Admin Console exes:** `"environment"` in `dma.config.json`, or `build.ps1 -Env <name>` for a one-off.
   - The values are compiled into the agent (`BuildEnv`), and the office server inside the Admin Console gets `DMA_ENV=<env>`.
-  - A development agent shows "1.1.3 (development)" in Settings.
+  - A development agent shows "1.2.0 (development)" in Settings.
   - Development builds go to `release\EktaHR-DMA-<date>-development` and never to `agent\publish`, so servers only ever hand out production agents.
 
-To change a URL, edit `environments.json`, then restart the servers and rebuild the exes.
+To change a URL, edit `environments` in `dma.config.json`, then restart the servers and rebuild the exes.
 
 ## 🔄 Agent Auto-Update (agent 1.1.0 and later)
 
@@ -118,9 +145,9 @@ Employee PCs update themselves; only the first 1.1.0 agent has to be copied by h
 
 **Releasing a new agent version**
 
-1. In `agent/AgentSingle.cs`, raise `AgentVersion`, for example `"1.1.0"` → `"1.1.1"`. Every release needs a higher number.
+1. In `dma.config.json`, raise `agentVersion`, for example `"1.2.0"` → `"1.2.1"`. Every release needs a higher number.
 2. Build it: `powershell -ExecutionPolicy Bypass -File .\build.ps1 -AgentOnly`. This writes `agent/publish/EktaHR-Agent.exe`, the copy servers hand out.
-3. Commit and push, then on the online server run `git pull`. No restart is needed: the server reads the version from the exe itself.
+3. Commit and push **after** building, then on the online server run `git pull`. No restart is needed: the server reads the version from the exe itself.
 
 **What happens next**
 
