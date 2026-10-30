@@ -37,10 +37,11 @@ A dedicated, high-performance, LAN-only Live Desktop Streaming & Remote Access s
    - Authenticates EktaHR credentials (`JWT_SECRET=AEvaHRMS@123`).
    - Relays live JPEG screen streams and remote mouse/keyboard control events between Agent and Admin viewer.
 
-2. **`dma/agent` (C# .NET 8 EktaDMAAgent)**:
-   - DXGI GPU Screen Capturer with adaptive JPEG frame compression.
-   - Win32 `user32.dll` `SendInput` mouse and keyboard event injector.
-   - Connects to `ws://localhost:9000/agent` and auto-registers computer name, IP, and logged-in user.
+2. **`dma/agent` (single-file C# agent, `AgentSingle.cs` → `EktaHR-Agent.exe`)**:
+   - GDI screen capture with JPEG frame compression (smaller frames over the online connection).
+   - Win32 mouse and keyboard event injector for Remote Access.
+   - Connects to the office LAN server (`ws://<server>:2005/agent`) and the online server, and registers computer name, IP and logged-in user.
+   - `agent/publish/EktaHR-Agent.exe` is the copy the server offers at `/api/v1/download/agent`.
 
 3. **`dma/admin_console` (React 18 + Vite Glassmorphism UI)**:
    - EktaHR Auth Login UI.
@@ -49,10 +50,29 @@ A dedicated, high-performance, LAN-only Live Desktop Streaming & Remote Access s
 
 ---
 
-## 🔒 LAN-Only Mode
+## 🌐 Office LAN + Online
+
+The admin sees an employee wherever they log in: on the office LAN **and** from any other network.
+
+- **Two servers, same code.** The office LAN server runs on the admin's PC (`DMA_MODE=lan`, the default). The online server, `track.ektahr.com`, runs with `DMA_MODE=online` behind HTTPS.
+- **Agent** keeps LAN detection and connects to the office LAN server when it finds one. It also connects to the online server from any network.
+  - It tells the online server whether it is on the office LAN, which sets the PC's **LAN** or **Online** badge.
+  - Screenshots go to the online server first and fall back to the office server.
+  - An `online.txt` next to the exe overrides the online server URL; `off` keeps that PC LAN-only.
+- **Admin Console** has **All / LAN / Online** buttons on Live Devices.
+  - Served by an office LAN server, it also signs in to `ONLINE_SERVER_URL` (default `https://track.ektahr.com`) with the same login.
+  - Office PCs live-stream directly over the LAN. Everyone else streams through the online server, at a reduced 1366 px width.
+  - The Activity Report, screenshots and idle alerts come from the online server when the console is signed in to it.
+- **Online server setup** (`server/.env`): `DMA_MODE=online` and a long random `JWT_SECRET`.
+  - The server refuses to start with a missing or default secret.
+  - In online mode, agents and viewers must send a valid DMA token.
+  - The LAN guard and UDP discovery are off.
+- **Every live view needs the admin's token.** On both servers, an admin only reaches their own company's PCs.
+
+## 🔒 LAN-Only Mode (office LAN server)
 
 - **Server** rejects HTTP / WebSocket / UDP-discovery traffic from non-private IPs (`LAN_ONLY=true` in `server/.env`, see `server/src/lanGuard.js`). It still needs *outbound* internet for MongoDB Atlas and EktaHR login.
-- **Agent & Admin Console launcher** only connect to private LAN addresses (10.x, 172.16–31.x, 192.168.x, localhost). There is no public fallback.
+- **Agent & Admin Console launcher** only look for the office server on private LAN addresses (10.x, 172.16–31.x, 192.168.x, localhost). The agent's online connection is separate (see above).
 - Server discovery order: `domain.txt` next to the exe (e.g. `192.168.1.10` → `http://192.168.1.10:2005`) → saved `config.json` → UDP broadcast on port 9002 → subnet scan on port 2005.
 - On the server PC, allow the ports on the **Private** network profile only:
   ```powershell
@@ -92,8 +112,5 @@ npm run dev
 * Opens at `http://localhost:3000`
 * Log in using your **EktaHR credentials** (or fallback admin login: `admin` / `admin123`).
 
-### 3. Start C# Windows Agent
-```powershell
-cd d:\Projects\ektaHr\dma\agent
-```
-Run `EktaDMAAgent.exe` on employee PCs to auto-register and enable live screen viewing and remote access.
+### 3. Start the Windows Agent
+Build it with the `csc` command under **LAN-Only Mode**, then run `EktaHR-Agent.exe` on employee PCs and sign in to enable live screen viewing and remote access. Ready-made builds are in `dma/release/`.

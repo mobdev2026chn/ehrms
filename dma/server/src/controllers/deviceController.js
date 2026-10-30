@@ -29,6 +29,7 @@ async function getLanAgents(req, res) {
         ipAddress: live.ipAddress || d.ipAddress,
         idleSeconds: liveInfo.idleSeconds || 0,
         activeWindow: liveInfo.activeWindow || '',
+        network: live.network || 'LAN',
         connected: true,
         connectedAt: live.connectedAt
       });
@@ -59,11 +60,12 @@ async function postScreenshot(req, res) {
     if (!data.imageBase64 && !data.image) {
       return res.status(400).json({ success: false, error: 'Missing imageBase64 in payload' });
     }
+    // An agent token (always present on the online server) decides whose screenshot this is
     const saved = await saveScreenshot({
       deviceId: data.deviceId,
       hostname: data.hostname,
-      currentUser: data.currentUser,
-      businessId: data.businessId,
+      currentUser: req.user ? req.user.username : data.currentUser,
+      businessId: req.user ? req.user.businessId : data.businessId,
       timestamp: data.timestamp,
       idleSeconds: data.idleSeconds,
       trigger: data.trigger,

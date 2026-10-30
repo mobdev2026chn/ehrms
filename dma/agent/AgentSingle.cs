@@ -94,7 +94,6 @@ namespace EktaDMAAgent
 
         // Global Agent State
         public static bool IsLoggedIn = false;
-        public static bool IsStreaming = false;
         public static bool IsPaused = false;
         public static bool IsBreak = false;
         public static bool IsMeeting = false;
@@ -139,13 +138,23 @@ namespace EktaDMAAgent
         public static string ActiveWindowTitle = "Desktop";
         public static string ActiveProcessName = "System";
 
-        private static SemaphoreSlim sendLock = new SemaphoreSlim(1, 1);
-        private static ClientWebSocket currentWs = null;
         private static CancellationTokenSource connCts = null;
 
-        // LAN-only: no public default server — resolved from domain.txt / config / UDP discovery / subnet scan
+        // Two DMA server connections at once: the office LAN server (found by LAN detection) and the
+        // online server (any network). The admin sees this PC on whichever it reaches.
+        // Over the internet, live view is sent smaller (max 1366 px wide), lighter and slower.
+        public static readonly ServerLink Lan = new ServerLink("LAN", 0, 85L, 40);
+        public static readonly ServerLink Online = new ServerLink("ONLINE", 1366, 50L, 150);
+
+        // Office LAN server — resolved from domain.txt / config / UDP discovery / subnet scan
         public static string ServerHttpUrl = "";
         public static string ServerWsUrl = "";
+
+        // Online DMA server for employees outside the office (home, other networks).
+        // An online.txt next to the exe overrides it: another URL, or "off" to keep this PC LAN-only.
+        public const string DefaultOnlineServerUrl = "https://track.ektahr.com";
+        public static string OnlineServerUrl = DefaultOnlineServerUrl;
+        public static string OnlineToken = "";
 
         // EktaHR backend: lets an employee sign in even when no DMA server is on the LAN yet
         // (e.g. the admin PC that hosts the server has not been opened). Login is NOT blocked;
@@ -153,8 +162,9 @@ namespace EktaDMAAgent
         // the admin can view the agent.
         public const string HrmsApiUrl = "https://uat.ektahr.com";
 
-        // Credentials of the current session, kept in memory only, so the agent can register
-        // with a DMA server the moment one appears after a serverless login. Cleared on logout.
+        // Credentials of the current session, kept in memory only, so the agent can register with
+        // an office or online server that appears later (or renew an expired online token).
+        // Cleared on logout.
         private static string PendingEmail = "";
         private static string PendingPassword = "";
 
@@ -191,6 +201,7 @@ namespace EktaDMAAgent
                     string deviceId = "WIN-PC-" + hostname.ToUpper();
 
                     LoadLocalConfig(ref ServerHttpUrl, ref ServerWsUrl);
+                    LoadOnlineServerUrl();
 
                     if (args != null && args.Length > 0)
                     {
@@ -266,6 +277,19 @@ namespace EktaDMAAgent
                     httpUrl = "";
                     wsUrl = "";
                 }
+            }
+            catch { }
+        }
+
+        private static void LoadOnlineServerUrl()
+        {
+            try
+            {
+                string file = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "online.txt");
+                if (!File.Exists(file)) return;
+                string text = File.ReadAllText(file).Trim().TrimEnd('/');
+                if (string.Equals(text, "off", StringComparison.OrdinalIgnoreCase)) OnlineServerUrl = "";
+                else if (text.StartsWith("https://") || text.StartsWith("http://")) OnlineServerUrl = text;
             }
             catch { }
         }
@@ -837,7 +861,26 @@ namespace EktaDMAAgent
             }
         }
 
-        private static bool TryValidateAndRegisterSingle(string email, string password, string httpUrl, out string displayName, out string errorMsg)
+        // True when the last online registration got an answer from the online server (even a rejection)
+        public static bool LastOnlineLoginReachedServer = false;
+
+        // Registers this PC with the online server (reachable from any network) for the online
+        // connection and screenshot uploads. Leaves the office LAN registration untouched.
+        public static bool RegisterWithOnlineServer(string email, string password, out string errorMsg)
+        {
+            LastOnlineLoginReachedServer = false;
+            errorMsg = "";
+            if (string.IsNullOrEmpty(OnlineServerUrl)) return false;
+
+            string displayName;
+            // The online server checks the login with EktaHR over the internet: allow it more time than a LAN server
+            bool ok = TryValidateAndRegisterSingle(email, password, OnlineServerUrl, out displayName, out errorMsg, true, 15000);
+            if (!ok && !string.IsNullOrEmpty(errorMsg) && !errorMsg.StartsWith("Unable to connect")) LastOnlineLoginReachedServer = true;
+            return ok;
+        }
+
+        // online = store the token as the online server's (else as the office LAN server's)
+        private static bool TryValidateAndRegisterSingle(string email, string password, string httpUrl, out string displayName, out string errorMsg, bool online = false, int timeoutMs = 4000)
         {
             displayName = email;
             errorMsg = "";
@@ -865,7 +908,7 @@ namespace EktaDMAAgent
                 req.Method = "POST";
                 req.ContentType = "application/json";
                 req.ContentLength = bodyBytes.Length;
-                req.Timeout = 4000;
+                req.Timeout = timeoutMs;
 
                 using (Stream reqStream = req.GetRequestStream())
                 {
@@ -879,7 +922,8 @@ namespace EktaDMAAgent
                         string respText = sr.ReadToEnd();
                         if (respText.Contains("\"token\""))
                         {
-                            DeviceToken = ExtractJsonValue(respText, "token");
+                            if (online) OnlineToken = ExtractJsonValue(respText, "token");
+                            else DeviceToken = ExtractJsonValue(respText, "token");
                             displayName = email;
                             LoggedUser = email;
                             if (email.Contains("@")) EmployeeName = email.Split('@')[0];
@@ -938,8 +982,8 @@ namespace EktaDMAAgent
             ServerWsUrl = wsUrl;
             if (!string.IsNullOrEmpty(httpUrl)) SaveLocalConfig(httpUrl, wsUrl);
 
-            // Serverless login (no DMA server on the LAN yet): keep the credentials so the agent can
-            // register with a server as soon as one appears, and run that discovery loop.
+            // Keep the credentials (memory only) so the agent can register with an office LAN server
+            // or the online server that is not reachable yet, and renew an expired online token.
             PendingEmail = pendingEmail ?? "";
             PendingPassword = pendingPassword ?? "";
 
@@ -955,6 +999,7 @@ namespace EktaDMAAgent
                             "&businessId=" + Uri.EscapeDataString(BusinessId ?? "");
 
             Task.Run(() => ConnectionLoop(fullWsUrl, connCts.Token));
+            Task.Run(() => OnlineConnectionLoop(deviceId, hostname, connCts.Token));
             Task.Run(() => SendHeartbeatHttpLoop(connCts.Token));
             Task.Run(() => PeriodicScreenshotLoop(connCts.Token));
             Task.Run(() => WorkTimerLoop(connCts.Token));
@@ -970,7 +1015,9 @@ namespace EktaDMAAgent
             catch { }
 
             IsLoggedIn = false;
-            IsStreaming = false;
+            Lan.IsStreaming = false;
+            Online.IsStreaming = false;
+            OnlineToken = "";
             PendingEmail = "";
             PendingPassword = "";
             CheckOutTime = DateTime.Now.ToString("hh:mm tt");
@@ -1014,15 +1061,8 @@ namespace EktaDMAAgent
                     connCts = null;
                 }
 
-                if (currentWs != null)
-                {
-                    if (currentWs.State == WebSocketState.Open)
-                    {
-                        currentWs.CloseAsync(WebSocketCloseStatus.NormalClosure, "Logged out", CancellationToken.None).Wait(300);
-                    }
-                    currentWs.Dispose();
-                    currentWs = null;
-                }
+                Lan.Close();
+                Online.Close();
             }
             catch { }
         }
@@ -1034,6 +1074,33 @@ namespace EktaDMAAgent
         }
 
         // ================= WEBSOCKET LIVE STREAMING LOOP =================
+        // Agent window status: a connection that is down only shows while the other one is down too
+        private static void SetLinkDownStatus(ServerLink link, string agentStatus, string streamStatus)
+        {
+            ServerLink other = link == Lan ? Online : Lan;
+            if (other.IsOpen) return;
+            AgentStatus = agentStatus;
+            LiveStreamStatus = streamStatus;
+        }
+
+        private static void SetLinkUpStatus()
+        {
+            AgentStatus = "Active";
+            LiveStreamStatus = Lan.IsStreaming || Online.IsStreaming ? "Streaming" : "Ready";
+        }
+
+        // Live view, remote input and heartbeats on one server connection, until it drops
+        private static async Task RunLinkAsync(ServerLink link, ClientWebSocket ws, CancellationToken token)
+        {
+            Task captureTask = CaptureLoop(link, ws, token);
+            Task receiveTask = ReceiveLoop(link, ws, token);
+            Task heartbeatTask = HeartbeatWsLoop(link, ws, token);
+
+            await Task.WhenAny(captureTask, receiveTask, heartbeatTask);
+            link.IsStreaming = false;
+        }
+
+        // Office LAN server connection (LAN detection finds it; rediscovered when it moves)
         private static async Task ConnectionLoop(string wsServerUrl, CancellationToken token)
         {
             int failures = 0;
@@ -1049,8 +1116,7 @@ namespace EktaDMAAgent
                 // No server yet: wait and look again rather than throwing on a relative URL.
                 if (!wsServerUrl.StartsWith("ws://") && !wsServerUrl.StartsWith("wss://"))
                 {
-                    AgentStatus = "Waiting for server";
-                    LiveStreamStatus = "Offline";
+                    SetLinkDownStatus(Lan, "Waiting for server", "Offline");
                     await Task.Delay(5000, token);
                     continue;
                 }
@@ -1069,27 +1135,24 @@ namespace EktaDMAAgent
                 }
                 try
                 {
-                    AgentStatus = "Connecting...";
-                    LiveStreamStatus = "Connecting";
-                    using (currentWs = new ClientWebSocket())
+                    SetLinkDownStatus(Lan, "Connecting...", "Connecting");
+                    using (ClientWebSocket ws = new ClientWebSocket())
                     {
-                        await currentWs.ConnectAsync(new Uri(wsServerUrl), token);
+                        Lan.Ws = ws;
+                        await ws.ConnectAsync(new Uri(wsServerUrl), token);
                         failures = 0;
-                        AgentStatus = "Active";
-                        LiveStreamStatus = "Ready";
+                        SetLinkUpStatus();
+                        // The online server shows this PC as LAN from now on
+                        SendInstantStatusUpdate();
 
-                        Task captureTask = CaptureLoop(currentWs, token);
-                        Task receiveTask = ReceiveLoop(currentWs, token);
-                        Task heartbeatTask = HeartbeatWsLoop(currentWs, token);
-
-                        await Task.WhenAny(captureTask, receiveTask, heartbeatTask);
+                        await RunLinkAsync(Lan, ws, token);
                     }
                 }
                 catch
                 {
                     failures++;
-                    AgentStatus = "Reconnecting";
-                    LiveStreamStatus = "Offline";
+                    Lan.IsStreaming = false;
+                    SetLinkDownStatus(Lan, "Reconnecting", "Offline");
                 }
 
                 if (IsLoggedIn && !token.IsCancellationRequested)
@@ -1097,6 +1160,79 @@ namespace EktaDMAAgent
                     await Task.Delay(3000, token);
                 }
             }
+        }
+
+        // Online server connection: works from any network, so the admin sees this PC wherever the
+        // employee works. Needs the online token; an expired or rejected token is renewed.
+        private static async Task OnlineConnectionLoop(string deviceId, string hostname, CancellationToken token)
+        {
+            // Login just tried to register; without a token, try again every 30 s
+            DateTime nextRegisterAt = DateTime.UtcNow.AddSeconds(30);
+            while (IsLoggedIn && !token.IsCancellationRequested && !string.IsNullOrEmpty(OnlineServerUrl))
+            {
+                // Not registered with the online server (offline at login, server down, token renewal failed)
+                if (string.IsNullOrEmpty(OnlineToken))
+                {
+                    if (!string.IsNullOrEmpty(PendingEmail) && DateTime.UtcNow >= nextRegisterAt)
+                    {
+                        nextRegisterAt = DateTime.UtcNow.AddSeconds(30);
+                        try
+                        {
+                            string er;
+                            RegisterWithOnlineServer(PendingEmail, PendingPassword, out er);
+                        }
+                        catch { }
+                    }
+                    if (string.IsNullOrEmpty(OnlineToken))
+                    {
+                        await Task.Delay(5000, token);
+                        continue;
+                    }
+                }
+
+                bool rejected = false;
+                try
+                {
+                    string url = ToWsUrl(OnlineServerUrl) + "/agent?deviceId=" + Uri.EscapeDataString(deviceId) +
+                        "&hostname=" + Uri.EscapeDataString(hostname) +
+                        "&user=" + Uri.EscapeDataString(LoggedUser ?? "") +
+                        "&businessId=" + Uri.EscapeDataString(BusinessId ?? "") +
+                        "&network=" + NetworkFor(Online) +
+                        "&token=" + Uri.EscapeDataString(OnlineToken);
+                    using (ClientWebSocket ws = new ClientWebSocket())
+                    {
+                        Online.Ws = ws;
+                        await ws.ConnectAsync(new Uri(url), token);
+                        SetLinkUpStatus();
+
+                        await RunLinkAsync(Online, ws, token);
+                        // 4401 = the server did not accept the token (expired after 24 h, or new server secret)
+                        rejected = ws.CloseStatus.HasValue && (int)ws.CloseStatus.Value == 4401;
+                    }
+                }
+                catch { }
+
+                Online.IsStreaming = false;
+                SetLinkDownStatus(Online, "Reconnecting", "Offline");
+
+                if (rejected)
+                {
+                    // Sign in to the online server again with this session's credentials, right away
+                    OnlineToken = "";
+                    nextRegisterAt = DateTime.UtcNow;
+                }
+
+                if (IsLoggedIn && !token.IsCancellationRequested)
+                {
+                    await Task.Delay(5000, token);
+                }
+            }
+        }
+
+        // What the online server shows for this PC: LAN while it is also connected to the office server
+        private static string NetworkFor(ServerLink link)
+        {
+            return link == Lan || Lan.IsOpen ? "LAN" : "ONLINE";
         }
 
         // Finds the DMA server again after the connection was lost. Returns the live-stream URL
@@ -1140,26 +1276,35 @@ namespace EktaDMAAgent
                 else if (statusStr == "PAUSED") AgentStatus = "Paused";
                 else if (statusStr == "ONLINE") AgentStatus = "Active";
 
-                if (currentWs != null && currentWs.State == WebSocketState.Open)
+                // Both connections (office LAN server and online server)
+                foreach (ServerLink link in new[] { Lan, Online })
                 {
-                    string payload = "{" +
-                        "\"type\":\"HEARTBEAT\"," +
-                        "\"hostname\":\"" + EscapeJson(Environment.MachineName) + "\"," +
-                        "\"currentUser\":\"" + EscapeJson(LoggedUser) + "\"," +
-                        "\"businessId\":\"" + EscapeJson(BusinessId) + "\"," +
-                        "\"status\":\"" + statusStr + "\"," +
-                        "\"idleSeconds\":" + IdleSeconds + "," +
-                        "\"activeWindow\":\"" + EscapeJson(ActiveWindowTitle) + "\"," +
-                        "\"isPaused\":" + (IsPaused ? "true" : "false") +
-                        "}";
-                    byte[] bytes = Encoding.UTF8.GetBytes(payload);
-                    Task.Run(() => SafeSendAsync(currentWs, bytes, WebSocketMessageType.Text, CancellationToken.None));
+                    ClientWebSocket ws = link.Ws;
+                    if (ws == null || !link.IsOpen) continue;
+                    byte[] bytes = Encoding.UTF8.GetBytes(BuildHeartbeatPayload(statusStr, link));
+                    ServerLink target = link;
+                    Task.Run(() => SafeSendAsync(target, ws, bytes, WebSocketMessageType.Text, CancellationToken.None));
                 }
             }
             catch { }
         }
 
-        private static async Task HeartbeatWsLoop(ClientWebSocket ws, CancellationToken token)
+        private static string BuildHeartbeatPayload(string statusStr, ServerLink link)
+        {
+            return "{" +
+                "\"type\":\"HEARTBEAT\"," +
+                "\"hostname\":\"" + EscapeJson(Environment.MachineName) + "\"," +
+                "\"currentUser\":\"" + EscapeJson(LoggedUser) + "\"," +
+                "\"businessId\":\"" + EscapeJson(BusinessId) + "\"," +
+                "\"status\":\"" + statusStr + "\"," +
+                "\"idleSeconds\":" + IdleSeconds + "," +
+                "\"activeWindow\":\"" + EscapeJson(ActiveWindowTitle) + "\"," +
+                "\"network\":\"" + NetworkFor(link) + "\"," +
+                "\"isPaused\":" + (IsPaused ? "true" : "false") +
+                "}";
+        }
+
+        private static async Task HeartbeatWsLoop(ServerLink link, ClientWebSocket ws, CancellationToken token)
         {
             while (!token.IsCancellationRequested && IsLoggedIn && ws != null && ws.State == WebSocketState.Open)
             {
@@ -1178,18 +1323,8 @@ namespace EktaDMAAgent
                     else if (statusStr == "PAUSED") AgentStatus = "Paused";
                     else if (statusStr == "ONLINE") AgentStatus = "Active";
 
-                    string payload = "{" +
-                        "\"type\":\"HEARTBEAT\"," +
-                        "\"hostname\":\"" + EscapeJson(Environment.MachineName) + "\"," +
-                        "\"currentUser\":\"" + EscapeJson(LoggedUser) + "\"," +
-                        "\"businessId\":\"" + EscapeJson(BusinessId) + "\"," +
-                        "\"status\":\"" + statusStr + "\"," +
-                        "\"idleSeconds\":" + IdleSeconds + "," +
-                        "\"activeWindow\":\"" + EscapeJson(ActiveWindowTitle) + "\"," +
-                        "\"isPaused\":" + (IsPaused ? "true" : "false") +
-                        "}";
-                    byte[] bytes = Encoding.UTF8.GetBytes(payload);
-                    await SafeSendAsync(ws, bytes, WebSocketMessageType.Text, token);
+                    byte[] bytes = Encoding.UTF8.GetBytes(BuildHeartbeatPayload(statusStr, link));
+                    await SafeSendAsync(link, ws, bytes, WebSocketMessageType.Text, token);
                 }
                 catch { }
                 await Task.Delay(3000, token);
@@ -1279,7 +1414,13 @@ namespace EktaDMAAgent
 
                     byte[] bodyBytes = Encoding.UTF8.GetBytes(body);
 
+                    // Online server first: it keeps every employee's screenshots wherever they work
+                    // (the admin's Activity Report reads them there); office LAN servers after it.
+                    string onlineEndpoint = string.IsNullOrEmpty(OnlineServerUrl) || string.IsNullOrEmpty(OnlineToken)
+                        ? null
+                        : OnlineServerUrl.TrimEnd('/') + "/api/v1/device/screenshot";
                     List<string> endpointList = new List<string>();
+                    if (onlineEndpoint != null) endpointList.Add(onlineEndpoint);
                     if (!string.IsNullOrEmpty(ServerWsUrl))
                     {
                         string wsHttp = ServerWsUrl.Replace("ws://", "http://").Replace("wss://", "https://").TrimEnd('/') + "/api/v1/device/screenshot";
@@ -1293,14 +1434,18 @@ namespace EktaDMAAgent
                     endpointList.Add("http://127.0.0.1:2005/api/v1/device/screenshot");
                     endpointList.Add("http://127.0.0.1:9000/api/v1/device/screenshot");
 
+                    bool renewedOnlineToken = false;
                     for (int i = 0; i < endpointList.Count; i++)
                     {
+                        bool toOnline = endpointList[i] == onlineEndpoint;
                         try
                         {
                             HttpWebRequest req = (HttpWebRequest)WebRequest.Create(endpointList[i]);
                             req.Method = "POST";
                             req.ContentType = "application/json";
-                            req.Timeout = 10000;
+                            // The online server only takes screenshots with this PC's token (it decides the company)
+                            if (toOnline) req.Headers.Add("Authorization", "Bearer " + OnlineToken);
+                            req.Timeout = toOnline ? 30000 : 10000;
                             req.ContentLength = bodyBytes.Length;
 
                             using (Stream rs = req.GetRequestStream())
@@ -1312,6 +1457,18 @@ namespace EktaDMAAgent
                             TotalScreenshots++;
                             LastCaptureTime = DateTime.Now.ToString("hh:mm tt");
                             break;
+                        }
+                        catch (WebException wex)
+                        {
+                            // Online token expired (24 h; the live connection keeps working on its old
+                            // login): sign in again and retry the online upload once
+                            HttpWebResponse errResp = wex.Response as HttpWebResponse;
+                            if (toOnline && !renewedOnlineToken && errResp != null && errResp.StatusCode == HttpStatusCode.Unauthorized && !string.IsNullOrEmpty(PendingEmail))
+                            {
+                                renewedOnlineToken = true;
+                                string er;
+                                if (RegisterWithOnlineServer(PendingEmail, PendingPassword, out er)) i--;
+                            }
                         }
                         catch { }
                     }
@@ -1460,10 +1617,11 @@ namespace EktaDMAAgent
             }
         }
 
-        private static async Task SafeSendAsync(ClientWebSocket ws, byte[] buffer, WebSocketMessageType type, CancellationToken token)
+        // One send at a time per connection (a slow online upload never holds up the LAN stream)
+        private static async Task SafeSendAsync(ServerLink link, ClientWebSocket ws, byte[] buffer, WebSocketMessageType type, CancellationToken token)
         {
             if (ws == null || ws.State != WebSocketState.Open) return;
-            await sendLock.WaitAsync(token);
+            await link.SendLock.WaitAsync(token);
             try
             {
                 if (ws.State == WebSocketState.Open)
@@ -1473,11 +1631,11 @@ namespace EktaDMAAgent
             }
             finally
             {
-                sendLock.Release();
+                link.SendLock.Release();
             }
         }
 
-        private static async Task ReceiveLoop(ClientWebSocket ws, CancellationToken token)
+        private static async Task ReceiveLoop(ServerLink link, ClientWebSocket ws, CancellationToken token)
         {
             byte[] buffer = new byte[8192];
             while (!token.IsCancellationRequested && ws != null && ws.State == WebSocketState.Open)
@@ -1497,18 +1655,18 @@ namespace EktaDMAAgent
                         }
                         else if (json.Contains("START_STREAM"))
                         {
-                            IsStreaming = true;
+                            link.IsStreaming = true;
                             LiveStreamStatus = "Streaming";
-                            await SendResolution(ws, token);
+                            await SendResolution(link, ws, token);
                         }
                         else if (json.Contains("STOP_STREAM"))
                         {
-                            IsStreaming = false;
-                            LiveStreamStatus = "Ready";
+                            link.IsStreaming = false;
+                            LiveStreamStatus = Lan.IsStreaming || Online.IsStreaming ? "Streaming" : "Ready";
                         }
                         else if (json.Contains("INPUT_EVENT"))
                         {
-                            HandleInputEvent(json);
+                            HandleInputEvent(json, link);
                         }
                         else if (json.Contains("AUTO_UPDATE_AGENT"))
                         {
@@ -1593,24 +1751,30 @@ namespace EktaDMAAgent
             return Screen.PrimaryScreen.Bounds;
         }
 
-        private static async Task SendResolution(ClientWebSocket ws, CancellationToken token)
+        // Size of the frames this connection sends (smaller than the screen on the online server)
+        private static async Task SendResolution(ServerLink link, ClientWebSocket ws, CancellationToken token)
         {
             try
             {
                 Rectangle bounds = GetPhysicalScreenBounds();
-                string payload = "{\"type\":\"RESOLUTION_INFO\",\"width\":" + bounds.Width + ",\"height\":" + bounds.Height + "}";
+                link.FrameScale = link.ScaleFor(bounds.Width);
+                int width = (int)Math.Round(bounds.Width * link.FrameScale);
+                int height = (int)Math.Round(bounds.Height * link.FrameScale);
+                string payload = "{\"type\":\"RESOLUTION_INFO\",\"width\":" + width + ",\"height\":" + height + "}";
                 byte[] bytes = Encoding.UTF8.GetBytes(payload);
-                await SafeSendAsync(ws, bytes, WebSocketMessageType.Text, token);
+                await SafeSendAsync(link, ws, bytes, WebSocketMessageType.Text, token);
             }
             catch { }
         }
 
-        private static void HandleInputEvent(string json)
+        private static void HandleInputEvent(string json, ServerLink link)
         {
             try
             {
-                int x = ExtractInt(json, "x");
-                int y = ExtractInt(json, "y");
+                // The viewer clicks on the frame it was sent: scale back to real screen pixels
+                double scale = link.FrameScale > 0 ? link.FrameScale : 1.0;
+                int x = (int)Math.Round(ExtractInt(json, "x") / scale);
+                int y = (int)Math.Round(ExtractInt(json, "y") / scale);
                 int vk = ExtractInt(json, "vk");
 
                 if (json.Contains("MOUSE_MOVE"))
@@ -1648,17 +1812,17 @@ namespace EktaDMAAgent
             catch { }
         }
 
-        private static async Task CaptureLoop(ClientWebSocket ws, CancellationToken token)
+        private static async Task CaptureLoop(ServerLink link, ClientWebSocket ws, CancellationToken token)
         {
             EncoderParameters encoderParams = new EncoderParameters(1);
-            encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
+            encoderParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, link.JpegQuality);
             ImageCodecInfo jpegEncoder = GetEncoder(ImageFormat.Jpeg);
 
             while (!token.IsCancellationRequested && IsLoggedIn && ws != null && ws.State == WebSocketState.Open)
             {
                 try
                 {
-                    if (IsStreaming)
+                    if (link.IsStreaming)
                     {
                         Rectangle bounds = GetPhysicalScreenBounds();
                         using (Bitmap rawBmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb))
@@ -1668,20 +1832,40 @@ namespace EktaDMAAgent
                                 g.CopyFromScreen(Point.Empty, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
                             }
 
-                            using (MemoryStream ms = new MemoryStream())
+                            // Online: send a smaller frame (remote input is scaled back in HandleInputEvent)
+                            link.FrameScale = link.ScaleFor(bounds.Width);
+                            Bitmap frameBmp = rawBmp;
+                            if (link.FrameScale < 1.0)
                             {
-                                rawBmp.Save(ms, jpegEncoder, encoderParams);
-                                byte[] frameBytes = ms.ToArray();
-                                await SafeSendAsync(ws, frameBytes, WebSocketMessageType.Binary, token);
-                                LastCaptureTime = DateTime.Now.ToString("hh:mm tt");
-                                TotalScreenshots++;
+                                frameBmp = new Bitmap((int)Math.Round(bounds.Width * link.FrameScale), (int)Math.Round(bounds.Height * link.FrameScale), PixelFormat.Format24bppRgb);
+                                using (Graphics g = Graphics.FromImage(frameBmp))
+                                {
+                                    g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+                                    g.DrawImage(rawBmp, 0, 0, frameBmp.Width, frameBmp.Height);
+                                }
+                            }
+
+                            try
+                            {
+                                using (MemoryStream ms = new MemoryStream())
+                                {
+                                    frameBmp.Save(ms, jpegEncoder, encoderParams);
+                                    byte[] frameBytes = ms.ToArray();
+                                    await SafeSendAsync(link, ws, frameBytes, WebSocketMessageType.Binary, token);
+                                    LastCaptureTime = DateTime.Now.ToString("hh:mm tt");
+                                    TotalScreenshots++;
+                                }
+                            }
+                            finally
+                            {
+                                if (frameBmp != rawBmp) frameBmp.Dispose();
                             }
                         }
                     }
                 }
                 catch { }
 
-                int delay = IsStreaming ? 40 : 1000;
+                int delay = link.IsStreaming ? link.FrameDelayMs : 1000;
                 await Task.Delay(delay, token);
             }
         }
@@ -1796,6 +1980,66 @@ namespace EktaDMAAgent
                 return res;
             }
             catch { return 0L; }
+        }
+    }
+
+    // ================= DMA SERVER CONNECTION =================
+    // One live connection to a DMA server (office LAN server or online server): its socket, whether
+    // an admin is watching through it, its own send lock, and how big / how often frames are sent.
+    public class ServerLink
+    {
+        public readonly string Kind;           // "LAN" | "ONLINE"
+        public readonly int MaxFrameWidth;     // 0 = full screen size
+        public readonly long JpegQuality;
+        public readonly int FrameDelayMs;
+        public readonly SemaphoreSlim SendLock = new SemaphoreSlim(1, 1);
+        public volatile ClientWebSocket Ws;
+        public volatile bool IsStreaming;
+        // Sent frame size / real screen size (remote input is scaled back by it)
+        public double FrameScale = 1.0;
+
+        public ServerLink(string kind, int maxFrameWidth, long jpegQuality, int frameDelayMs)
+        {
+            Kind = kind;
+            MaxFrameWidth = maxFrameWidth;
+            JpegQuality = jpegQuality;
+            FrameDelayMs = frameDelayMs;
+        }
+
+        public bool IsOpen
+        {
+            get
+            {
+                try
+                {
+                    ClientWebSocket ws = Ws;
+                    return ws != null && ws.State == WebSocketState.Open;
+                }
+                catch { return false; }
+            }
+        }
+
+        public double ScaleFor(int screenWidth)
+        {
+            return MaxFrameWidth > 0 && screenWidth > MaxFrameWidth ? (double)MaxFrameWidth / screenWidth : 1.0;
+        }
+
+        // Logout: close the connection (its loop sees the cancelled session and stops)
+        public void Close()
+        {
+            IsStreaming = false;
+            ClientWebSocket ws = Ws;
+            Ws = null;
+            if (ws == null) return;
+            try
+            {
+                if (ws.State == WebSocketState.Open)
+                {
+                    ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Logged out", CancellationToken.None).Wait(300);
+                }
+                ws.Dispose();
+            }
+            catch { }
         }
     }
 
@@ -2873,21 +3117,39 @@ namespace EktaDMAAgent
 
             string displayName;
             string err;
+            // 1. Office LAN server (LAN detection). A server that answered and rejected the login
+            //    (wrong password) is shown as-is, not bypassed.
             bool ok = Program.ValidateAndRegister(email, pass, "", out displayName, out err);
-
-            // No DMA server on this LAN yet (e.g. the admin PC that hosts it is not open): do NOT
-            // block. Sign in straight against EktaHR and keep looking for a server in the
-            // background - the admin sees the agent once a server is running. A server that
-            // answered and rejected the login (wrong password) is shown as-is, not bypassed.
-            bool serverless = false;
-            if (!ok && !Program.LastLoginReachedServer)
+            if (!ok && Program.LastLoginReachedServer)
             {
-                ok = Program.AuthenticateDirectWithHrms(email, pass, out displayName, out err);
-                if (ok)
+                lblLoginError.Text = err;
+                return;
+            }
+
+            // 2. Online server, from any network - the admin sees this PC wherever the employee works
+            string onlineErr;
+            bool onlineOk = Program.RegisterWithOnlineServer(email, pass, out onlineErr);
+
+            if (!ok)
+            {
+                // No office server on this network (working from home, or the admin PC is not open)
+                Program.ServerHttpUrl = "";
+                Program.ServerWsUrl = "";
+                if (onlineOk)
                 {
-                    serverless = true;
-                    Program.ServerHttpUrl = "";
-                    Program.ServerWsUrl = "";
+                    ok = true;
+                    displayName = email;
+                }
+                else if (Program.LastOnlineLoginReachedServer)
+                {
+                    lblLoginError.Text = onlineErr;
+                    return;
+                }
+                else
+                {
+                    // Neither server reachable: do NOT block. Sign in straight against EktaHR and keep
+                    // looking for a server in the background - the admin sees the agent once one is reachable.
+                    ok = Program.AuthenticateDirectWithHrms(email, pass, out displayName, out err);
                 }
             }
 
@@ -2898,7 +3160,7 @@ namespace EktaDMAAgent
             }
 
             lblLoginError.Text = "";
-            Program.StartSession(displayName, Program.ServerHttpUrl, Program.ServerWsUrl, deviceId, hostname, serverless ? email : null, serverless ? pass : null);
+            Program.StartSession(displayName, Program.ServerHttpUrl, Program.ServerWsUrl, deviceId, hostname, email, pass);
 
             SwitchToView("HOME");
             trayIcon.Text = "ektaHr Agent - Active (" + displayName + ")";

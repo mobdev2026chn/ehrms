@@ -1,6 +1,23 @@
 import React, { useState } from 'react';
 import { Lock, User, ShieldAlert, Settings, Eye, EyeOff } from 'lucide-react';
-import { getServerBaseUrl } from '../config';
+import { getServerBaseUrl, loadServerInfo } from '../config';
+
+// Office LAN server: also sign in to its online server so the admin sees employees on any network.
+// Not reachable (no internet, server down) = office LAN only; that never blocks the login.
+async function signInOnline(onlineServerUrl, body) {
+  if (!onlineServerUrl) return '';
+  try {
+    const response = await fetch(`${onlineServerUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body
+    });
+    const data = await response.json();
+    return response.ok && data.token ? data.token : '';
+  } catch (e) {
+    return '';
+  }
+}
 
 export default function LoginModal({ onLoginSuccess }) {
   const [username, setUsername] = useState('');
@@ -30,11 +47,14 @@ export default function LoginModal({ onLoginSuccess }) {
     setLoading(true);
 
     try {
+      const info = await loadServerInfo();
       const baseUrl = getServerBaseUrl();
+      const body = JSON.stringify({ username, password, forceLogout: force });
+      const onlineLogin = info.mode === 'lan' ? signInOnline(info.onlineServerUrl, body) : Promise.resolve('');
       const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password, forceLogout: force })
+        body
       });
 
       const data = await response.json();
@@ -45,7 +65,7 @@ export default function LoginModal({ onLoginSuccess }) {
         throw new Error(data.error || 'EktaHR Login failed');
       }
 
-      onLoginSuccess(data.token, data.user);
+      onLoginSuccess(data.token, data.user, await onlineLogin);
     } catch (err) {
       setError(err.message);
     } finally {

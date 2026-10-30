@@ -90,7 +90,7 @@ namespace EktaHR.AdminConsole
 
         // Version stamp of the embedded server payload. Bump it whenever the embedded zip changes
         // so the unpacked copy is refreshed on the next run.
-        private const string ServerPayloadVersion = "2026.10.05.2";
+        private const string ServerPayloadVersion = "2026.10.30.1";
 
         /// Returns the folder holding node\node.exe and server\src\index.js:
         ///  - a "dma-server" folder next to the exe, if one was shipped that way; else

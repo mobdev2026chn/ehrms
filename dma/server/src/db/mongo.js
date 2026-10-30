@@ -54,6 +54,8 @@ function registerOrUpdateDevice(deviceId, data) {
     processName: data.processName || existing.processName || '',
     keystrokes: data.keystrokes || existing.keystrokes || 0,
     mouseClicks: data.mouseClicks || existing.mouseClicks || 0,
+    // 'LAN' = the PC is on the office network (connected to an office LAN server), 'ONLINE' = elsewhere
+    network: data.network || existing.network || 'LAN',
     lastSeen: new Date(),
     previousDeviceIdToDisconnect: prevDevToDisconnect
   };

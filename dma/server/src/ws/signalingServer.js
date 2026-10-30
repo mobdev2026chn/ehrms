@@ -6,19 +6,29 @@ const path = require('path');
 const { registerOrUpdateDevice, markDeviceOffline, getDevicesList } = require('../db/mongo');
 const idleTracker = require('../db/idleTracker');
 const { allowLanUpgrade } = require('../lanGuard');
-const { IDLE_THRESHOLD_SECONDS } = require('../config');
+const { IDLE_THRESHOLD_SECONDS, IS_ONLINE } = require('../config');
+const { verifyToken, isAdminUser } = require('../controllers/authController');
 
 const agentSockets = new Map();
 const viewerSockets = new Map();
 
-async function findAgentSocketAsync(targetId) {
+// A viewer reaches only the agents of its own company (super admins reach all)
+function sameBusiness(viewerWs, agentWs) {
+  if (!viewerWs || !agentWs) return false;
+  if (viewerWs.isSuper) return true;
+  return !!viewerWs.businessId && String(agentWs.businessId || '') === viewerWs.businessId;
+}
+
+async function findAgentSocketAsync(targetId, viewerWs) {
   if (!targetId) return null;
-  if (agentSockets.has(targetId)) return agentSockets.get(targetId);
+  const candidates = [...agentSockets.entries()].filter(([, socket]) => sameBusiness(viewerWs, socket));
+  const exact = candidates.find(([id]) => id === targetId);
+  if (exact) return exact[1];
 
   const cleanTarget = targetId.toLowerCase();
 
   // 1. Direct match by deviceId, hostname, or substring
-  for (const [id, socket] of agentSockets.entries()) {
+  for (const [id, socket] of candidates) {
     const cleanId = id.toLowerCase();
     const host = (socket.hostname || '').toLowerCase();
 
@@ -42,7 +52,7 @@ async function findAgentSocketAsync(targetId) {
 
     if (targetDev && targetDev.hostname) {
       const devHost = targetDev.hostname.toLowerCase();
-      for (const [id, socket] of agentSockets.entries()) {
+      for (const [id, socket] of candidates) {
         const cleanId = id.toLowerCase();
         const host = (socket.hostname || '').toLowerCase();
         if (host === devHost || cleanId.includes(devHost)) {
@@ -52,9 +62,9 @@ async function findAgentSocketAsync(targetId) {
     }
   } catch (e) {}
 
-  // 3. Fallback: if only 1 agent socket exists, return it
-  if (agentSockets.size === 1) {
-    return agentSockets.values().next().value;
+  // 3. Fallback: if only 1 agent socket of this company exists, return it
+  if (candidates.length === 1) {
+    return candidates[0][1];
   }
 
   return null;
@@ -66,8 +76,21 @@ async function getViewerSocketsForAgentAsync(agentWs) {
 
   const agentId = (agentWs.deviceId || '').toLowerCase();
   const agentHost = (agentWs.hostname || '').toLowerCase();
+  const unresolvedGroups = [];
 
-  for (const [targetId, vSet] of viewerSockets.entries()) {
+  for (const [targetId, group] of viewerSockets.entries()) {
+    const vSet = new Set();
+    for (const vWs of group) {
+      if (!sameBusiness(vWs, agentWs)) continue;
+      // A viewer that already found its agent matches on the agent's deviceId (no lookup per frame)
+      if (vWs.agentDeviceId) {
+        if (vWs.agentDeviceId === agentWs.deviceId) matchingViewers.add(vWs);
+      } else {
+        vSet.add(vWs);
+      }
+    }
+    if (vSet.size === 0) continue;
+    unresolvedGroups.push(vSet);
     const cleanTarget = targetId.toLowerCase();
 
     if (
@@ -96,11 +119,9 @@ async function getViewerSocketsForAgentAsync(agentWs) {
     }
   }
 
-  // Fallback: If only 1 viewer group is active, route to it
-  if (matchingViewers.size === 0 && viewerSockets.size === 1) {
-    for (const vSet of viewerSockets.values()) {
-      for (const vWs of vSet) matchingViewers.add(vWs);
-    }
+  // Fallback: If only 1 viewer group of this company is waiting for its agent, route to it
+  if (matchingViewers.size === 0 && unresolvedGroups.length === 1) {
+    for (const vWs of unresolvedGroups[0]) matchingViewers.add(vWs);
   }
 
   return matchingViewers;
@@ -163,15 +184,35 @@ function disconnectOldDeviceIfLoggedElsewhere(updatedInfo) {
   }
 }
 
+// Behind the online server's reverse proxy the socket address is the proxy's; show the PC's public IP (display only)
+function agentIp(request) {
+  const forwarded = IS_ONLINE ? String(request.headers['x-forwarded-for'] || '').split(',')[0].trim() : '';
+  return (forwarded || request.socket.remoteAddress || '127.0.0.1').replace(/^::ffff:/, '');
+}
+
 function handleAgentConnection(ws, query, request) {
   const deviceId = query.deviceId || query.hostname || `AGENT-${Date.now()}`;
-  const clientIp = (request.socket.remoteAddress || '127.0.0.1').replace(/^::ffff:/, '');
+  const clientIp = agentIp(request);
+
+  // The agent's DMA token (from /api/device/register). Required on the online server, where the
+  // employee and company come from the token, never from the query string or heartbeats.
+  const auth = verifyToken(query.token);
+  if (IS_ONLINE && !auth) {
+    console.warn(`[WebSocket] Rejected agent ${deviceId} @ ${clientIp}: missing or invalid token`);
+    ws.close(4401, 'Unauthorized');
+    return;
+  }
 
   ws.deviceId = deviceId;
   ws.hostname = query.hostname || query.machineName || deviceId;
   ws.clientIp = clientIp;
   ws.connectedAt = new Date();
-  console.log(`[WebSocket] Agent connected: ${deviceId} (${ws.hostname} @ ${clientIp})`);
+  ws.authUser = auth;
+  ws.currentUser = auth ? auth.username : (query.user || query.employeeName);
+  ws.businessId = auth ? String(auth.businessId) : (query.businessId || query.orgId || query.companyId);
+  // A LAN server only sees office PCs; on the online server the agent says whether it also reached an office LAN server
+  ws.network = !IS_ONLINE || query.network === 'LAN' ? 'LAN' : 'ONLINE';
+  console.log(`[WebSocket] Agent connected: ${deviceId} (${ws.hostname} @ ${clientIp}, ${ws.network})`);
 
   if (agentSockets.has(deviceId)) {
     try {
@@ -192,8 +233,9 @@ function handleAgentConnection(ws, query, request) {
   const updatedDev = registerOrUpdateDevice(deviceId, {
     hostname: ws.hostname,
     ipAddress: clientIp,
-    currentUser: query.user || query.employeeName,
-    businessId: query.businessId || query.orgId || query.companyId,
+    currentUser: ws.currentUser,
+    businessId: ws.businessId,
+    network: ws.network,
     // A (re)connected agent is online; don't inherit OFFLINE from its last disconnect
     status: 'ONLINE'
   });
@@ -218,23 +260,27 @@ function handleAgentConnection(ws, query, request) {
         const data = JSON.parse(text);
 
         if (data.type === 'HEARTBEAT') {
+          if (!ws.authUser) {
+            if (data.currentUser) ws.currentUser = data.currentUser;
+            if (data.businessId || query.businessId) ws.businessId = data.businessId || query.businessId;
+          }
+          if (IS_ONLINE) ws.network = data.network === 'LAN' ? 'LAN' : 'ONLINE';
+
           const hbDev = registerOrUpdateDevice(deviceId, {
             hostname: data.hostname || data.machineName,
-            currentUser: data.currentUser,
-            businessId: data.businessId || query.businessId || query.orgId || query.companyId,
+            currentUser: ws.currentUser,
+            businessId: ws.businessId || query.orgId || query.companyId,
+            network: ws.network,
             status: data.status || (data.isPaused ? 'PAUSED' : 'ONLINE'),
             ipAddress: clientIp
           });
           disconnectOldDeviceIfLoggedElsewhere(hbDev);
 
-          if (data.currentUser) ws.currentUser = data.currentUser;
-          if (data.businessId || query.businessId) ws.businessId = data.businessId || query.businessId;
-
           idleTracker.trackStatus(deviceId, {
             status: data.status || (data.isPaused ? 'PAUSED' : 'ONLINE'),
             idleSeconds: data.idleSeconds,
-            currentUser: data.currentUser || query.user,
-            businessId: data.businessId || query.businessId || query.orgId || query.companyId,
+            currentUser: ws.currentUser || query.user,
+            businessId: ws.businessId || query.orgId || query.companyId,
             hostname: data.hostname || data.machineName || ws.hostname
           });
         } else if (data.type === 'RESOLUTION_INFO') {
@@ -258,9 +304,11 @@ function handleAgentConnection(ws, query, request) {
       markDeviceOffline(deviceId);
       idleTracker.closeForDevice(deviceId, 'agent_disconnected');
 
+      // Tell only the viewers watching this PC (not every company's viewers)
       for (const [vId, vSet] of viewerSockets.entries()) {
         for (const vWs of vSet) {
-          if (vWs.readyState === WebSocket.OPEN) {
+          const watching = vWs.agentDeviceId ? vWs.agentDeviceId === deviceId : vId === deviceId;
+          if (watching && sameBusiness(vWs, ws) && vWs.readyState === WebSocket.OPEN) {
             vWs.send(JSON.stringify({ type: 'AGENT_OFFLINE', deviceId }));
           }
         }
@@ -276,16 +324,27 @@ async function handleViewerConnection(ws, query, request) {
     return;
   }
 
-  console.log(`[WebSocket] Admin Viewer connected to device: ${targetDeviceId}`);
+  // Admin Console token (?token=): company admins only, and only their own company's PCs
+  const viewer = verifyToken(query.token);
+  if (!isAdminUser(viewer)) {
+    console.warn(`[WebSocket] Rejected viewer for ${targetDeviceId}: missing or invalid admin token`);
+    ws.close(4401, 'Unauthorized');
+    return;
+  }
+  ws.businessId = String(viewer.businessId);
+  ws.isSuper = viewer.role === 'SUPER_ADMIN';
+
+  console.log(`[WebSocket] Admin Viewer ${viewer.username} connected to device: ${targetDeviceId}`);
 
   if (!viewerSockets.has(targetDeviceId)) {
     viewerSockets.set(targetDeviceId, new Set());
   }
   viewerSockets.get(targetDeviceId).add(ws);
 
-  const agentWs = await findAgentSocketAsync(targetDeviceId);
+  const agentWs = await findAgentSocketAsync(targetDeviceId, ws);
 
   if (agentWs && agentWs.readyState === WebSocket.OPEN) {
+    ws.agentDeviceId = agentWs.deviceId;
     console.log(`[WebSocket] Sending START_STREAM to agent ${agentWs.hostname || targetDeviceId}`);
     agentWs.send(JSON.stringify({ type: 'START_STREAM', quality: 'high' }));
   } else {
@@ -295,7 +354,8 @@ async function handleViewerConnection(ws, query, request) {
   ws.on('message', async (message) => {
     try {
       const text = message.toString();
-      const liveAgentWs = await findAgentSocketAsync(targetDeviceId);
+      const resolved = ws.agentDeviceId && agentSockets.get(ws.agentDeviceId);
+      const liveAgentWs = resolved && sameBusiness(ws, resolved) ? resolved : await findAgentSocketAsync(targetDeviceId, ws);
       if (liveAgentWs && liveAgentWs.readyState === WebSocket.OPEN) {
         liveAgentWs.send(text);
       }
@@ -311,7 +371,7 @@ async function handleViewerConnection(ws, query, request) {
       viewers.delete(ws);
       if (viewers.size === 0) {
         viewerSockets.delete(targetDeviceId);
-        const liveAgentWs = await findAgentSocketAsync(targetDeviceId);
+        const liveAgentWs = await findAgentSocketAsync(targetDeviceId, ws);
         if (liveAgentWs && liveAgentWs.readyState === WebSocket.OPEN) {
           liveAgentWs.send(JSON.stringify({ type: 'STOP_STREAM' }));
         }
@@ -320,12 +380,12 @@ async function handleViewerConnection(ws, query, request) {
   });
 }
 
-// Agents with an open WebSocket right now: deviceId -> { hostname, ipAddress, connectedAt }
+// Agents with an open WebSocket right now: deviceId -> { hostname, ipAddress, connectedAt, network }
 function getConnectedAgents() {
   const connected = new Map();
   for (const [id, socket] of agentSockets.entries()) {
     if (socket.readyState === WebSocket.OPEN) {
-      connected.set(id, { hostname: socket.hostname, ipAddress: socket.clientIp, connectedAt: socket.connectedAt });
+      connected.set(id, { hostname: socket.hostname, ipAddress: socket.clientIp, connectedAt: socket.connectedAt, network: socket.network });
     }
   }
   return connected;

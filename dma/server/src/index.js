@@ -6,13 +6,21 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const { connectMongo } = require('./db/mongo');
-const { login, logout, verifyTokenMiddleware, requireAdminRole } = require('./controllers/authController');
+const { login, logout, verifyTokenMiddleware, requireAdminRole, agentAuthMiddleware } = require('./controllers/authController');
 const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreenshotFile, downloadAgent } = require('./controllers/deviceController');
 const { startRetentionJob, STORAGE_DIR } = require('./storage/fileStore');
 const { getActivitySummary, getEmployeeActivity } = require('./controllers/activityController');
 const { getAlerts } = require('./alerts');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
+const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL } = require('./config');
+
+// The online server is reachable from the internet: tokens signed with the public fallback secret
+// could be forged by anyone, so it refuses to start without its own JWT_SECRET.
+if (IS_ONLINE && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'AEvaHRMS@123')) {
+  console.error('[Config] DMA_MODE=online needs its own JWT_SECRET in .env (a long random value, not the default). Server not started.');
+  process.exit(1);
+}
 
 // Connect to EktaHR MongoDB
 connectMongo();
@@ -35,6 +43,9 @@ app.post('/api/v1/auth/logout', verifyTokenMiddleware, logout);
 app.get('/api/v1/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
 app.get('/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
 app.get('/api/health', (req, res) => res.json({ status: 'OK', ok: true, message: 'EktaDMA Server Active' }));
+// Tells the Admin Console whether this is an office LAN server or the online server, and (on a LAN
+// server) which online server to also sign in to for employees on other networks
+app.get('/api/v1/server-info', (req, res) => res.json({ success: true, mode: DMA_MODE, onlineServerUrl: ONLINE_SERVER_URL }));
 app.get('/api/v1/download/agent', downloadAgent);
 app.get('/download/agent', downloadAgent);
 
@@ -80,8 +91,8 @@ const fs = require('fs');
 const path = require('path');
 
 // Screenshot API
-app.post('/api/v1/device/screenshot', postScreenshot);
-app.post('/api/device/screenshot', postScreenshot);
+app.post('/api/v1/device/screenshot', agentAuthMiddleware, postScreenshot);
+app.post('/api/device/screenshot', agentAuthMiddleware, postScreenshot);
 app.get('/api/v1/devices/:deviceId/screenshots', verifyTokenMiddleware, requireAdminRole, getScreenshots);
 app.get('/api/devices/:deviceId/screenshots', verifyTokenMiddleware, requireAdminRole, getScreenshots);
 // Screenshot image files live on disk; <img> tags can't send headers, so ?token= is accepted here
@@ -117,13 +128,17 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`[EktaDMA Server] Running on http://0.0.0.0:${PORT}`);
   console.log(`[WebSocket] Listening on ws://0.0.0.0:${PORT}/agent & /viewer`);
   console.log(`[LAN Guard] ${LAN_ONLY ? 'LAN-only mode ON (public IPs are rejected)' : 'LAN-only mode OFF'}`);
+  console.log(IS_ONLINE
+    ? '[Mode] ONLINE server: employees on any network, agent & viewer tokens required'
+    : `[Mode] Office LAN server${ONLINE_SERVER_URL ? ` (Admin Console also shows online employees from ${ONLINE_SERVER_URL})` : ''}`);
   console.log(`=======================================================`);
 });
 
 
 
-// Zero-Conf UDP LAN Server Beacon for Instant Auto-Discovery
-try {
+// Zero-Conf UDP LAN Server Beacon for Instant Auto-Discovery (office LAN servers only — agents
+// must never mistake the online server for the office one)
+if (!IS_ONLINE) try {
   const dgram = require('dgram');
   const udpServer = dgram.createSocket('udp4');
 

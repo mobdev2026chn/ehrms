@@ -1,38 +1,72 @@
 import React, { useState, useEffect } from 'react';
-import { Monitor, Eye, MousePointer, User, Wifi, RefreshCw, LayoutGrid, List, Search, Camera, X, Download } from 'lucide-react';
-import { getServerBaseUrl } from '../config';
+import { Monitor, Eye, MousePointer, User, Wifi, Globe, RefreshCw, LayoutGrid, List, Search, Camera, X, Download } from 'lucide-react';
+import { getServerBaseUrl, getDataServer } from '../config';
 import { IdleBadge } from './ActivityReport';
 
 
 // Screenshots are JPEG files on the DMA server; <img> can't send headers, so the admin token rides in the URL
 const screenshotSrc = (ss) => {
   if (ss.imageUrl) {
-    const token = localStorage.getItem('ektahr_token') || '';
-    return `${getServerBaseUrl()}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
+    const { baseUrl, token } = getDataServer();
+    return `${baseUrl}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
   }
   return ss.imageBase64 || ss.secureUrl;
 };
 
-const ConnectedBadge = () => (
-  <span style={{
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '4px',
-    padding: '1px 8px',
-    borderRadius: '10px',
-    fontSize: '0.68rem',
-    fontWeight: 700,
-    color: '#047857',
-    background: '#ecfdf5',
-    border: '1px solid #a7f3d0',
-    marginLeft: '8px',
-    verticalAlign: 'middle'
-  }}>
-    <Wifi size={11} /> CONNECTED
-  </span>
-);
+// How a connected PC is reached: LAN = office network, ONLINE = any other network (via the online server)
+const NetworkBadge = ({ network }) => {
+  const isLan = network === 'LAN';
+  return (
+    <span
+      title={isLan ? 'Connected on the office LAN' : 'Connected from outside the office, through the online server'}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px',
+        padding: '1px 8px',
+        borderRadius: '10px',
+        fontSize: '0.68rem',
+        fontWeight: 700,
+        color: isLan ? '#047857' : '#1d4ed8',
+        background: isLan ? '#ecfdf5' : '#eff6ff',
+        border: `1px solid ${isLan ? '#a7f3d0' : '#bfdbfe'}`,
+        marginLeft: '8px',
+        verticalAlign: 'middle'
+      }}
+    >
+      {isLan ? <Wifi size={11} /> : <Globe size={11} />} {isLan ? 'LAN' : 'ONLINE'}
+    </span>
+  );
+};
 
-export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAllStaff = false, onToggleShowAll, scanning = false }) {
+const NETWORK_FILTERS = [
+  { key: 'ALL', label: 'All' },
+  { key: 'LAN', label: 'LAN' },
+  { key: 'ONLINE', label: 'Online' }
+];
+
+const FILTER_TEXT = {
+  ALL: {
+    title: 'All Connected Systems',
+    hint: 'Employees logged in to the EktaHR agent on any network — office LAN and online',
+    empty: 'No systems connected yet.'
+  },
+  LAN: {
+    title: 'Connected LAN Systems',
+    hint: 'PCs on the office network where an employee is logged in via the EktaHR agent',
+    empty: 'No LAN systems connected yet.'
+  },
+  ONLINE: {
+    title: 'Online Systems',
+    hint: 'Employees logged in from outside the office (home, other networks)',
+    empty: 'No employees connected from outside the office.'
+  }
+};
+
+export default function DeviceGrid({
+  devices, onRefresh, onSelectDevice, showAllStaff = false, onToggleShowAll, scanning = false,
+  networkFilter = 'ALL', onNetworkFilterChange, networkCounts
+}) {
   const [viewMode, setViewMode] = useState('LIST');
   const [searchTerm, setSearchTerm] = useState('');
   const [activeScreenshotDevice, setActiveScreenshotDevice] = useState(null);
@@ -44,8 +78,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
     if (activeScreenshotDevice) {
       setLoadingSs(true);
       const devId = activeScreenshotDevice.deviceId;
-      const baseUrl = getServerBaseUrl();
-      const token = localStorage.getItem('ektahr_token') || '';
+      const { baseUrl, token } = getDataServer();
       fetch(`${baseUrl}/api/v1/devices/${encodeURIComponent(devId)}/screenshots`, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -128,17 +161,47 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px', marginBottom: '24px' }}>
         <div>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.01em' }}>
-            {showAllStaff ? `All Staff Devices (${devices.length})` : `Connected LAN Systems (${devices.length})`}
+            {showAllStaff && networkFilter === 'ALL' ? `All Staff Devices (${devices.length})` : `${FILTER_TEXT[networkFilter].title} (${devices.length})`}
           </h2>
           <p style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '2px' }}>
-            {showAllStaff
+            {showAllStaff && networkFilter === 'ALL'
               ? 'Connected PCs first, then staff without a live agent'
-              : 'PCs on this LAN where an employee is logged in via the EktaHR agent — auto-scanned every few seconds'}
+              : `${FILTER_TEXT[networkFilter].hint} — auto-scanned every few seconds`}
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {onToggleShowAll && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {/* All | LAN | Online */}
+          {onNetworkFilterChange && (
+            <div style={{ display: 'flex', background: '#f1f5f9', padding: '3px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              {NETWORK_FILTERS.map(f => (
+                <button
+                  key={f.key}
+                  onClick={() => onNetworkFilterChange(f.key)}
+                  title={FILTER_TEXT[f.key].hint}
+                  style={{
+                    background: networkFilter === f.key ? '#ffffff' : 'transparent',
+                    color: networkFilter === f.key ? '#d97706' : '#64748b',
+                    border: 'none',
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontWeight: 600,
+                    fontSize: '0.8rem',
+                    boxShadow: networkFilter === f.key ? '0 1px 3px rgba(0,0,0,0.1)' : 'none'
+                  }}
+                >
+                  {f.key === 'LAN' ? <Wifi size={14} /> : f.key === 'ONLINE' ? <Globe size={14} /> : <Monitor size={14} />}
+                  <span>{f.label}{networkCounts ? ` (${networkCounts[f.key]})` : ''}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {onToggleShowAll && networkFilter === 'ALL' && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: '#475569', fontWeight: 600, cursor: 'pointer', userSelect: 'none' }}>
               <input type="checkbox" checked={showAllStaff} onChange={onToggleShowAll} />
               Show all staff
@@ -247,16 +310,16 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
           {scanning ? (
             <>
               <RefreshCw size={40} className="spin" style={{ opacity: 0.5, marginBottom: '12px' }} />
-              <p style={{ fontSize: '1.1rem', fontWeight: 500 }}>Scanning local network for logged-in agents…</p>
+              <p style={{ fontSize: '1.1rem', fontWeight: 500 }}>Scanning for logged-in agents…</p>
             </>
           ) : (
             <>
               <Monitor size={48} style={{ opacity: 0.4, marginBottom: '12px' }} />
               <p style={{ fontSize: '1.1rem', fontWeight: 500 }}>
-                {searchTerm ? 'No matching EktaHR devices found.' : 'No LAN systems connected yet.'}
+                {searchTerm ? 'No matching EktaHR devices found.' : FILTER_TEXT[networkFilter].empty}
               </p>
               <span style={{ fontSize: '0.85rem', color: '#94a3b8' }}>
-                PCs appear here automatically once an employee logs in to EktaHR-Agent.exe on this office network.
+                PCs appear here automatically once an employee logs in to EktaHR-Agent.exe, on the office network or anywhere else.
               </span>
             </>
           )}
@@ -310,7 +373,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
                         <div>
                           <div style={{ fontWeight: 700, color: '#0f172a', fontSize: '0.95rem' }}>
                             {device.hostname || device.deviceId}
-                            {device.connected && <ConnectedBadge />}
+                            {device.connected && <NetworkBadge network={device.network} />}
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#64748b', fontSize: '0.8rem', marginTop: '2px' }}>
                             <User size={13} color="#94a3b8" />
@@ -454,7 +517,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
                       <div>
                         <h4 style={{ fontSize: '1.05rem', fontWeight: 700, color: '#0f172a' }}>
                           {device.hostname || device.deviceId}
-                          {device.connected && <ConnectedBadge />}
+                          {device.connected && <NetworkBadge network={device.network} />}
                         </h4>
                         <span style={{ fontSize: '0.75rem', color: isConnectable ? '#d97706' : '#64748b', fontWeight: 600 }}>
                           {device.ipAddress}
@@ -487,7 +550,7 @@ export default function DeviceGrid({ devices, onRefresh, onSelectDevice, showAll
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <Wifi size={15} color="#64748b" />
-                      <span>LAN IP: <strong style={{ color: '#0f172a', fontWeight: 500 }}>{device.ipAddress}</strong></span>
+                      <span>{device.network === 'LAN' ? 'LAN IP' : 'IP'}: <strong style={{ color: '#0f172a', fontWeight: 500 }}>{device.ipAddress}</strong></span>
                     </div>
                   </div>
                 </div>

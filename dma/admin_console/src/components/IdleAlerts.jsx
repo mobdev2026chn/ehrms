@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bell, Coffee, CheckCircle2, X, Eye } from 'lucide-react';
-import { getServerBaseUrl } from '../config';
 
 const POLL_MS = 4000;
 const TOAST_MS = 10000;
@@ -40,9 +39,9 @@ function alertText(a, name) {
   return { title: `${name} is back`, body: `Active again after ${formatDuration(a.durationSec)} idle on ${a.hostname}` };
 }
 
-// Polls /api/v1/alerts and shows idle alerts as toasts, desktop notifications and a bell history.
+// Polls {baseUrl}/api/v1/alerts and shows idle alerts as toasts, desktop notifications and a bell history.
 // nameFor(email) -> display name; onView(alert) opens the live screen when the PC is connected.
-export default function IdleAlerts({ token, nameFor, canView, onView }) {
+export default function IdleAlerts({ baseUrl, token, nameFor, canView, onView }) {
   const [history, setHistory] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [unread, setUnread] = useState(0);
@@ -58,13 +57,15 @@ export default function IdleAlerts({ token, nameFor, canView, onView }) {
   }, []);
 
   useEffect(() => {
-    if (!token) return undefined;
+    if (!token || !baseUrl) return undefined;
     let cancelled = false;
+    // A different alerts server (office LAN <-> online) has its own alert ids: start over
+    lastIdRef.current = null;
 
     const poll = async () => {
       try {
         const since = lastIdRef.current === null ? -1 : lastIdRef.current;
-        const res = await fetch(`${getServerBaseUrl()}/api/v1/alerts?since=${since}`, {
+        const res = await fetch(`${baseUrl}/api/v1/alerts?since=${since}`, {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (!res.ok) return;
@@ -95,7 +96,7 @@ export default function IdleAlerts({ token, nameFor, canView, onView }) {
     poll();
     const interval = setInterval(poll, POLL_MS);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [token]);
+  }, [baseUrl, token]);
 
   // Auto-dismiss toasts
   useEffect(() => {

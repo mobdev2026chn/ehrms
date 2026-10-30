@@ -6,7 +6,10 @@ import ActivityReport from './components/ActivityReport';
 import IdleAlerts from './components/IdleAlerts';
 import { LogOut, Monitor, Activity, Wifi, RefreshCw, CalendarDays } from 'lucide-react';
 
-import { getServerBaseUrl } from './config';
+import {
+  loadServerInfo, isOnlineOrigin, hasSeparateOnlineServer,
+  getOnlineToken, setOnlineToken, routeServer, getDataServer
+} from './config';
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('ektahr_token') || '');
@@ -18,20 +21,28 @@ export default function App() {
     }
   });
 
+  const [onlineToken, setOnlineTokenState] = useState(() => getOnlineToken());
   const [devices, setDevices] = useState([]);
-  const [lanAgents, setLanAgents] = useState([]);
+  // Connected PCs with an employee logged in: office LAN + any network, one entry per PC.
+  // network: 'LAN' (office network) | 'ONLINE' (elsewhere); route: server its live view runs through
+  const [agents, setAgents] = useState([]);
   const [lanScan, setLanScan] = useState({ state: 'scanning', at: null });
+  // 'online' (page served by the online server) | 'connected' | 'unreachable' | 'off' (LAN-only server)
+  const [onlineState, setOnlineState] = useState(() => isOnlineOrigin() ? 'online' : 'off');
+  const [networkFilter, setNetworkFilter] = useState('ALL');
   const [showAllStaff, setShowAllStaff] = useState(false);
   const [activeTab, setActiveTab] = useState('LIVE');
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [sessionMode, setSessionMode] = useState('VIEW_ONLY');
 
+  const dataServer = getDataServer();
+
   const fetchDevices = async () => {
     try {
-      const baseUrl = getServerBaseUrl();
+      const { baseUrl, token: dataToken } = getDataServer();
       const response = await fetch(`${baseUrl}/api/v1/devices/list`, {
         headers: {
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${dataToken}`
         }
       });
       const data = await response.json();
@@ -44,46 +55,75 @@ export default function App() {
     }
   };
 
-  // LAN scan: PCs whose agent is connected to this LAN server with an employee logged in
-  const scanLanAgents = async () => {
-    try {
-      const baseUrl = getServerBaseUrl();
-      const response = await fetch(`${baseUrl}/api/v1/lan/agents`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      if (response.status === 401) {
-        handleLogout();
-        return;
+  // Connected PCs (with an employee logged in) on one server: 'LAN' = this office server, 'ONLINE' = online server
+  const fetchConnected = async (route) => {
+    const { baseUrl, token: routeToken } = routeServer(route);
+    const response = await fetch(`${baseUrl}/api/v1/lan/agents`, {
+      headers: {
+        'Authorization': `Bearer ${routeToken}`
       }
-      const data = await response.json();
-      if (data.success && Array.isArray(data.agents)) {
-        setLanAgents(data.agents);
-        setLanScan({ state: 'done', at: new Date() });
-      } else {
-        setLanScan(prev => ({ ...prev, state: 'error' }));
-      }
-    } catch (e) {
-      console.error('LAN scan failed:', e);
-      setLanScan(prev => ({ ...prev, state: 'error' }));
+    });
+    if (response.status === 401) return { unauthorized: true };
+    const data = await response.json();
+    return data.success && Array.isArray(data.agents) ? { agents: data.agents } : { error: true };
+  };
+
+  // Scan: office PCs from this LAN server + employees on any network from the online server
+  const scanAgents = async () => {
+    const onlinePage = isOnlineOrigin();
+    const withOnline = hasSeparateOnlineServer() && !!getOnlineToken();
+    const failed = (e) => { console.error('Device scan failed:', e); return { error: true }; };
+    const [local, remote] = await Promise.all([
+      fetchConnected(onlinePage ? 'ONLINE' : 'LAN').catch(failed),
+      withOnline ? fetchConnected('ONLINE').catch(failed) : Promise.resolve(null)
+    ]);
+    if (local.unauthorized) {
+      handleLogout();
+      return;
     }
+    if (remote && remote.unauthorized) {
+      // Online session expired: keep showing the office LAN
+      setOnlineToken('');
+      setOnlineTokenState('');
+    }
+    setOnlineState(onlinePage ? 'online' : !hasSeparateOnlineServer() ? 'off' : remote && remote.agents ? 'connected' : 'unreachable');
+
+    if (!local.agents && !(remote && remote.agents)) {
+      setLanScan(prev => ({ ...prev, state: 'error' }));
+      return;
+    }
+
+    const merged = new Map();
+    for (const a of local.agents || []) {
+      merged.set(a.deviceId, onlinePage
+        ? { ...a, network: a.network === 'LAN' ? 'LAN' : 'ONLINE', route: 'ONLINE' }
+        : { ...a, network: 'LAN', route: 'LAN' });
+    }
+    // An office PC is on both servers: its LAN entry wins (live view stays on the office network)
+    for (const a of (remote && remote.agents) || []) {
+      if (!merged.has(a.deviceId)) {
+        merged.set(a.deviceId, { ...a, network: a.network === 'LAN' ? 'LAN' : 'ONLINE', route: 'ONLINE' });
+      }
+    }
+    setAgents([...merged.values()]);
+    setLanScan({ state: 'done', at: new Date() });
   };
 
   const refreshAll = () => {
-    scanLanAgents();
+    scanAgents();
     if (showAllStaff) fetchDevices();
   };
 
-  // Scan the LAN automatically as soon as the admin logs in, then keep it live
+  // Scan automatically as soon as the admin logs in, then keep it live
   useEffect(() => {
     if (token) {
       setLanScan({ state: 'scanning', at: null });
-      scanLanAgents();
-      const interval = setInterval(scanLanAgents, 4000);
+      // Refresh which servers this console talks to (the office server may have gained an online server)
+      loadServerInfo().finally(scanAgents);
+      const interval = setInterval(scanAgents, 4000);
       return () => clearInterval(interval);
     }
-  }, [token]);
+  }, [token, onlineToken]);
 
   useEffect(() => {
     if (token && showAllStaff) {
@@ -91,21 +131,32 @@ export default function App() {
       const interval = setInterval(fetchDevices, 4000);
       return () => clearInterval(interval);
     }
-  }, [token, showAllStaff]);
+  }, [token, onlineToken, showAllStaff]);
 
-  const connectedIds = new Set(lanAgents.map(a => a.deviceId));
-  const visibleDevices = showAllStaff
+  const networkCounts = {
+    ALL: agents.length,
+    LAN: agents.filter(a => a.network === 'LAN').length,
+    ONLINE: agents.filter(a => a.network !== 'LAN').length
+  };
+  const filteredAgents = networkFilter === 'ALL'
+    ? agents
+    : agents.filter(a => (a.network === 'LAN') === (networkFilter === 'LAN'));
+  const connectedIds = new Set(agents.map(a => a.deviceId));
+  // Offline staff have no network, so they are listed under "All" only
+  const visibleDevices = showAllStaff && networkFilter === 'ALL'
     ? [
-        ...lanAgents,
+        ...filteredAgents,
         ...devices.filter(d => !connectedIds.has(d.deviceId))
       ]
-    : lanAgents;
+    : filteredAgents;
 
-  const handleLoginSuccess = (newToken, userData) => {
+  const handleLoginSuccess = (newToken, userData, newOnlineToken = '') => {
     setToken(newToken);
     setUser(userData);
     localStorage.setItem('ektahr_token', newToken);
     localStorage.setItem('ektahr_user', JSON.stringify(userData));
+    setOnlineToken(newOnlineToken);
+    setOnlineTokenState(newOnlineToken);
   };
 
   const handleLogout = () => {
@@ -113,13 +164,22 @@ export default function App() {
     setUser(null);
     localStorage.removeItem('ektahr_token');
     localStorage.removeItem('ektahr_user');
+    setOnlineToken('');
+    setOnlineTokenState('');
+    setAgents([]);
   };
 
   if (!token) {
     return <LoginModal onLoginSuccess={handleLoginSuccess} />;
   }
 
-  const connectedCount = lanAgents.length;
+  const connectedCount = agents.length;
+  const networkMode = {
+    online: { title: 'Online', note: 'Employees on any network — office PCs are marked LAN' },
+    connected: { title: 'Office LAN + Online', note: 'Office PCs and employees on other networks' },
+    unreachable: { title: 'Office LAN', note: onlineToken ? 'Online server not reachable — showing office PCs only' : 'Not signed in to the online server — log in again to include remote employees' },
+    off: { title: 'Office LAN', note: 'This server shows office PCs only' }
+  }[onlineState];
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#f8fafc' }}>
@@ -168,14 +228,15 @@ export default function App() {
         {/* User Badge & Logout */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '18px' }}>
           <IdleAlerts
-            token={token}
+            baseUrl={dataServer.baseUrl}
+            token={dataServer.token}
             nameFor={(email) => {
-              const match = [...lanAgents, ...devices].find(d => (d.currentUser || '').toLowerCase() === email);
+              const match = [...agents, ...devices].find(d => (d.currentUser || '').toLowerCase() === email);
               return (match && match.fullName) || email;
             }}
-            canView={(a) => lanAgents.some(d => d.deviceId === a.deviceId)}
+            canView={(a) => agents.some(d => d.deviceId === a.deviceId)}
             onView={(a) => {
-              const agent = lanAgents.find(d => d.deviceId === a.deviceId);
+              const agent = agents.find(d => d.deviceId === a.deviceId);
               if (agent) {
                 setSelectedDevice(agent);
                 setSessionMode('VIEW_ONLY');
@@ -208,10 +269,15 @@ export default function App() {
               <Activity size={26} />
             </div>
             <div>
-              <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>Connected LAN Systems</span>
+              <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>Connected Systems</span>
               <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#059669' }}>
                 {lanScan.state === 'scanning' ? 'Scanning…' : `${connectedCount} Connected`}
               </h3>
+              {lanScan.state !== 'scanning' && (
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                  LAN {networkCounts.LAN} · Online {networkCounts.ONLINE}
+                </span>
+              )}
             </div>
           </div>
 
@@ -221,11 +287,14 @@ export default function App() {
             </div>
             <div>
               <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 500 }}>Network Mode</span>
-              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#d97706' }}>Office LAN</h3>
+              <h3 style={{ fontSize: '1.6rem', fontWeight: 700, color: '#d97706' }}>{networkMode.title}</h3>
+              <span style={{ display: 'block', fontSize: '0.75rem', color: onlineState === 'unreachable' ? '#b45309' : '#94a3b8' }}>
+                {networkMode.note}
+              </span>
               <span style={{ fontSize: '0.75rem', color: lanScan.state === 'error' ? '#dc2626' : '#94a3b8' }}>
                 {lanScan.state === 'error'
-                  ? 'LAN scan failed — retrying…'
-                  : lanScan.at ? `Auto-scanned ${lanScan.at.toLocaleTimeString()}` : 'Scanning local network…'}
+                  ? 'Scan failed — retrying…'
+                  : lanScan.at ? `Auto-scanned ${lanScan.at.toLocaleTimeString()}` : 'Scanning…'}
               </span>
             </div>
           </div>
@@ -270,6 +339,9 @@ export default function App() {
           onRefresh={refreshAll}
           showAllStaff={showAllStaff}
           onToggleShowAll={() => setShowAllStaff(v => !v)}
+          networkFilter={networkFilter}
+          onNetworkFilterChange={setNetworkFilter}
+          networkCounts={networkCounts}
           scanning={lanScan.state === 'scanning'}
           onSelectDevice={(device, mode) => {
             setSelectedDevice(device);

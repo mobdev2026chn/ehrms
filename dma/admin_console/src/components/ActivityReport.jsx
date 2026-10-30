@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Clock, Camera, Search, X, ArrowLeft, User, Coffee, RefreshCw } from 'lucide-react';
-import { getServerBaseUrl } from '../config';
+import { getDataServer } from '../config';
 
 const OFFICE_TZ = 'Asia/Kolkata';
 
@@ -42,8 +42,8 @@ const END_REASON_LABEL = {
 
 // Screenshots are JPEG files on the DMA server; <img> can't send headers, so the admin token rides in the URL
 const screenshotSrc = (ss) => {
-  const token = localStorage.getItem('ektahr_token') || '';
-  return `${getServerBaseUrl()}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
+  const { baseUrl, token } = getDataServer();
+  return `${baseUrl}${ss.imageUrl}?token=${encodeURIComponent(token)}`;
 };
 
 // Red/amber badge on screenshots taken while the employee was idle (isIdle is set by the server from its central idle setting)
@@ -63,8 +63,8 @@ export function IdleBadge({ ss, style }) {
 }
 
 async function apiGet(path) {
-  const token = localStorage.getItem('ektahr_token') || '';
-  const res = await fetch(`${getServerBaseUrl()}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+  const { baseUrl, token } = getDataServer();
+  const res = await fetch(`${baseUrl}${path}`, { headers: { Authorization: `Bearer ${token}` } });
   const data = await res.json();
   if (!res.ok || !data.success) throw new Error(data.error || 'Request failed');
   return data;

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const { IDLE_THRESHOLD_SECONDS } = require('../config');
+const { IDLE_THRESHOLD_SECONDS, IS_ONLINE } = require('../config');
 const { liveDevices } = require('../db/mongo');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'AEvaHRMS@123';
@@ -21,6 +21,11 @@ const ROLE_MAP = {
   staff: 'STAFF'
 };
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
+
+// Exact, case-insensitive match on login input (regex characters in it are taken literally)
+function exactRegex(value) {
+  return new RegExp(`^${value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+}
 
 function postJson(urlStr, payloadData) {
   return new Promise((resolve) => {
@@ -74,18 +79,19 @@ async function authenticateWithMongo(cleanUsername, password) {
     const adminsCol = targetDb.collection('admins');
     const adminDoc = await adminsCol.findOne({
       $or: [
-        { email: new RegExp(`^${cleanUsername}$`, 'i') },
-        { companyAdmin: new RegExp(`^${cleanUsername}$`, 'i') }
+        { email: exactRegex(cleanUsername) },
+        { companyAdmin: exactRegex(cleanUsername) }
       ]
     });
 
     if (adminDoc && adminDoc.password) {
       let isMatch = false;
+      // bcrypt only: a plain-text compare would let the stored hash itself be used as the password.
+      // Accounts the database can't verify fall through to the EktaHR backend login.
       try { isMatch = bcrypt.compareSync(password, adminDoc.password); } catch (e) {}
-      if (!isMatch && adminDoc.password === password) isMatch = true;
 
       if (isMatch) {
-        const isSuper = adminDoc.role === 'superAdmin' || cleanUsername.includes('super');
+        const isSuper = adminDoc.role === 'superAdmin';
         return {
           ok: true,
           user: {
@@ -103,13 +109,12 @@ async function authenticateWithMongo(cleanUsername, password) {
     // 2. Check 'staffs' collection (Employees / Agents)
     const staffCol = targetDb.collection('staffs');
     const staffDoc = await staffCol.findOne({
-      email: new RegExp(`^${cleanUsername}$`, 'i')
+      email: exactRegex(cleanUsername)
     });
 
     if (staffDoc && staffDoc.password) {
       let isMatch = false;
       try { isMatch = bcrypt.compareSync(password, staffDoc.password); } catch (e) {}
-      if (!isMatch && staffDoc.password === password) isMatch = true;
 
       if (isMatch) {
         const fullName = `${staffDoc.firstName || ''} ${staffDoc.lastName || ''}`.trim() || staffDoc.name || staffDoc.email;
@@ -133,15 +138,14 @@ async function authenticateWithMongo(cleanUsername, password) {
     const usersCol = targetDb.collection('users');
     const userDoc = await usersCol.findOne({
       $or: [
-        { email: new RegExp(`^${cleanUsername}$`, 'i') },
-        { username: new RegExp(`^${cleanUsername}$`, 'i') }
+        { email: exactRegex(cleanUsername) },
+        { username: exactRegex(cleanUsername) }
       ]
     });
 
     if (userDoc && userDoc.password) {
       let isMatch = false;
       try { isMatch = bcrypt.compareSync(password, userDoc.password); } catch (e) {}
-      if (!isMatch && userDoc.password === password) isMatch = true;
 
       if (isMatch) {
         const roleStr = String(userDoc.role || '').toUpperCase();
@@ -264,7 +268,8 @@ async function login(req, res) {
     // If login is from DIFFERENT system with SAME user -> BLOCK IT!
     // If login is from SAME system or Localhost -> ALLOW IT & REFRESH THE SESSION!
     const clientIp = (req.socket.remoteAddress || '').replace('::ffff:', '');
-    const isLocalMachine = clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost';
+    // Behind the online server's reverse proxy every request comes from 127.0.0.1, so none counts as local
+    const isLocalMachine = !IS_ONLINE && (clientIp === '127.0.0.1' || clientIp === '::1' || clientIp === 'localhost');
 
     let activeDevHost = null;
     if (isAgentLogin && !isLocalMachine && liveDevices && reqDeviceId) {
@@ -375,4 +380,27 @@ function requireAdminRole(req, res, next) {
   return res.status(403).json({ error: 'Admin access required.' });
 }
 
-module.exports = { login, logout, verifyTokenMiddleware, requireAdminRole, JWT_SECRET };
+// Decoded DMA token, or null when missing / invalid / expired (WebSocket connections)
+function verifyToken(token) {
+  if (!token) return null;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    if (!decoded.businessId) decoded.businessId = decoded.userId || decoded.username;
+    return decoded;
+  } catch (err) {
+    return null;
+  }
+}
+
+function isAdminUser(user) {
+  return !!user && ADMIN_ROLES.includes(user.role);
+}
+
+// Agent uploads (screenshots): the online server requires the agent's DMA token; a LAN server
+// still accepts older agents that send none. A token that is sent must be valid.
+function agentAuthMiddleware(req, res, next) {
+  if (!req.headers.authorization && !IS_ONLINE) return next();
+  return verifyTokenMiddleware(req, res, next);
+}
+
+module.exports = { login, logout, verifyTokenMiddleware, requireAdminRole, agentAuthMiddleware, verifyToken, isAdminUser, JWT_SECRET };

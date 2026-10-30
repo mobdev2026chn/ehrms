@@ -1,11 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X, Eye, MousePointer, Maximize2, ShieldAlert, Scaling } from 'lucide-react';
-import { getServerWsUrl } from '../config';
+import { routeServer } from '../config';
 
 export default function RemoteViewer({ device, initialMode, onClose }) {
   const [controlMode, setControlMode] = useState(initialMode); // 'VIEW_ONLY' or 'REMOTE_CONTROL'
   const [fitMode, setFitMode] = useState('CONTAIN'); // 'CONTAIN' (Full Complete PC View) or 'FILL' (Stretch Width)
-  const [status, setStatus] = useState('Connecting to LAN Stream...');
+  const [status, setStatus] = useState(device.route === 'ONLINE' ? 'Connecting to Online Stream...' : 'Connecting to LAN Stream...');
   const [resolution, setResolution] = useState({ width: 1920, height: 1080 });
   const [error, setError] = useState('');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -16,9 +16,11 @@ export default function RemoteViewer({ device, initialMode, onClose }) {
   const lastMoveTimeRef = useRef(0);
 
   useEffect(() => {
-    const baseWsUrl = getServerWsUrl();
-    const wsUrl = `${baseWsUrl}/viewer?targetDeviceId=${encodeURIComponent(device.deviceId)}`;
-    console.log(`[Viewer] Connecting to WebSocket: ${wsUrl}`);
+    // Office PCs stream through the office LAN server, everyone else through the online server.
+    // The admin token proves which company's PCs this viewer may watch.
+    const { wsUrl: baseWsUrl, token } = routeServer(device.route);
+    const wsUrl = `${baseWsUrl}/viewer?targetDeviceId=${encodeURIComponent(device.deviceId)}&token=${encodeURIComponent(token)}`;
+    console.log(`[Viewer] Connecting to ${device.route === 'ONLINE' ? 'online' : 'LAN'} stream for ${device.deviceId}`);
     setStatus(`Connecting to ${device.hostname} (${device.ipAddress})...`);
 
     const ws = new WebSocket(wsUrl);
@@ -90,8 +92,11 @@ export default function RemoteViewer({ device, initialMode, onClose }) {
       setError('WebSocket connection error. Verify EktaDMA server status.');
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setStatus('Disconnected');
+      if (event.code === 4401) {
+        setError('Session expired or not allowed to view this PC. Please log out and sign in again.');
+      }
     };
 
     return () => {

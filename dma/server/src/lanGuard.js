@@ -1,8 +1,11 @@
 // LAN-only access guard: rejects HTTP requests and WebSocket upgrades from non-private IPs.
 // Uses the raw socket address only — X-Forwarded-For is ignored so it cannot be spoofed.
 // Disable with LAN_ONLY=false in .env (e.g. when deliberately exposing the server through a reverse proxy).
+// Always off on the online server (DMA_MODE=online), which serves employees on any network.
 
-const LAN_ONLY = (process.env.LAN_ONLY || 'true').toLowerCase() !== 'false';
+const { IS_ONLINE } = require('./config');
+
+const LAN_ONLY = !IS_ONLINE && (process.env.LAN_ONLY || 'true').toLowerCase() !== 'false';
 
 function normalizeIp(ip) {
   if (!ip) return '';
