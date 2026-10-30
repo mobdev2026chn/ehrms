@@ -1,10 +1,10 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const mongoose = require('mongoose');
-const { IDLE_THRESHOLD_SECONDS, IS_ONLINE, HRMS_API_URL } = require('../config');
+// JWT_SECRET: from .env, or (online server) its own random one - see config.js
+const { IDLE_THRESHOLD_SECONDS, IS_ONLINE, HRMS_API_URL, JWT_SECRET } = require('../config');
 const { liveDevices } = require('../db/mongo');
 
-const JWT_SECRET = process.env.JWT_SECRET || 'AEvaHRMS@123';
 const activeUserSessions = new Map();
 
 // EktaHR HRMS backend (HRMSbackend) — single source of truth for Admin / Staff credentials.

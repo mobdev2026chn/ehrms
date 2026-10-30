@@ -1,7 +1,8 @@
 {
-  "_about": "DMA release config - the one file to edit for a release. Then build (powershell -ExecutionPolicy Bypass -File .\\build.ps1), push, and run git pull on the online server. environment: what build.ps1 builds the agent + Admin Console for, and the server's environment unless its server/.env sets DMA_ENV. agentVersion: raise for every new agent (auto-update installs only higher versions). adminConsoleVersion: raise for every new Admin Console (admin PCs then unpack its new office server). environments: hrmsApiUrl = EktaHR login service, onlineServerUrl = online DMA server (empty = office LAN only), useDatabase = whether MONGODB_URI (old DEV_HRMS database) may be used.",
+  "_about": "DMA release config - the one file to edit for a release. Then build (powershell -ExecutionPolicy Bypass -File .\\build.ps1), push, and run git pull on the online server. environment: what build.ps1 builds the agent + Admin Console for, and the server's environment unless its server/.env sets DMA_ENV. agentVersion: raise for every new agent (auto-update installs only higher versions). adminConsoleVersion: raise for every new Admin Console (admin PCs then unpack its new office server). serverMode: mode of the DMA server run from this repo, i.e. the online server track.ektahr.com (online = employees on any network, token required, own random token secret kept in its storage folder); the office server inside the Admin Console is always lan; a server's .env DMA_MODE overrides. environments: hrmsApiUrl = EktaHR login service, onlineServerUrl = online DMA server (empty = office LAN only), useDatabase = whether MONGODB_URI (old DEV_HRMS database) may be used.",
 
   "environment": "production",
+  "serverMode": "online",
   "agentVersion": "1.2.1",
   "adminConsoleVersion": "2026.10.30.7",
 

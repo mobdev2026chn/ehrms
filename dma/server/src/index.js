@@ -13,18 +13,13 @@ const { getActivitySummary, getEmployeeActivity } = require('./controllers/activ
 const { getAlerts } = require('./alerts');
 const { initWebSocketServer } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
-const { DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_SOURCE, HRMS_API_URL, USE_DATABASE } = require('./config');
+const { DMA_MODE, IS_ONLINE, MODE_SOURCE, ONLINE_SERVER_URL, DMA_ENV, ENV_SOURCE, HRMS_API_URL, USE_DATABASE, JWT_SECRET_SOURCE } = require('./config');
 const { getPublishedAgent } = require('./agentUpdate');
 
 console.log(`[Env] ${DMA_ENV} (from ${ENV_SOURCE}): logins via ${HRMS_API_URL}` +
   `${USE_DATABASE && process.env.MONGODB_URI ? ' (DEV_HRMS database first)' : ''}`);
-
-// The online server is reachable from the internet: tokens signed with the public fallback secret
-// could be forged by anyone, so it refuses to start without its own JWT_SECRET.
-if (IS_ONLINE && (!process.env.JWT_SECRET || process.env.JWT_SECRET === 'AEvaHRMS@123')) {
-  console.error('[Config] DMA_MODE=online needs its own JWT_SECRET in .env (a long random value, not the default). Server not started.');
-  process.exit(1);
-}
+// The online server never signs tokens with the public default secret (config.js)
+console.log(`[Config] ${DMA_MODE} server (mode from ${MODE_SOURCE}); token secret from ${JWT_SECRET_SOURCE}`);
 
 // Connect to EktaHR MongoDB
 connectMongo();

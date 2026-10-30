@@ -63,8 +63,9 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   - Served by an office LAN server, it also signs in to `ONLINE_SERVER_URL` (default `https://track.ektahr.com`) with the same login.
   - Office PCs live-stream directly over the LAN. Everyone else streams through the online server, at a reduced 1366 px width.
   - The Activity Report, screenshots and idle alerts come from the online server when the console is signed in to it.
-- **Online server setup** (`server/.env`): `DMA_MODE=online` and a long random `JWT_SECRET`.
-  - The server refuses to start with a missing or default secret.
+- **Online server setup:** nothing to edit on the server. `"serverMode": "online"` in `dma.config.json` makes the server run from the repo (`track.ektahr.com`) the online server.
+  - Without its own `JWT_SECRET` in `.env`, it creates a random one once in its storage folder (`server/storage/.jwt-secret`) and never uses the public default.
+  - The office server inside the Admin Console always runs `lan`. A server's `.env` `DMA_MODE` overrides the config file.
   - In online mode, agents and viewers must send a valid DMA token.
   - The LAN guard and UDP discovery are off.
 - **Every live view needs the admin's token.** On both servers, an admin only reaches their own company's PCs.
@@ -96,7 +97,8 @@ Everything a release changes is in one file, [`dma.config.json`](dma.config.json
 
 ```json
 "environment": "production",            // production | development
-"agentVersion": "1.2.0",                // raise for every new agent: 1.2.0 -> 1.2.1
+"serverMode": "online",                 // the server run from the repo (track.ektahr.com) is the online server
+"agentVersion": "1.2.1",                // raise for every new agent: 1.2.1 -> 1.2.2
 "adminConsoleVersion": "2026.10.30.7",  // raise for every new Admin Console
 "environments": { "production": { ... }, "development": { ... } }
 ```

@@ -1,6 +1,12 @@
-// Central DMA settings — change them in dma/server/.env and restart the server.
+// Central DMA settings — dma/dma.config.json (pushed with the code) and dma/server/.env (per server,
+// overrides the config file); restart the server after a change.
 // Agents receive these values from the server (at login and on every WebSocket connect),
 // so the agent exe does not need to be rebuilt when a value changes.
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const DMA_CONFIG = require('../../dma.config.json');
 
 function intFromEnv(name, fallback, min, max) {
   const value = parseInt(process.env[name], 10);
@@ -12,11 +18,34 @@ function intFromEnv(name, fallback, min, max) {
 // (idle screenshot + idle badge + admin alert). 300 = 5 minutes.
 const IDLE_THRESHOLD_SECONDS = intFromEnv('IDLE_THRESHOLD_SECONDS', 300, 30, 7200);
 
-// DMA_MODE=lan (default): office server on the admin's PC — LAN clients only, agents trusted on the LAN.
-// DMA_MODE=online: public server (e.g. track.ektahr.com behind HTTPS) — employees on any network;
-//   every agent / viewer connection must carry a DMA token, and JWT_SECRET must be set.
-const DMA_MODE = (process.env.DMA_MODE || 'lan').toLowerCase() === 'online' ? 'online' : 'lan';
+// lan: office server on the admin's PC — LAN clients only, agents trusted on the LAN.
+// online: public server (track.ektahr.com behind HTTPS) — employees on any network; every agent /
+//   viewer connection must carry a DMA token.
+// DMA_MODE in .env when set (the office server inside the Admin Console always sets lan), otherwise
+// "serverMode" in dma/dma.config.json - the mode of the server run from this repo, i.e. the online server.
+const DMA_MODE = (process.env.DMA_MODE || DMA_CONFIG.serverMode || 'lan').toLowerCase() === 'online' ? 'online' : 'lan';
 const IS_ONLINE = DMA_MODE === 'online';
+const MODE_SOURCE = process.env.DMA_MODE ? '.env (DMA_MODE)' : DMA_CONFIG.serverMode ? 'dma.config.json' : 'default';
+
+// Token secret. The old public default would let anyone forge an admin token on the internet, so the
+// online server never uses it: without its own JWT_SECRET in .env it creates a random one once and
+// keeps it in its storage folder (survives restarts and git pulls; a new one signs everyone in again).
+const DEFAULT_JWT_SECRET = 'AEvaHRMS@123';
+function resolveJwtSecret() {
+  const fromEnv = process.env.JWT_SECRET;
+  if (fromEnv && fromEnv !== DEFAULT_JWT_SECRET) return { secret: fromEnv, source: '.env' };
+  if (!IS_ONLINE) return { secret: fromEnv || DEFAULT_JWT_SECRET, source: 'default (office LAN server)' };
+  const file = path.join(path.resolve(process.env.DMA_STORAGE_DIR || path.join(__dirname, '../storage')), '.jwt-secret');
+  try {
+    const saved = fs.readFileSync(file, 'utf8').trim();
+    if (saved.length >= 32) return { secret: saved, source: file };
+  } catch (e) {}
+  const secret = crypto.randomBytes(48).toString('hex');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, secret, { mode: 0o600 });
+  return { secret, source: `${file} (created)` };
+}
+const { secret: JWT_SECRET, source: JWT_SECRET_SOURCE } = resolveJwtSecret();
 
 // ---- Environment: production / development (dma/dma.config.json) ----
 // The environment picks the EktaHR login service, the online server and whether the old DEV_HRMS
@@ -24,7 +53,6 @@ const IS_ONLINE = DMA_MODE === 'online';
 // "environment" in dma/dma.config.json (changes with a push + git pull). The agent and Admin Console
 // get the same values at build time (build.ps1).
 // Neither set (very old setup): HRMS_API_URL / BACKEND_URL / ONLINE_SERVER_URL / MONGODB_URI from .env.
-const DMA_CONFIG = require('../../dma.config.json');
 const ENVIRONMENTS = DMA_CONFIG.environments || {};
 const ENV_SOURCE = process.env.DMA_ENV ? '.env (DMA_ENV)' : DMA_CONFIG.environment ? 'dma.config.json' : 'default';
 const DMA_ENV = (process.env.DMA_ENV || DMA_CONFIG.environment || 'production').trim().toLowerCase();
@@ -51,4 +79,7 @@ const ONLINE_SERVER_URL = IS_ONLINE
     ? trimUrl(envSettings.onlineServerUrl)
     : trimUrl(process.env.ONLINE_SERVER_URL ?? envSettings.onlineServerUrl);
 
-module.exports = { IDLE_THRESHOLD_SECONDS, DMA_MODE, IS_ONLINE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, ENV_SOURCE, HRMS_API_URL, USE_DATABASE };
+module.exports = {
+  IDLE_THRESHOLD_SECONDS, DMA_MODE, IS_ONLINE, MODE_SOURCE, ONLINE_SERVER_URL, DMA_ENV, ENV_EXPLICIT, ENV_SOURCE,
+  HRMS_API_URL, USE_DATABASE, JWT_SECRET, JWT_SECRET_SOURCE
+};
