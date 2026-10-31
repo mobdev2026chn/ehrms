@@ -38,6 +38,14 @@ const CAN_SELF_UPDATE = !IS_ONLINE && !!INSTALLED_VERSION && !!ONLINE_SERVER_URL
 const SETTINGS_FILE = path.join(STORAGE_DIR, 'admin-console-settings.json');
 const state = { latestVersion: null, checkedAt: null, error: null, updating: false, updatingTo: null };
 
+// Admin Console versions were dates (2026.10.31.1) before they became 1.2.3-style numbers: a date
+// version (first number 2000 or more) always counts as older than a 1.2.3-style one
+const isDateVersion = (v) => Number(String(v).split('.')[0]) >= 2000;
+function compareConsoleVersions(a, b) {
+  if (isDateVersion(a) !== isDateVersion(b)) return isDateVersion(a) ? -1 : 1;
+  return compareVersions(a, b);
+}
+
 // adminConsoleVersion this server hands out (read fresh, so a git pull counts without a restart)
 function publishedVersion() {
   try { return JSON.parse(fs.readFileSync(path.join(DMA_ROOT, 'dma.config.json'), 'utf8')).adminConsoleVersion || null; }
@@ -131,7 +139,7 @@ async function checkLatest() {
   return state.latestVersion;
 }
 
-const isNewer = (v) => !!v && !!INSTALLED_VERSION && compareVersions(v, INSTALLED_VERSION) > 0;
+const isNewer = (v) => !!v && !!INSTALLED_VERSION && compareConsoleVersions(v, INSTALLED_VERSION) > 0;
 
 // Release paths are relative and stay inside the folder
 const safeRel = (rel) => /^[\w.\-/]+$/.test(rel) && !rel.split('/').includes('..');
@@ -227,8 +235,8 @@ function removeOldVersions() {
     const parent = path.dirname(DMA_ROOT);
     const older = fs.readdirSync(parent)
       .map(name => ({ name, m: /^server-(\d+(\.\d+){1,3})(\.partial)?$/.exec(name) }))
-      .filter(x => x.m && (x.m[3] || compareVersions(x.m[1], INSTALLED_VERSION) < 0))
-      .sort((a, b) => compareVersions(b.m[1], a.m[1]));
+      .filter(x => x.m && (x.m[3] || compareConsoleVersions(x.m[1], INSTALLED_VERSION) < 0))
+      .sort((a, b) => compareConsoleVersions(b.m[1], a.m[1]));
     const keep = older.find(x => !x.m[3]);
     for (const x of older) {
       if (x === keep) continue;

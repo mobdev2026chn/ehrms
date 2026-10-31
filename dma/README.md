@@ -100,7 +100,7 @@ Everything a release changes is in one file, [`dma.config.json`](dma.config.json
 "environment": "production",            // production | development
 "serverMode": "online",                 // the server run from the repo (track.ektahr.com) is the online server
 "agentVersion": "1.2.1",                // raise for every new agent: 1.2.1 -> 1.2.2
-"adminConsoleVersion": "2026.10.30.7",  // raise for every new Admin Console
+"adminConsoleVersion": "1.0.0",         // raise for every new Admin Console: 1.0.0 -> 1.0.1
 "environments": { "production": { ... }, "development": { ... } }
 ```
 
@@ -171,13 +171,16 @@ Employee PCs update themselves; only the first 1.1.0 agent has to be copied by h
 - Agents from before 1.1.0 report no version and can't auto-update. The Admin Console marks them "Agent: old version — update by hand once".
 - An office server (inside the Admin Console exe) offers the agent it was built with. Rebuild the Admin Console when you want office servers to carry the new agent too, though the online server alone is enough.
 
-## 🔄 Admin Console Auto-Update (2026.10.31.1 and later) + Profile & Settings
+## 🔄 Admin Console Auto-Update (1.0.0 and later) + Profile & Settings
 
-The office server inside the Admin Console updates itself from the online server. Only the first self-updating version (`2026.10.31.1`) has to be copied by hand.
+The office server inside the Admin Console updates itself from the online server. Version `1.0.0` has to be copied by hand once.
+
+- That includes PCs on the earlier date-style `2026.10.31.1`.
+- Date-style versions (first number 2000 or more) count as older than any `1.x`, so they never block or downgrade an update.
 
 **Releasing a new Admin Console version**
 
-1. In `dma.config.json`, raise `adminConsoleVersion`, for example `"2026.10.31.1"` → `"2026.11.05.1"`.
+1. In `dma.config.json`, raise `adminConsoleVersion`, for example `"1.0.0"` → `"1.0.1"` (1.2.3-style numbers).
 2. Build: `powershell -ExecutionPolicy Bypass -File .\build.ps1 -AdminOnly` (or without `-AdminOnly` to also build a new agent). This rebuilds `admin_console/dist` too.
 3. Push, then on the online server run `git pull` and `pm2 restart <dma-app>`.
 

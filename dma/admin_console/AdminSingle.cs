@@ -143,6 +143,15 @@ namespace EktaHR.AdminConsole
             }
         }
 
+        // Admin Console versions were dates (2026.10.31.1) before they became 1.2.3-style numbers: a date
+        // version (first number 2000 or more) always counts as older than a 1.2.3-style one
+        public static int CompareConsoleVersions(Version a, Version b)
+        {
+            bool aIsDate = a.Major >= 2000, bIsDate = b.Major >= 2000;
+            if (aIsDate != bIsDate) return aIsDate ? -1 : 1;
+            return a.CompareTo(b);
+        }
+
         // Newest complete server-<version> folder that is newer than the one inside this exe, or null
         private static string NewestInstalledServer()
         {
@@ -156,7 +165,7 @@ namespace EktaHR.AdminConsole
                 foreach (string dir in Directory.GetDirectories(DataDir, "server-*"))
                 {
                     Version v;
-                    if (!Version.TryParse(Path.GetFileName(dir).Substring("server-".Length), out v) || v <= bestVersion) continue;
+                    if (!Version.TryParse(Path.GetFileName(dir).Substring("server-".Length), out v) || CompareConsoleVersions(v, bestVersion) <= 0) continue;
                     if (!File.Exists(Path.Combine(dir, "ready.ok")) || !File.Exists(Path.Combine(dir, "node", "node.exe")) ||
                         !File.Exists(Path.Combine(dir, "server", "src", "index.js"))) continue;
                     best = dir;
