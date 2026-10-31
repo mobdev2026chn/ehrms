@@ -7784,6 +7784,18 @@ class _AttendanceScreenState extends State<AttendanceScreen>
     await _fetchAllTemplateDetails();
     if (!mounted) return;
 
+    // Neither punch while the admin has not assigned everything attendance needs (the
+    // "Attendance setup incomplete" notice on Home lists what is missing).
+    final missingSetup = await _attendanceService.fetchMissingAttendanceSetup();
+    if (!mounted) return;
+    if (missingSetup.isNotEmpty) {
+      await _showValidationAlert(
+        AttendanceService.attendanceSetupBlockedMessage(missingSetup),
+      );
+      _setPunchActionInProgress(false);
+      return;
+    }
+
     // --- Check-in/check-out validation: bypassed for testing ---
     /*
     if (!isCheckedIn &&

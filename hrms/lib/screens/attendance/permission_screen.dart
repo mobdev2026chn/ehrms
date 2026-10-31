@@ -15,6 +15,7 @@ import '../../config/app_colors.dart';
 import '../../config/app_text_styles.dart';
 import '../../config/constants.dart';
 import '../../utils/face_enrollment_gate.dart';
+import '../../services/attendance_template_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/face_identity_guard.dart';
@@ -57,11 +58,19 @@ class _PermissionScreenState extends State<PermissionScreen> {
 
   bool get _isOnPermission => _status?.isOnPermission ?? false;
 
+  /// The attendance template's "Require Selfie" switch; on until the stored template is read.
+  bool _templateRequiresSelfie = true;
+  bool get _requireSelfie =>
+      AppConstants.enableAttendanceSelfie && _templateRequiresSelfie;
+
   @override
   void initState() {
     super.initState();
     _refreshStatus(silent: true);
     _determinePosition();
+    AttendanceTemplateStore.requiresSelfie().then((value) {
+      if (mounted) setState(() => _templateRequiresSelfie = value);
+    });
     PermissionService.stateRevision.addListener(_onStateChanged);
   }
 
@@ -226,7 +235,7 @@ class _PermissionScreenState extends State<PermissionScreen> {
     final clickTime = DateTime.now();
     if (_isOnPermission) setState(() => _endClickTime = clickTime);
 
-    final selfie = AppConstants.enableAttendanceSelfie ? await _encodeSelfie() : '';
+    final selfie = _requireSelfie ? await _encodeSelfie() : '';
     if (selfie == null) {
       if (mounted) setState(() => _endClickTime = null);
       return;
@@ -302,7 +311,12 @@ class _PermissionScreenState extends State<PermissionScreen> {
       );
       return;
     }
-    await _takeSelfie();
+    // Require Selfie off: straight to the request, no camera
+    if (_requireSelfie) {
+      await _takeSelfie();
+    } else {
+      await _submit();
+    }
   }
 
   @override

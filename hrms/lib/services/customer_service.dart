@@ -74,10 +74,38 @@ class CustomerService {
     }
   }
 
+  /// Customers for the Field Out customer picker (HRMSbackend `getStaffCustomers`).
+  /// [all] lists every customer in the company, each flagged `isAssigned` for this staff
+  /// member - the same `scope=all` list the web Field Out Verification dialog shows.
+  /// Unlike [getAllCustomers] this throws, so the picker can show why it is empty.
+  Future<List<Customer>> getStaffCustomers({bool all = false}) async {
+    await _setToken();
+    try {
+      final response = await _api.dio.get<dynamic>(
+        '/staff/geo-task/customers',
+        queryParameters: all ? {'scope': 'all'} : null,
+      );
+      final body = response.data;
+      final list = body is Map ? body['data'] : body;
+      if (list is! List) return <Customer>[];
+      return list
+          .whereType<Map>()
+          .map((e) => Customer.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final msg = data is Map ? data['message']?.toString() : null;
+      throw Exception(msg ?? 'Could not load customers.');
+    }
+  }
+
   Future<Customer> createCustomer(
     Customer customer, {
     /// Admin custom customer fields `{ fieldId: value }` (HRMSbackend validates required ones).
     Map<String, String>? customFields,
+    /// A customer added mid-visit from Field Out: HRMSbackend skips the admin's custom
+    /// fields (the admin fills them in later from Edit Customer), as on the web.
+    bool quickAdd = false,
   }) async {
     await _setToken();
     final raw = Map<String, dynamic>.from(customer.toJson());
@@ -86,6 +114,7 @@ class CustomerService {
           v == null || (v is String && v.trim().isEmpty),
     );
     if (customFields != null && customFields.isNotEmpty) raw['customFields'] = customFields;
+    if (quickAdd) raw['quickAdd'] = true;
     Response<dynamic>? response;
     DioException? lastError;
     for (final path in [

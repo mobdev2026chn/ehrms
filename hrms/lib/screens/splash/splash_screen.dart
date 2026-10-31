@@ -263,26 +263,29 @@ class _SplashScreenState extends State<SplashScreen>
           );
           return;
         }
-        // Live tracking in progress – go directly to LiveTrackingScreen (no resume prompt)
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => LiveTrackingScreen(
-              taskId: activeInfo['taskId'] as String,
-              taskMongoId: activeInfo['taskMongoId'] as String,
-              pickupLocation: LatLng(
-                activeInfo['pickupLat'] as double,
-                activeInfo['pickupLng'] as double,
+        // A Field In journey has no ride to resume (no Exit / Arrived) - it is closed by
+        // Field Out on My Tasks - so open the app normally; tracking carries on in the background.
+        if (activeInfo['selfLogged'] != true) {
+          // Live tracking in progress – go directly to LiveTrackingScreen (no resume prompt)
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(
+              builder: (_) => LiveTrackingScreen(
+                taskId: activeInfo['taskId'] as String,
+                taskMongoId: activeInfo['taskMongoId'] as String,
+                pickupLocation: LatLng(
+                  activeInfo['pickupLat'] as double,
+                  activeInfo['pickupLng'] as double,
+                ),
+                dropoffLocation: LatLng(
+                  activeInfo['dropoffLat'] as double,
+                  activeInfo['dropoffLng'] as double,
+                ),
+                task: null,
               ),
-              dropoffLocation: LatLng(
-                activeInfo['dropoffLat'] as double,
-                activeInfo['dropoffLng'] as double,
-              ),
-              task: null,
-              selfLogged: activeInfo['selfLogged'] == true,
             ),
-          ),
-        );
-        return;
+          );
+          return;
+        }
       }
       // Check if logged in user is an Admin
       final userStr = prefs.getString('user');

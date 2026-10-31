@@ -44,6 +44,13 @@ class AttendanceTemplateStore {
     return null;
   }
 
+  /// The stored template's "Require Selfie" switch. On when no template is stored, as on
+  /// the punch screens.
+  static Future<bool> requiresSelfie() async {
+    final tmpl = await loadEffectiveTemplateMap();
+    return tmpl?['requireSelfie'] != false;
+  }
+
   /// Appends `requireSelfie` / `requireGeolocation` from stored template (same keys as backend).
   /// Used in late/early punch warning dialogs for quick verification.
   static Future<String> appendRequireSelfieGeolocationToMessage(

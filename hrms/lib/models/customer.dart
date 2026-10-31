@@ -39,6 +39,10 @@ class Customer {
   final double? longitude;
   final double? radius;
 
+  /// Whether this staff member is in the customer's `assignedEmployees`. Only the staff
+  /// list (`GET /staff/geo-task/customers?scope=all`) sends it; read-only, never posted.
+  final bool isAssigned;
+
   Customer({
     this.id,
     required this.customerName,
@@ -54,6 +58,7 @@ class Customer {
     this.latitude,
     this.longitude,
     this.radius,
+    this.isAssigned = false,
     this.createdBy,
     this.createdAt,
     this.updatedAt,
@@ -88,6 +93,7 @@ class Customer {
           ? (json['longitude'] as num).toDouble()
           : (json['lng'] is num ? (json['lng'] as num).toDouble() : null),
       radius: json['radius'] is num ? (json['radius'] as num).toDouble() : null,
+      isAssigned: json['isAssigned'] == true,
       createdBy: json['createdBy']?.toString(),
       createdAt: json['createdAt']?.toString(),
       updatedAt: json['updatedAt']?.toString(),

@@ -185,6 +185,56 @@ class AttendanceService {
     };
   }
 
+  /// What today-punch `setupStatus` shows the admin has still not assigned: shift, salary
+  /// structure and the five required templates (`missingTemplates`, HRMSbackend
+  /// staffTemplateRequirements.ts), in the web dashboard's order. The app refuses Punch In
+  /// and Punch Out until it is empty. Empty too when the server sent no status.
+  static List<String> missingAttendanceSetup(Map<String, dynamic>? today) {
+    final setup = today?['setupStatus'];
+    if (setup is! Map) return const [];
+    final missingRaw = setup['missingTemplates'];
+    final missing =
+        missingRaw is List ? missingRaw.map((e) => e.toString()).toSet() : null;
+    // Older servers send no `missingTemplates`; only the salary template is known then.
+    bool template(String label, {bool legacy = true}) =>
+        missing != null ? !missing.contains(label) : legacy;
+    return [
+      if (setup['shiftAssigned'] == false) 'Shift',
+      if (setup['salaryStructureAssigned'] == false) 'Salary Structure',
+      if (!template('Salary Template', legacy: setup['salaryTemplateAssigned'] != false))
+        'Salary Template',
+      for (final label in const [
+        'Attendance Template',
+        'Leave Template',
+        'Holiday Template',
+        'Weekly Off Template',
+      ])
+        if (!template(label)) label,
+    ];
+  }
+
+  static String attendanceSetupBlockedMessage(List<String> missing) {
+    final names = missing.length <= 1
+        ? missing.join()
+        : '${missing.sublist(0, missing.length - 1).join(', ')} and ${missing.last}';
+    return 'Punch In and Punch Out are not allowed until your $names '
+        '${missing.length == 1 ? 'is' : 'are'} assigned. Please contact your administrator.';
+  }
+
+  /// Today's missing setup for the punch gate. Reuses today's status if it was fetched in
+  /// the last minute, so a punch right after the pre-check does not fetch it twice. Empty
+  /// when the status cannot be read: a network blip must not block attendance.
+  Future<List<String>> fetchMissingAttendanceSetup() async {
+    final last = _lastTodayAttendanceFetch;
+    final recent = _cachedTodayAttendance != null &&
+        last != null &&
+        DateTime.now().difference(last) < const Duration(minutes: 1);
+    final res = await getTodayAttendance(forceRefresh: !recent);
+    final data = res['data'];
+    if (res['success'] != true || data is! Map) return const [];
+    return missingAttendanceSetup(Map<String, dynamic>.from(data));
+  }
+
   Future<Map<String, dynamic>> checkIn(
     double lat,
     double lng,
@@ -204,6 +254,11 @@ class AttendanceService {
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
+      // No punch while the admin has not assigned everything attendance needs.
+      final missingSetup = await fetchMissingAttendanceSetup();
+      if (missingSetup.isNotEmpty) {
+        throw Exception(attendanceSetupBlockedMessage(missingSetup));
+      }
       final prefs = await SharedPreferences.getInstance();
       final businessId = prefs.getString('businessId');
       String? selfiePayload = selfie;
@@ -348,6 +403,11 @@ class AttendanceService {
       final headers = await _getHeaders();
       final token = headers['Authorization']?.replaceFirst('Bearer ', '');
       if (token != null) _api.setAuthToken(token);
+      // No punch while the admin has not assigned everything attendance needs.
+      final missingSetup = await fetchMissingAttendanceSetup();
+      if (missingSetup.isNotEmpty) {
+        throw Exception(attendanceSetupBlockedMessage(missingSetup));
+      }
       final prefs = await SharedPreferences.getInstance();
       final businessId = prefs.getString('businessId');
       final appPerDayNetSalary = prefs.getDouble('app_net_per_day_salary');

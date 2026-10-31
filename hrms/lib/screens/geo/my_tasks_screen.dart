@@ -70,6 +70,9 @@ class _MyTasksScreenState extends State<MyTasksScreen>
 
   bool _isInternalStaff = false;
   bool _isFieldEmployee = false;
+  // Set once the profile shows the staff member is not a field employee: the whole module is
+  // then replaced by a notice (the backend refuses its routes too).
+  bool _geoTasksBlocked = false;
   List<Map<String, dynamic>> _allowances = [];
   bool _isLoadingAllowances = false;
   bool _allowancesFetchFailed = false;
@@ -1055,14 +1058,20 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     // rules as a task's Field Out. Images are uploaded; Email fields are OTP-verified.
     if (_journeyRequirements.isEmpty) await _fetchJourneyStatus();
     if (!mounted) return;
-    final answers = await FieldOutFormScreen.open(
+    // Also asks for the customer visited (existing, or added on the spot), as the web does.
+    final startAddress = _activeJourney?['startAddress']?.toString().trim() ?? '';
+    final result = await FieldOutFormScreen.openForJourney(
       context,
       requirements: _journeyRequirements,
       title: 'Field Out',
       subtitle:
           'Recording Field Out at your current location closes this journey and calculates your travel allowance.',
+      journeyStart: startAddress.isNotEmpty
+          ? startAddress
+          : 'First movement of the day - no start point recorded',
     );
-    if (answers == null || !mounted) return;
+    if (result == null || !mounted) return;
+    final answers = result.answers;
     String? answerFor(bool Function(TaskRequirement) test) {
       final reqs = _journeyRequirements.isNotEmpty ? _journeyRequirements : TaskRequirement.webDefaults;
       for (final r in reqs) {
@@ -1130,6 +1139,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
         fieldOutImage: answerFor((r) => r.isImage),
         fieldOutOtp: answerFor((r) => r.isOtp),
         answers: answers,
+        customerId: result.customer?.id,
       );
       // Journey closed: stop its live tracking and hand back to presence tracking.
       try {
@@ -1262,12 +1272,28 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       }
 
       String? fieldType = (userData['fieldType'] ?? userData['staff']?['fieldType'])?.toString();
-      if (fieldType == null || fieldType.isEmpty) {
-        fieldType = await TaskService().getStaffFieldType();
-        if (fieldType != null && fieldType.isNotEmpty) {
-          userData['fieldType'] = fieldType;
+      // Employee Access can change after login, so the profile's field type wins over the one
+      // cached with the session (only the offline fallback). A stale "Internal" hid the
+      // Customers tab and Field In / Field Out from someone since made External.
+      final profileIsField = await TaskService().isFieldEmployee();
+      if (profileIsField != null) {
+        final live = profileIsField ? await TaskService().getStaffFieldType() : null;
+        if (live != fieldType) {
+          fieldType = live;
+          userData['fieldType'] = live;
           await prefs.setString('user', jsonEncode(userData));
         }
+      }
+      // GEO Tasks are only for Internal / External Field Employees.
+      final isField = (fieldType ?? '').toLowerCase().contains('field');
+      if (!isField) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _geoTasksBlocked = true;
+          });
+        }
+        return;
       }
       final isInternal = (fieldType ?? '').toLowerCase().contains('internal');
       final newLength = isInternal ? 3 : 4;
@@ -1984,6 +2010,56 @@ class _MyTasksScreenState extends State<MyTasksScreen>
     );
   }
 
+  /// The module's place for staff who are not field employees.
+  Widget _buildGeoTasksBlocked() {
+    return Scaffold(
+      drawer: const AppDrawer(activeItem: 'GEOtasks'),
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        leading: Builder(
+          builder: (ctx) => IconButton(
+            tooltip: 'Menu',
+            icon: Icon(Icons.menu_rounded, color: AppColors.primary),
+            onPressed: () => Scaffold.of(ctx).openDrawer(),
+          ),
+        ),
+        title: const Text('Tasks'),
+      ),
+      body: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.lock_outline_rounded, size: 48, color: AppColors.textCaption),
+              SizedBox(height: 16),
+              Text(
+                'GEO Tasks not available',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              SizedBox(height: 8),
+              Text(
+                'GEO Tasks are only for Internal and External Field Employees. '
+                'Please contact your administrator.',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.4,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -2005,6 +2081,7 @@ class _MyTasksScreenState extends State<MyTasksScreen>
       },
       child: Builder(
         builder: (context) {
+          if (_geoTasksBlocked) return _buildGeoTasksBlocked();
           final colorScheme = Theme.of(context).colorScheme;
           // Status-filtered view of the loaded page (see _filteredTasks).
           final visibleTasks = _filteredTasks;

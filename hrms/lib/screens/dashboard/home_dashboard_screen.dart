@@ -147,6 +147,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
   List<Task> _tasks = [];
   int _assignedTasksCount = 0;
+  /// GEO Tasks (the My Tasks and Active Tasks cards) are only for Internal / External Field
+  /// Employees: the value cached at login first, then the profile (see _fetchTasks).
+  bool _geoTasksEnabled = false;
 
   /// Today's break summary (list + total) for the punch card.
   BreakSummary? _breakSummary;
@@ -449,6 +452,14 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   Future<void> _openLiveTracking() async {
     final info = await LiveTrackingService().getActiveTaskInfo();
     if (!mounted || info == null) return;
+    // A Field In journey is closed by Field Out on My Tasks, not on the ride screen.
+    if (info['selfLogged'] == true) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const MyTasksScreen()),
+      );
+      if (mounted) _checkLiveTracking();
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => LiveTrackingScreen(
@@ -1092,6 +1103,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 role == 'superadmin' ||
                 role == 'hr' ||
                 role == 'senior hr';
+            _geoTasksEnabled = (data['fieldType'] ?? '')
+                .toString()
+                .toLowerCase()
+                .contains('field');
             final cachedCompanyName = data['companyName'];
             if (cachedCompanyName is String &&
                 cachedCompanyName.trim().isNotEmpty) {
@@ -1262,7 +1277,10 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
             _todayCelebrations = data['todayCelebrations'] is List
                 ? data['todayCelebrations'] as List
                 : [];
-            _upcomingCelebrations = data['upcomingCelebrations'] is List
+            // Employees see only today's birthdays / anniversaries; upcoming
+            // ones are for admins.
+            _upcomingCelebrations =
+                _isAdminLike && data['upcomingCelebrations'] is List
                 ? data['upcomingCelebrations'] as List
                 : [];
             if (kDebugMode) {
@@ -1979,6 +1997,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
   /// (start <= today <= end). `/staff/geo-task/tasks` also returns future tasks.
   Future<void> _fetchTasks() async {
     try {
+      final isField = await _taskService.isFieldEmployee();
+      if (isField != null && mounted) setState(() => _geoTasksEnabled = isField);
+      if (!_geoTasksEnabled) return;
       final profile = await _authService.getProfile();
       // The list endpoint serves the signed-in staff member; the id is only a fallback hint.
       final taskList = await _taskService.getAssignedTasks(AuthService.staffIdOf(profile));
@@ -2475,6 +2496,7 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
     // `estimatedNetSalary`, the web's source) - ₹0.00 on the 1st, not the full month's net.
     final estimatedNet = (_todayAttendance?['estimatedNetSalary'] as num?)?.toDouble();
     final mtdDisplay = estimatedNet != null ? '₹${formatter.format(estimatedNet)}' : '--';
+    final setupItems = _incompleteAttendanceSetup();
 
     final content = RefreshIndicator(
       color: AppColors.primary,
@@ -2501,8 +2523,12 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
 
             // 3. Today's Punch Status Banner (Web styled) - Start/End Permission is an
             // inline button inside this card now (matching the web app's placement next
-            // to Punch Out / Take Break), not a separate card.
-            _buildWebTodayPunchBanner(),
+            // to Punch Out / Take Break), not a separate card. Until the admin has
+            // assigned everything attendance needs, the web's "Attendance setup
+            // incomplete" notice takes its place.
+            setupItems != null
+                ? _buildAttendanceSetupNotice(setupItems)
+                : _buildWebTodayPunchBanner(),
             const SizedBox(height: 12),
 
             // 4. Summary Metric Cards (Pending Leaves, Net, Attendance, Celebrations, My Tasks)
@@ -3125,6 +3151,95 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   height: 1.25,
                 ),
               ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// What the admin has still not assigned for attendance; null when nothing. Punch In and
+  /// Punch Out are both refused until then (AttendanceService), so the notice also replaces
+  /// the Today card for someone already punched in.
+  List<String>? _incompleteAttendanceSetup() {
+    final missing = AttendanceService.missingAttendanceSetup(_todayAttendance);
+    return missing.isEmpty ? null : missing;
+  }
+
+  Widget _buildAttendanceSetupNotice(List<String> missingItems) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.brandLight,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.brandBorder),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline_rounded, color: AppColors.primary, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Attendance setup incomplete',
+                  style: AppTextStyles.headingSmall.copyWith(fontSize: 14),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'You cannot punch in or punch out until everything below is '
+                  'assigned to you. Please contact your administrator.',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.4,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final label in missingItems)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(999),
+                          border: Border.all(color: AppColors.brandBorder),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 5,
+                              height: 5,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: AppColors.brandDark,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              '$label missing'.toUpperCase(),
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.4,
+                                color: Color(0xFF92400E),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
@@ -3967,16 +4082,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                 onTap: () => widget.onNavigate?.call(1, subTabIndex: 0),
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _buildWebKpiItem(
-                title: 'MY TASKS',
-                icon: Icons.checklist_rtl_rounded,
-                value: '$_assignedTasksCount',
-                subtitle: 'Assigned for today',
-                onTap: _showAllAssignedTasksModal,
+            if (_geoTasksEnabled) ...[
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildWebKpiItem(
+                  title: 'MY TASKS',
+                  icon: Icons.checklist_rtl_rounded,
+                  value: '$_assignedTasksCount',
+                  subtitle: 'Assigned for today',
+                  onTap: _showAllAssignedTasksModal,
+                ),
               ),
-            ),
+            ],
           ],
         ),
         // No "Today's Celebrations" tile here: the Celebrations card below
@@ -4328,9 +4445,9 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
-
-              // 4. Active Tasks (Dark Card)
+              // 4. Active Tasks (Dark Card) - field employees only.
+              if (_geoTasksEnabled) const SizedBox(width: 12),
+              if (_geoTasksEnabled)
               Expanded(
                 child: Material(
                   color: Colors.transparent,
@@ -5147,12 +5264,8 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
                           ),
                           const SizedBox(height: 8),
                         ],
-                        // Shown to every staff member, not just admins: the dashboard
-                        // card above already falls back to showing an upcoming
-                        // celebration to anyone when there's none today (see the
-                        // "Celebrations (Dark Card)" block), so gating this section to
-                        // _isAdminLike made the detail sheet hide the exact item the
-                        // card had just shown, landing on a false "No celebrations".
+                        // Only ever filled for admins (see where the dashboard data
+                        // loads), so employees see today's celebrations alone.
                         if (_upcomingCelebrations.isNotEmpty) ...[
                           _buildCelebrationSectionLabel('Upcoming'),
                           const SizedBox(height: 8),

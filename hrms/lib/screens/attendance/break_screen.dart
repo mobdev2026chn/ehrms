@@ -12,6 +12,7 @@ import '../../config/constants.dart';
 import '../../utils/face_enrollment_gate.dart';
 import '../../models/break_summary.dart';
 import '../dashboard/dashboard_screen.dart';
+import '../../services/attendance_template_store.dart';
 import '../../services/auth_service.dart';
 import '../../services/break_service.dart';
 import '../../services/face_identity_guard.dart';
@@ -76,6 +77,11 @@ class _BreakScreenState extends State<BreakScreen> {
   /// the face-verification/network round-trip runs).
   DateTime? _endClickTime;
 
+  /// The attendance template's "Require Selfie" switch; on until the stored template is read.
+  bool _templateRequiresSelfie = true;
+  bool get _requireSelfie =>
+      AppConstants.enableAttendanceSelfie && _templateRequiresSelfie;
+
   bool get _isOnBreak => _activeBreak != null;
   String get _submitLabel => _isOnBreak ? 'End Break' : 'Start Break';
   String get _selfieLabel =>
@@ -90,6 +96,9 @@ class _BreakScreenState extends State<BreakScreen> {
     _refreshCurrentBreak(silent: true);
     _fetchBreakSummary();
     _determinePosition();
+    AttendanceTemplateStore.requiresSelfie().then((value) {
+      if (mounted) setState(() => _templateRequiresSelfie = value);
+    });
     WidgetsBinding.instance.addPostFrameCallback(
       (_) => _maybeShowPermissionDialog(),
     );
@@ -415,7 +424,7 @@ class _BreakScreenState extends State<BreakScreen> {
     if (_isOnBreak && mounted) {
       setState(() => _endClickTime = clickInstant);
     }
-    if (AppConstants.enableAttendanceSelfie && _imageFile == null) {
+    if (_requireSelfie && _imageFile == null) {
       if (mounted) setState(() => _endClickTime = null);
       SnackBarUtils.showSnackBar(
         context,
@@ -438,9 +447,9 @@ class _BreakScreenState extends State<BreakScreen> {
       }
     }
 
-    // When the in-app selfie step is disabled, submit the break without a selfie
-    // (empty string); the backend treats it as optional for breaks.
-    final selfie = AppConstants.enableAttendanceSelfie
+    // When the in-app selfie step is disabled or the template's Require Selfie is off,
+    // submit the break without a selfie (empty string); the backend then needs none.
+    final selfie = _requireSelfie
         ? await _encodeSelfie()
         : '';
     if (selfie == null) {
@@ -901,7 +910,7 @@ class _BreakScreenState extends State<BreakScreen> {
                       ),
                       const SizedBox(height: 16),
                     ],
-                    if (AppConstants.enableAttendanceSelfie) ...[
+                    if (_requireSelfie) ...[
                       _buildSelfieCard(),
                       const SizedBox(height: 16),
                     ],

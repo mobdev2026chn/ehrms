@@ -1,8 +1,9 @@
 // Field-Out form built from the admin's form template (HRMSbackend `requirements`).
 // Same field rules as the web staff portal's submission modal: every active field is
 // required, an Email field is verified by emailed OTP (and replaces the plain OTP field),
-// images are uploaded and answered with their URL. Pops with the answers map
-// (keyed by field name) or null when cancelled.
+// images are uploaded and answered with their URL. A self-logged journey also asks for
+// the customer visited, picked or added on this same screen (FieldOutCustomerPicker), as
+// in the web dialog. Pops with a FieldOutFormResult, or null when cancelled.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,9 +12,21 @@ import 'package:image_picker/image_picker.dart';
 import 'package:hrms/config/app_colors.dart';
 import 'package:hrms/config/app_text_styles.dart';
 import 'package:hrms/widgets/app_card.dart';
+import 'package:hrms/models/customer.dart';
 import 'package:hrms/models/task.dart';
+import 'package:hrms/screens/geo/field_out_customer_picker.dart';
 import 'package:hrms/services/task_service.dart';
 import 'package:hrms/utils/snackbar_utils.dart';
+
+class FieldOutFormResult {
+  /// Keyed by field name.
+  final Map<String, String> answers;
+
+  /// The customer visited; set only when the form asked for one.
+  final Customer? customer;
+
+  const FieldOutFormResult(this.answers, {this.customer});
+}
 
 class FieldOutFormScreen extends StatefulWidget {
   final String title;
@@ -23,12 +36,20 @@ class FieldOutFormScreen extends StatefulWidget {
   /// Pre-fills an Email field (e.g. the customer's email).
   final String? prefillEmail;
 
+  /// Requires the customer visited before submitting (a self-logged journey).
+  final bool askCustomer;
+
+  /// Where the journey started, shown read-only above the customer. Null hides it.
+  final String? journeyStart;
+
   const FieldOutFormScreen({
     super.key,
     this.title = 'Field Out',
     this.subtitle,
     required this.requirements,
     this.prefillEmail,
+    this.askCustomer = false,
+    this.journeyStart,
   });
 
   /// Opens the form and returns the answers, or null if the user backed out.
@@ -38,14 +59,37 @@ class FieldOutFormScreen extends StatefulWidget {
     String title = 'Field Out',
     String? subtitle,
     String? prefillEmail,
-  }) {
-    return Navigator.of(context).push<Map<String, String>>(
+  }) async {
+    final result = await Navigator.of(context).push<FieldOutFormResult>(
       MaterialPageRoute(
         builder: (_) => FieldOutFormScreen(
           title: title,
           subtitle: subtitle,
           requirements: requirements.isNotEmpty ? requirements : TaskRequirement.webDefaults,
           prefillEmail: prefillEmail,
+        ),
+      ),
+    );
+    return result?.answers;
+  }
+
+  /// A self-logged journey's Field Out: the same form plus the customer visited, chosen
+  /// from all company customers or added as a new one. Null if the user backed out.
+  static Future<FieldOutFormResult?> openForJourney(
+    BuildContext context, {
+    required List<TaskRequirement> requirements,
+    String title = 'Field Out',
+    String? subtitle,
+    String? journeyStart,
+  }) {
+    return Navigator.of(context).push<FieldOutFormResult>(
+      MaterialPageRoute(
+        builder: (_) => FieldOutFormScreen(
+          title: title,
+          subtitle: subtitle,
+          requirements: requirements.isNotEmpty ? requirements : TaskRequirement.webDefaults,
+          askCustomer: true,
+          journeyStart: journeyStart,
         ),
       ),
     );
@@ -69,6 +113,8 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
   final Set<String> _sendingOtp = {};
   final Set<String> _verifyingOtp = {};
   final Map<String, String> _verifiedEmail = {};
+
+  final _customerPicker = GlobalKey<FieldOutCustomerPickerState>();
 
   bool _submitting = false;
 
@@ -175,7 +221,21 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
 
   static String _msg(Object e) => e.toString().replaceFirst('Exception: ', '');
 
-  void _submit() {
+  void _onCustomerSelected(Customer customer) {
+    // The emailed OTP goes to whoever was visited, so an empty Email field takes theirs.
+    final email = customer.effectiveEmail?.trim() ?? '';
+    if (email.isEmpty) return;
+    setState(() {
+      for (final f in _fields.where((f) => f.isEmail)) {
+        final c = _text[f.name];
+        if (c != null && c.text.trim().isEmpty) c.text = email;
+      }
+    });
+  }
+
+  Future<void> _submit() async {
+    final picker = _customerPicker.currentState;
+    if (widget.askCustomer && !(picker?.validateForSubmit() ?? false)) return;
     if (!_formKey.currentState!.validate()) return;
     final answers = <String, String>{};
     for (final f in _fields) {
@@ -198,7 +258,17 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
       answers[f.name] = value;
     }
     setState(() => _submitting = true);
-    Navigator.of(context).pop(answers);
+    // Last, so a new customer is saved only once everything else is valid.
+    Customer? customer;
+    if (widget.askCustomer) {
+      customer = await picker?.commit();
+      if (!mounted) return;
+      if (customer == null) {
+        setState(() => _submitting = false);
+        return;
+      }
+    }
+    Navigator.of(context).pop(FieldOutFormResult(answers, customer: customer));
   }
 
   InputDecoration _decoration(String hint) => InputDecoration(
@@ -458,6 +528,48 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
               ),
               const SizedBox(height: 12),
             ],
+            if (widget.journeyStart != null || widget.askCustomer) ...[
+              AppCard(
+                border: Border.all(color: const Color(0xFFECEEF1)),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (widget.journeyStart != null) ...[
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Journey Start',
+                          style: AppTextStyles.label.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                        decoration: BoxDecoration(
+                          color: AppColors.background,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E5EA)),
+                        ),
+                        child: Text(
+                          widget.journeyStart!,
+                          style: AppTextStyles.bodyMedium.copyWith(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                    if (widget.journeyStart != null && widget.askCustomer)
+                      const SizedBox(height: 16),
+                    if (widget.askCustomer) ...[
+                      _label('Select Customer'),
+                      FieldOutCustomerPicker(
+                        key: _customerPicker,
+                        enabled: !_submitting,
+                        onSelected: _onCustomerSelected,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             AppCard(
               border: Border.all(color: const Color(0xFFECEEF1)),
               child: Column(
@@ -486,7 +598,13 @@ class _FieldOutFormScreenState extends State<FieldOutFormScreen> {
               height: 52,
               child: ElevatedButton(
                 onPressed: (_submitting || _uploading.isNotEmpty) ? null : _submit,
-                child: const Text('Submit & Field Out'),
+                child: _submitting
+                    ? SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.onPrimary),
+                      )
+                    : const Text('Submit & Field Out'),
               ),
             ),
           ),

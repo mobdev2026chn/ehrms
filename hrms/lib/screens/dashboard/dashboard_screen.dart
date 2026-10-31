@@ -2774,6 +2774,17 @@ class _DashboardScreenState extends State<DashboardScreen>
     }
     if (isAdminMarked) return false;
 
+    // Neither punch while the admin has not assigned everything attendance needs (the
+    // "Attendance setup incomplete" notice on Home lists what is missing).
+    final missingSetup = await _attendanceService.fetchMissingAttendanceSetup();
+    if (!mounted) return false;
+    if (missingSetup.isNotEmpty) {
+      await _showValidationAlertDialog(
+        AttendanceService.attendanceSetupBlockedMessage(missingSetup),
+      );
+      return false;
+    }
+
     // Punch-out with an ongoing break: validate immediately, before fetching
     // location/selfie, so the user is told to end the break up front instead of
     // hitting "Kindly end the break" only after the whole punch flow runs.

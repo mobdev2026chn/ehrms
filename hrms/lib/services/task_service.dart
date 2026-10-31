@@ -1755,6 +1755,9 @@ class TaskService {
     String? fieldOutImage,
     String? fieldOutOtp,
     Map<String, dynamic>? answers,
+    /// The customer visited. HRMSbackend labels the journey with it and assigns this
+    /// staff member to that customer if they were not already.
+    String? customerId,
   }) async {
     await _setToken();
     final resolvedAnswers = answers != null ? Map<String, dynamic>.from(answers) : <String, dynamic>{};
@@ -1784,6 +1787,7 @@ class TaskService {
           if (fieldOutImage != null) 'fieldOutImage': fieldOutImage,
           if (fieldOutOtp != null) 'fieldOutOtp': fieldOutOtp,
           'answers': resolvedAnswers,
+          if (customerId != null && customerId.isNotEmpty) 'customerId': customerId,
         },
       );
       return Map<String, dynamic>.from(response.data as Map);
@@ -1863,6 +1867,21 @@ class TaskService {
         }
       }
       return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Whether the staff member is an Internal or External Field Employee - the only staff the
+  /// GEO Tasks module is for (HRMSbackend refuses its routes with NOT_FIELD_EMPLOYEE otherwise).
+  /// Null when the profile could not be read (e.g. offline).
+  Future<bool?> isFieldEmployee() async {
+    try {
+      final res = await AuthService().getProfile();
+      final data = res['data'];
+      if (res['success'] != true || data is! Map) return null;
+      final staff = data['staffData'] is Map ? data['staffData'] as Map : data;
+      return (staff['fieldType']?.toString() ?? '').toLowerCase().contains('field');
     } catch (_) {
       return null;
     }

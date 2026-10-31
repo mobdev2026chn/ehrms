@@ -1,6 +1,8 @@
 // presence_tracking_service.dart
 // Day-long "timeline" location tracking that starts at PUNCH IN (not at a task's Field In).
 //
+// Only Internal / External Field Employees (Staff.fieldType) are tracked; office staff never are.
+//
 // Flow: punch in -> ensureTrackingIfPunchedIn(true) -> refresh GET /staff/profile and read the
 // admin-controlled `Staff.tracking` flag -> if true, store a point every
 // [AppConstants.presenceTrackingCaptureIntervalSeconds] via
@@ -1081,6 +1083,16 @@ class PresenceTrackingService {
     try {
       final res = await AuthService().getProfile(forceRefresh: true);
       if (res['success'] == true) {
+        // Tracking is only for Internal / External Field Employees; office staff are
+        // never tracked, whatever the admin's tracking switches say.
+        if (!_isFieldEmployeeProfile(res['data'])) {
+          await prefs.setBool(_kPresenceTrackingFlag, false);
+          await prefs.setInt(
+            _kPresenceTrackingFlagCheckedAt,
+            DateTime.now().millisecondsSinceEpoch,
+          );
+          return false;
+        }
         // Timeline Tracking (Staff.tracking) OR Live Tracking (HRMS Geo config:
         // global switch AND this employee), plus the admin's capture interval.
         var enabled = _trackingFlagFromProfile(res['data']) ?? false;
@@ -1128,6 +1140,21 @@ class PresenceTrackingService {
 
     if (data is! Map) return null;
     return read(data) ?? read(data['staff']) ?? read(data['staffData']);
+  }
+
+  /// Staff.fieldType is 'Internal Field Employee' / 'External Field Employee' (Employee
+  /// Access); absent for office staff.
+  static bool _isFieldEmployeeProfile(dynamic data) {
+    String? read(dynamic m) {
+      if (m is! Map) return null;
+      final v = m['fieldType']?.toString().trim() ?? '';
+      return v.isEmpty ? null : v;
+    }
+
+    if (data is! Map) return false;
+    final fieldType =
+        read(data) ?? read(data['staff']) ?? read(data['staffData']) ?? '';
+    return fieldType.toLowerCase().contains('field');
   }
 
   /// canTrack = staff `tracking` flag; branchGeofence from the cached attendance template

@@ -10,6 +10,7 @@ import '../config/app_text_styles.dart';
 import '../utils/avatar_orientation.dart';
 import '../services/auth_service.dart';
 import '../services/presence_tracking_service.dart';
+import '../services/task_service.dart';
 import '../screens/auth/login_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
 import '../screens/settings/settings_screen.dart';
@@ -94,6 +95,8 @@ class AppDrawer extends StatefulWidget {
 
 class _AppDrawerState extends State<AppDrawer> {
   Map<String, dynamic>? _userData;
+  // GEOtasks is only for Internal / External Field Employees (see _loadGeoTasksAccess).
+  bool _isFieldEmployee = false;
   // Whether the header avatar must be flipped 180° on display (legacy selfies were
   // stored upside-down). Detected from the image via ML Kit, same as the dashboard.
   bool _avatarNeedsFlip = false;
@@ -151,6 +154,7 @@ class _AppDrawerState extends State<AppDrawer> {
       final data = jsonDecode(userString) as Map<String, dynamic>;
       setState(() => _userData = data);
       _resolveAvatarFlip(data['avatar'] ?? data['photoUrl']);
+      _loadGeoTasksAccess(data);
 
       final needsLocationAccess = !data.containsKey('locationAccess');
       final needsBranchName = !data.containsKey('branchName') || data['branchName'] == null;
@@ -184,6 +188,17 @@ class _AppDrawerState extends State<AppDrawer> {
           }
         } catch (_) {}
       }
+    }
+  }
+
+  /// The field type cached at login first, then the (cached) profile, which also picks up
+  /// a change made in Employee Access since.
+  Future<void> _loadGeoTasksAccess(Map<String, dynamic> data) async {
+    final cached = data['fieldType']?.toString().toLowerCase() ?? '';
+    if (cached.contains('field') && mounted) setState(() => _isFieldEmployee = true);
+    final isField = await TaskService().isFieldEmployee();
+    if (isField != null && isField != _isFieldEmployee && mounted) {
+      setState(() => _isFieldEmployee = isField);
     }
   }
 
@@ -340,10 +355,11 @@ class _AppDrawerState extends State<AppDrawer> {
           Navigator.pop(context);
           Future.microtask(() => _push(const LoansScreen()));
         }, selected: _activeEmployeeItem == 'Loans'),
-        _item(Icons.assignment_turned_in_rounded, 'GEOtasks', () {
-          Navigator.pop(context);
-          Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
-        }, selected: _activeEmployeeItem == 'GEOtasks'),
+        if (_isFieldEmployee)
+          _item(Icons.assignment_turned_in_rounded, 'GEOtasks', () {
+            Navigator.pop(context);
+            Future.microtask(() => _push(const MyTasksScreen(dashboardTabIndex: 1)));
+          }, selected: _activeEmployeeItem == 'GEOtasks'),
         _item(Icons.schedule_rounded, 'Overtime', () {
           Navigator.pop(context);
           Future.microtask(() => _push(const OvertimeScreen()));

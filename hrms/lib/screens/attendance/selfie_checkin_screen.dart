@@ -344,7 +344,10 @@ class _SelfieCheckInScreenState extends State<SelfieCheckInScreen> {
     } else if (state is AttendanceCheckInSuccess) {
       if (!mounted) return;
       setState(() => _isLoading = false);
-      if (Platform.isAndroid && !await Permission.locationAlways.isGranted) {
+      // Only staff who are tracked (field employees) need background location.
+      if (Platform.isAndroid &&
+          !await Permission.locationAlways.isGranted &&
+          await PresenceTrackingService().isTimelineTrackingEnabled()) {
         if (!mounted) return;
         await LocationService.showBackgroundLocationDisclosureAndRequest(
           context,
