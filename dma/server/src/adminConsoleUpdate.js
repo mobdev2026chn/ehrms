@@ -210,12 +210,22 @@ async function installUpdate() {
   }
 }
 
+// Log for the new version: the Admin Console's dma-server.log when it can be opened - it is locked
+// while the Admin Console's own start (cmd >> dma-server.log) of this server is still running - else
+// a log of its own (dma-server-<version>.log)
+function openLogFor(version) {
+  const dir = path.join(path.dirname(DMA_ROOT), 'logs');
+  fs.mkdirSync(dir, { recursive: true });
+  for (const name of ['dma-server.log', `dma-server-${version}.log`]) {
+    try { return fs.openSync(path.join(dir, name), 'a'); } catch (e) { /* locked - try the next */ }
+  }
+  return 'ignore';
+}
+
 // Starts the new version with the same settings the Admin Console gave this one (PORT, LAN_ONLY,
-// DMA_STORAGE_DIR) and the same log file, then exits; the new server takes over the port.
+// DMA_STORAGE_DIR), then exits; the new server takes over the port.
 function restartInto(target, version) {
-  const logFile = path.join(path.dirname(DMA_ROOT), 'logs', 'dma-server.log');
-  fs.mkdirSync(path.dirname(logFile), { recursive: true });
-  const out = fs.openSync(logFile, 'a');
+  const out = openLogFor(version);
   const child = spawn(path.join(target, 'node', 'node.exe'), ['src/index.js'], {
     cwd: path.join(target, 'server'),
     env: process.env,

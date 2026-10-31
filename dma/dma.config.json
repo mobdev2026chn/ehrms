@@ -4,7 +4,7 @@
   "environment": "production",
   "serverMode": "online",
   "agentVersion": "1.2.1",
-  "adminConsoleVersion": "2026.10.31.2",
+  "adminConsoleVersion": "2026.10.31.3",
 
   "environments": {
     "production": {
