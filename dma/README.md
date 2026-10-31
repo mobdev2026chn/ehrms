@@ -210,6 +210,18 @@ IDLE_THRESHOLD_SECONDS=300   # 300 = 5 min, 120 = 2 min, 600 = 10 min (allowed 3
 
 No mouse/keyboard input for this long marks the employee IDLE (idle screenshot, idle badge, admin alert). The server sends the value to every agent at login and on each connect, so the agent exe does **not** need rebuilding; the admin console uses the server's `isIdle` flag. Code: `server/src/config.js`.
 
+## 🕘 Agent: Sign In Once, Monitoring Follows the Shift
+
+- The employee signs in **once**. The agent keeps the sign-in on that PC (encrypted for that Windows user) and starts with Windows (current user's `Run` key, no admin rights; it opens in the tray).
+- It monitors **during the employee's shift only**: signs itself in when the shift starts and out when it ends. The shift is today's shift from EktaHR (`GET /api/staff/attendance/today-punch`: rotations, daily changes, week offs, holidays and leave included), read again every 2 hours and each new day; the last one is saved for when EktaHR can't be reached.
+- No shift times (none assigned, an open shift, an admin account): monitored all day while signed in, as before.
+- **Logout**, a forced logout (signed in on another PC) or a refused password forget the sign-in; the employee signs in again. Settings → **Tracking** shows the shift being followed.
+- Code: `agent/AgentSingle.cs` (`REMEMBERED SIGN-IN + SHIFT SCHEDULE`, `EktaAgentForm.ScheduleTick`).
+
+## 🙈 Personal Websites (privacy)
+
+Admin Console → **Profile & Settings → Personal websites**: browser tabs whose title contains a word on the list, or apps with it in their name, are painted over ("Personal content hidden") in screenshots and live view **on the employee's PC**, and remote clicks / keys can't reach them. One list per company (a super admin edits the default); changes reach connected agents at once. Code: `server/src/privacySites.js`, `agent/AgentSingle.cs` (`PrivacyMask`), `admin_console/src/components/PrivacySites.jsx`.
+
 ## 🚀 How to Run
 
 ### 1. Start EktaDMA Server
@@ -228,4 +240,4 @@ npm run dev
 * Log in using your **EktaHR credentials** (or fallback admin login: `admin` / `admin123`).
 
 ### 3. Start the Windows Agent
-Build it with `build.ps1` (see **LAN-Only Mode**), then run `EktaHR-Agent.exe` on employee PCs and sign in to enable live screen viewing and remote access. Ready-made builds are in `dma/release/`.
+Build it with `build.ps1` (see **LAN-Only Mode**), then run `EktaHR-Agent.exe` on employee PCs and sign in once to enable live screen viewing and remote access during the shift (see **Agent: Sign In Once**). Ready-made builds are in `dma/release/`.

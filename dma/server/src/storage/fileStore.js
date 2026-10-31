@@ -224,6 +224,7 @@ function loadOpenIdlePeriods() {
 
 module.exports = {
   STORAGE_DIR,
+  safeSegment,
   isSuperScope,
   dayKey,
   saveScreenshot,

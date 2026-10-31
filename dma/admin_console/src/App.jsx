@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import LoginModal from './components/LoginModal';
 import DeviceGrid from './components/DeviceGrid';
 import RemoteViewer from './components/RemoteViewer';
@@ -11,6 +11,10 @@ import {
   loadServerInfo, getServerInfo, isOnlineOrigin, hasSeparateOnlineServer,
   getOnlineToken, setOnlineToken, routeServer, getDataServer
 } from './config';
+import { signIn, getAutoLogin, setAutoLogin, tokenSecondsLeft, isRejectedLogin } from './auth';
+
+// Session renewed this long before its 24 hours run out, so an open live view never hits an expired token
+const RENEW_BEFORE_SECONDS = 10 * 60;
 
 export default function App() {
   const [token, setToken] = useState(() => localStorage.getItem('ektahr_token') || '');
@@ -35,8 +39,50 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('LIVE');
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [sessionMode, setSessionMode] = useState('VIEW_ONLY');
+  // Opened with no live session (none saved, or its 24 hours are over) but a remembered sign-in:
+  // sign in with it behind a short "Signing in" screen instead of showing the login form.
+  const [autoSigningIn, setAutoSigningIn] = useState(() => {
+    const saved = localStorage.getItem('ektahr_token') || '';
+    const left = saved ? tokenSecondsLeft(saved) : 0;
+    return left !== null && left <= 0 && !!getAutoLogin();
+  });
+  // Why the remembered sign-in failed, shown on the login screen
+  const [autoLoginError, setAutoLoginError] = useState('');
+  const renewal = useRef(null);
+  const lastRenewAt = useRef(0);
 
   const dataServer = getDataServer();
+
+  // Remembered sign-in: a fresh session (and online token) without the login screen. Calls made
+  // while one is under way share it, so the 4-second scan never signs in twice at once.
+  const renewSession = () => {
+    if (renewal.current) return renewal.current;
+    const saved = getAutoLogin();
+    if (!saved) return Promise.resolve(false);
+    lastRenewAt.current = Date.now();
+    renewal.current = signIn(saved.username, saved.password)
+      .then((session) => {
+        handleLoginSuccess(session.token, session.user, session.onlineToken);
+        setAutoLoginError('');
+        return true;
+      })
+      .catch((err) => {
+        // Password changed / account blocked: stop, so retries don't add failed logins to the account
+        if (isRejectedLogin(err)) setAutoLogin(false);
+        setAutoLoginError(err.message);
+        return false;
+      })
+      .finally(() => { renewal.current = null; });
+    return renewal.current;
+  };
+
+  useEffect(() => {
+    if (!autoSigningIn) return;
+    renewSession().then((ok) => {
+      if (!ok) clearSession();
+      setAutoSigningIn(false);
+    });
+  }, []);
 
   const fetchDevices = async () => {
     try {
@@ -71,6 +117,10 @@ export default function App() {
 
   // Scan: office PCs from this LAN server + employees on any network from the online server
   const scanAgents = async () => {
+    const left = tokenSecondsLeft(localStorage.getItem('ektahr_token') || '');
+    if (left !== null && left < RENEW_BEFORE_SECONDS && Date.now() - lastRenewAt.current > 60000) {
+      renewSession();
+    }
     const onlinePage = isOnlineOrigin();
     const withOnline = hasSeparateOnlineServer() && !!getOnlineToken();
     const failed = (e) => { console.error('Device scan failed:', e); return { error: true }; };
@@ -79,13 +129,15 @@ export default function App() {
       withOnline ? fetchConnected('ONLINE').catch(failed) : Promise.resolve(null)
     ]);
     if (local.unauthorized) {
-      handleLogout();
+      // Session over: the remembered sign-in renews it, otherwise back to the login screen
+      if (!(await renewSession())) clearSession();
       return;
     }
     if (remote && remote.unauthorized) {
-      // Online session expired: keep showing the office LAN
+      // Online session expired: keep showing the office LAN (and sign in to it again when remembered)
       setOnlineToken('');
       setOnlineTokenState('');
+      renewSession();
     }
     setOnlineState(onlinePage ? 'online' : !hasSeparateOnlineServer() ? 'off' : remote && remote.agents ? 'connected' : 'unreachable');
 
@@ -158,9 +210,17 @@ export default function App() {
     localStorage.setItem('ektahr_user', JSON.stringify(userData));
     setOnlineToken(newOnlineToken);
     setOnlineTokenState(newOnlineToken);
+    setAutoLogin(true);
   };
 
+  // Logout button: the admin chose to leave, so the remembered sign-in waits for Sign In
   const handleLogout = () => {
+    setAutoLogin(false);
+    setAutoLoginError('');
+    clearSession();
+  };
+
+  const clearSession = () => {
     setToken('');
     setUser(null);
     localStorage.removeItem('ektahr_token');
@@ -170,8 +230,19 @@ export default function App() {
     setAgents([]);
   };
 
+  if (autoSigningIn) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f1f5f9' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', color: '#475569', fontSize: '0.95rem', fontWeight: 600 }}>
+          <RefreshCw size={18} color="#EFAA1F" className="spin" />
+          <span>Signing in to EktaHR…</span>
+        </div>
+      </div>
+    );
+  }
+
   if (!token) {
-    return <LoginModal onLoginSuccess={handleLoginSuccess} />;
+    return <LoginModal onLoginSuccess={handleLoginSuccess} initialError={autoLoginError} />;
   }
 
   const connectedCount = agents.length;

@@ -1,31 +1,17 @@
 import React, { useState } from 'react';
 import { Lock, User, ShieldAlert, Settings, Eye, EyeOff } from 'lucide-react';
-import { getServerBaseUrl, loadServerInfo } from '../config';
+import { signIn, getSavedLogin, saveLogin, forgetLogin } from '../auth';
 
-// Office LAN server: also sign in to its online server so the admin sees employees on any network.
-// Not reachable (no internet, server down) = office LAN only; that never blocks the login.
-async function signInOnline(onlineServerUrl, body) {
-  if (!onlineServerUrl) return '';
-  try {
-    const response = await fetch(`${onlineServerUrl}/api/v1/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body
-    });
-    const data = await response.json();
-    return response.ok && data.token ? data.token : '';
-  } catch (e) {
-    return '';
-  }
-}
-
-export default function LoginModal({ onLoginSuccess }) {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+// initialError: why the remembered sign-in did not go through (password changed, server down, ...)
+export default function LoginModal({ onLoginSuccess, initialError = '' }) {
+  const [username, setUsername] = useState(() => getSavedLogin()?.username || '');
+  const [password, setPassword] = useState(() => getSavedLogin()?.password || '');
   const [showPassword, setShowPassword] = useState(false);
+  // On by default: the console then signs itself in again when its 24-hour session runs out
+  const [remember, setRemember] = useState(true);
   const [serverUrl, setServerUrl] = useState(() => localStorage.getItem('ektahr_server_url') || '');
   const [showSettings, setShowSettings] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(initialError);
   const [loading, setLoading] = useState(false);
 
   const handleSaveSettings = (e) => {
@@ -47,26 +33,14 @@ export default function LoginModal({ onLoginSuccess }) {
     setLoading(true);
 
     try {
-      const info = await loadServerInfo();
-      const baseUrl = getServerBaseUrl();
-      const body = JSON.stringify({ username, password, forceLogout: force });
-      const onlineLogin = info.mode === 'lan' ? signInOnline(info.onlineServerUrl, body) : Promise.resolve('');
-      const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        if (data.isAlreadyLoggedIn) {
-          setIsAlreadyLoggedIn(true);
-        }
-        throw new Error(data.error || 'EktaHR Login failed');
-      }
-
-      onLoginSuccess(data.token, data.user, await onlineLogin);
+      const session = await signIn(username, password, force);
+      if (remember) saveLogin(username.trim(), password);
+      else forgetLogin();
+      onLoginSuccess(session.token, session.user, session.onlineToken);
     } catch (err) {
+      if (err.isAlreadyLoggedIn) {
+        setIsAlreadyLoggedIn(true);
+      }
       setError(err.message);
     } finally {
       setLoading(false);
@@ -224,6 +198,16 @@ export default function LoginModal({ onLoginSuccess }) {
               </button>
             </div>
           </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '-8px 0 20px', color: '#475569', fontSize: '0.85rem', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+              style={{ accentColor: '#EFAA1F', width: '16px', height: '16px' }}
+            />
+            <span>Remember me on this PC (stay signed in)</span>
+          </label>
 
           <button
             type="submit"

@@ -9,9 +9,34 @@ const { allowLanUpgrade } = require('../lanGuard');
 const { IDLE_THRESHOLD_SECONDS, IS_ONLINE } = require('../config');
 const { verifyToken, isAdminUser } = require('../controllers/authController');
 const { updateOfferFor } = require('../agentUpdate');
+const { getPrivacySites } = require('../privacySites');
+const { isSuperScope } = require('../storage/fileStore');
 
 const agentSockets = new Map();
 const UPDATE_RECHECK_MS = 10 * 60 * 1000;
+
+// Central settings, so agents follow them without being rebuilt: the idle time (.env) and the company's
+// personal websites (hidden in screenshots / live view). privacySites goes last and '|'-separated: the
+// agent's JSON reader takes one plain string value per key.
+function sendConfig(ws) {
+  ws.configBusinessId = ws.businessId || '';
+  if (ws.readyState !== WebSocket.OPEN) return;
+  try {
+    ws.send(JSON.stringify({
+      type: 'CONFIG',
+      idleThresholdSeconds: IDLE_THRESHOLD_SECONDS,
+      privacySites: getPrivacySites(ws.businessId).sites.join('|')
+    }));
+  } catch (e) {}
+}
+
+// A company's personal-website list changed: send it to its connected agents now (the default list
+// can apply to any company, so a super admin's change goes to every agent)
+function pushAgentConfig(businessId) {
+  for (const socket of agentSockets.values()) {
+    if (isSuperScope(businessId) || String(socket.businessId || '') === String(businessId)) sendConfig(socket);
+  }
+}
 
 // Offer a newer agent (once per version per connection); re-checked every 10 minutes, so a newly
 // published agent reaches PCs that are already connected
@@ -242,10 +267,7 @@ function handleAgentConnection(ws, query, request) {
 
   agentSockets.set(deviceId, ws);
 
-  // Push central settings so agents follow .env without being rebuilt
-  try {
-    ws.send(JSON.stringify({ type: 'CONFIG', idleThresholdSeconds: IDLE_THRESHOLD_SECONDS }));
-  } catch (e) {}
+  sendConfig(ws);
   offerAgentUpdate(ws);
 
   const updatedDev = registerOrUpdateDevice(deviceId, {
@@ -284,6 +306,8 @@ function handleAgentConnection(ws, query, request) {
           }
           if (IS_ONLINE) ws.network = data.network === 'LAN' ? 'LAN' : 'ONLINE';
           if (data.version) ws.agentVersion = data.version;
+          // Company first known from a heartbeat (older office agents): resend its personal-website list
+          if ((ws.businessId || '') !== ws.configBusinessId) sendConfig(ws);
           if (Date.now() - (ws.updateCheckedAt || 0) > UPDATE_RECHECK_MS) offerAgentUpdate(ws);
 
           const hbDev = registerOrUpdateDevice(deviceId, {
@@ -419,4 +443,4 @@ function hasActiveViewers() {
   return false;
 }
 
-module.exports = { initWebSocketServer, getConnectedAgents, hasActiveViewers };
+module.exports = { initWebSocketServer, getConnectedAgents, hasActiveViewers, pushAgentConfig };

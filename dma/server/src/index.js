@@ -11,7 +11,8 @@ const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreen
 const { startRetentionJob, STORAGE_DIR } = require('./storage/fileStore');
 const { getActivitySummary, getEmployeeActivity } = require('./controllers/activityController');
 const { getAlerts } = require('./alerts');
-const { initWebSocketServer, hasActiveViewers } = require('./ws/signalingServer');
+const { initWebSocketServer, hasActiveViewers, pushAgentConfig } = require('./ws/signalingServer');
+const { BUILT_IN_SITES, getPrivacySites, savePrivacySites, resetPrivacySites } = require('./privacySites');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 const { DMA_MODE, IS_ONLINE, MODE_SOURCE, ONLINE_SERVER_URL, DMA_ENV, ENV_SOURCE, HRMS_API_URL, USE_DATABASE, JWT_SECRET_SOURCE } = require('./config');
 const { getPublishedAgent } = require('./agentUpdate');
@@ -87,6 +88,27 @@ app.post('/api/v1/admin-console/update', verifyTokenMiddleware, requireAdminRole
   } catch (e) {
     res.status(500).json({ success: false, error: e.message });
   }
+});
+
+// Personal websites hidden in screenshots and live view (privacySites.js), for the admin's company
+// (a super admin: the default list). A change reaches the company's connected agents at once.
+app.get('/api/v1/privacy-sites', verifyTokenMiddleware, requireAdminRole, (req, res) => {
+  res.json({ success: true, ...getPrivacySites(req.user.businessId), builtIn: BUILT_IN_SITES });
+});
+app.put('/api/v1/privacy-sites', verifyTokenMiddleware, requireAdminRole, (req, res) => {
+  if (!Array.isArray((req.body || {}).sites)) return res.status(400).json({ success: false, error: 'sites (a list of words) required' });
+  try {
+    const saved = savePrivacySites(req.user.businessId, req.body.sites, req.user.username);
+    pushAgentConfig(req.user.businessId);
+    res.json({ success: true, ...saved });
+  } catch (e) {
+    res.status(500).json({ success: false, error: 'Could not save the list: ' + e.message });
+  }
+});
+app.delete('/api/v1/privacy-sites', verifyTokenMiddleware, requireAdminRole, (req, res) => {
+  const reset = resetPrivacySites(req.user.businessId);
+  pushAgentConfig(req.user.businessId);
+  res.json({ success: true, ...reset });
 });
 
 // Devices API

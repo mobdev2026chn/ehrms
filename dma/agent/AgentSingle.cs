@@ -206,6 +206,11 @@ namespace EktaDMAAgent
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
 
+                // Started by Windows the working folder is not the exe's: keep config.json, today's totals
+                // and the rest next to the exe, as when it is opened by hand
+                try { Environment.CurrentDirectory = AppDomain.CurrentDomain.BaseDirectory; } catch { }
+                EnsureStartWithWindows();
+
                 try
                 {
                     string hostname = Environment.MachineName;
@@ -221,6 +226,7 @@ namespace EktaDMAAgent
                         {
                             if (arg.StartsWith("ws://") || arg.StartsWith("wss://")) ServerWsUrl = arg.Trim();
                             else if (arg.StartsWith("http://") || arg.StartsWith("https://")) ServerHttpUrl = arg.Trim();
+                            else if (arg == AutoStartArg) StartedByWindows = true;
                         }
                     }
 
@@ -666,6 +672,318 @@ namespace EktaDMAAgent
             return null;
         }
 
+        // ================= REMEMBERED SIGN-IN + SHIFT SCHEDULE =================
+        // The employee signs in once. The sign-in is kept on this PC (encrypted for this Windows user,
+        // DPAPI), the agent starts with Windows, and it monitors during the employee's shift only: it
+        // signs itself in when the shift starts and out when it ends. The shift is today's shift from
+        // EktaHR (rotations, daily changes, week offs, holidays and leave included). No shift times (none
+        // assigned, an open shift, EktaHR not reached yet) = monitored all day while signed in, as before.
+        // Logout, a forced logout or a refused password forget the sign-in.
+        private static readonly string AgentDataDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EktaHR Agent");
+        private static readonly string SignInFile = Path.Combine(AgentDataDir, "signin.bin");
+        private static readonly byte[] SignInEntropy = Encoding.UTF8.GetBytes("EktaHR-Agent-remembered-signin");
+        private static readonly string ShiftCacheFile = Path.Combine(AgentDataDir, "shift.txt");
+        private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+        private const string RunValueName = "EktaHR Agent";
+        public const string AutoStartArg = "--autostart";
+        // Started by Windows at sign-on (Run key): with a remembered sign-in the window stays in the tray
+        public static bool StartedByWindows = false;
+
+        public static void SaveRememberedLogin(string email, string password)
+        {
+            string oldEmail, oldPassword;
+            // Another employee on this PC: the shift and EktaHR token known so far were the previous one's
+            if (!LoadRememberedLogin(out oldEmail, out oldPassword) || !string.Equals(oldEmail, email, StringComparison.OrdinalIgnoreCase))
+            {
+                ForgetRememberedLogin();
+            }
+            try
+            {
+                Directory.CreateDirectory(AgentDataDir);
+                byte[] plain = Encoding.UTF8.GetBytes(email + "\n" + password);
+                File.WriteAllBytes(SignInFile, System.Security.Cryptography.ProtectedData.Protect(plain, SignInEntropy, System.Security.Cryptography.DataProtectionScope.CurrentUser));
+            }
+            catch { }
+        }
+
+        public static bool LoadRememberedLogin(out string email, out string password)
+        {
+            email = null;
+            password = null;
+            try
+            {
+                if (!File.Exists(SignInFile)) return false;
+                string[] parts = Encoding.UTF8.GetString(System.Security.Cryptography.ProtectedData.Unprotect(File.ReadAllBytes(SignInFile), SignInEntropy, System.Security.Cryptography.DataProtectionScope.CurrentUser)).Split(new[] { '\n' }, 2);
+                if (parts.Length != 2 || parts[0].Length == 0 || parts[1].Length == 0) return false;
+                email = parts[0];
+                password = parts[1];
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public static bool HasRememberedLogin()
+        {
+            string email, password;
+            return LoadRememberedLogin(out email, out password);
+        }
+
+        public static void ForgetRememberedLogin()
+        {
+            try { if (File.Exists(SignInFile)) File.Delete(SignInFile); } catch { }
+            // The shift and EktaHR token were this employee's
+            HrmsToken = "";
+            TodayShift = null;
+            PreviousShift = null;
+        }
+
+        // Starts with Windows for this Windows user (no admin rights needed); re-pointed if the exe moved
+        public static void EnsureStartWithWindows()
+        {
+            try
+            {
+                string command = "\"" + Application.ExecutablePath + "\" " + AutoStartArg;
+                using (Microsoft.Win32.RegistryKey key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKeyPath))
+                {
+                    if (key != null && !string.Equals(key.GetValue(RunValueName) as string, command, StringComparison.OrdinalIgnoreCase))
+                    {
+                        key.SetValue(RunValueName, command);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        // Today's shift. Known = there is something to follow: start / end times, or a day off.
+        public class ShiftInfo
+        {
+            public DateTime Day;
+            public bool Known;
+            public bool OffToday;
+            public string OffReason = "";
+            public int StartMinutes;
+            public int EndMinutes;
+            public DateTime FetchedAt;
+
+            public bool Overnight { get { return EndMinutes < StartMinutes; } }
+        }
+
+        public static volatile ShiftInfo TodayShift = null;
+        // Yesterday's, for the small hours of an overnight shift that began then
+        public static volatile ShiftInfo PreviousShift = null;
+        // The employee's EktaHR token (valid for weeks): today's shift is read with it
+        private static string HrmsToken = "";
+
+        // "09:30", "9:30 AM", "21:30:00" -> minutes after midnight; -1 when it is not a time
+        public static int ParseClock(string text)
+        {
+            DateTime t;
+            string[] formats = { "H:mm", "HH:mm", "H:mm:ss", "HH:mm:ss", "h:mm tt", "hh:mm tt", "h:mm:ss tt", "hh:mm:ss tt", "h:mmtt", "hh:mmtt" };
+            if (DateTime.TryParseExact((text ?? "").Trim().ToUpperInvariant(), formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out t))
+            {
+                return t.Hour * 60 + t.Minute;
+            }
+            return -1;
+        }
+
+        public static string FormatClock(int minutes)
+        {
+            return DateTime.Today.AddMinutes(minutes).ToString("hh:mm tt", System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        // EktaHR's today-punch answer (GET /api/staff/attendance/today-punch) -> today's shift
+        public static ShiftInfo ParseTodayShift(string json, DateTime day)
+        {
+            ShiftInfo s = new ShiftInfo { Day = day.Date, FetchedAt = DateTime.Now };
+            if (json.Contains("\"isLeave\":true")) { s.OffToday = true; s.OffReason = "You are on leave today"; }
+            else if (json.Contains("\"isHoliday\":true")) { s.OffToday = true; s.OffReason = "Today is a holiday"; }
+            else if (json.Contains("\"isWeekOff\":true")) { s.OffToday = true; s.OffReason = "Today is your week off"; }
+
+            // "shift":{"name":..,"startTime":..,"endTime":..} - flat, so it ends at the first }
+            int idx = json.IndexOf("\"shift\":{", StringComparison.Ordinal);
+            if (idx >= 0)
+            {
+                int end = json.IndexOf('}', idx);
+                string shift = end > idx ? json.Substring(idx, end - idx + 1) : json.Substring(idx);
+                int start = ParseClock(ExtractJsonValue(shift, "startTime"));
+                int finish = ParseClock(ExtractJsonValue(shift, "endTime"));
+                if (start >= 0 && finish >= 0 && start != finish)
+                {
+                    s.Known = true;
+                    s.StartMinutes = start;
+                    s.EndMinutes = finish;
+                }
+            }
+            if (s.OffToday) s.Known = true;
+            return s;
+        }
+
+        // Body of an EktaHR call, with its HTTP status (0 = EktaHR not reached)
+        private static string HrmsRequest(string method, string path, string token, string jsonBody, out int status)
+        {
+            status = 0;
+            try
+            {
+                System.Net.ServicePointManager.SecurityProtocol = (System.Net.SecurityProtocolType)3072 | System.Net.SecurityProtocolType.Tls11 | System.Net.SecurityProtocolType.Tls;
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(HrmsApiUrl.TrimEnd('/') + path);
+                req.Method = method;
+                req.Timeout = 15000;
+                if (!string.IsNullOrEmpty(token)) req.Headers.Add("Authorization", "Bearer " + token);
+                if (jsonBody != null)
+                {
+                    byte[] bytes = Encoding.UTF8.GetBytes(jsonBody);
+                    req.ContentType = "application/json";
+                    req.ContentLength = bytes.Length;
+                    using (Stream rs = req.GetRequestStream()) { rs.Write(bytes, 0, bytes.Length); }
+                }
+                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                using (StreamReader sr = new StreamReader(resp.GetResponseStream()))
+                {
+                    status = (int)resp.StatusCode;
+                    return sr.ReadToEnd();
+                }
+            }
+            catch (WebException wex)
+            {
+                HttpWebResponse resp = wex.Response as HttpWebResponse;
+                if (resp == null) return null;
+                status = (int)resp.StatusCode;
+                try { using (StreamReader sr = new StreamReader(resp.GetResponseStream())) return sr.ReadToEnd(); }
+                catch { return ""; }
+            }
+            catch { return null; }
+        }
+
+        // An answer meaning "no" (wrong password, blocked, ...), not "try again later"
+        private static bool IsRejection(int status)
+        {
+            return status >= 400 && status < 500 && status != 408 && status != 429;
+        }
+
+        // Today's shift from EktaHR; null when EktaHR can't be reached. rejected = EktaHR refused the password.
+        public static ShiftInfo FetchTodayShift(string email, string password, out bool rejected)
+        {
+            rejected = false;
+            for (int attempt = 0; attempt < 2; attempt++)
+            {
+                if (string.IsNullOrEmpty(HrmsToken))
+                {
+                    int loginStatus;
+                    string login = HrmsRequest("POST", "/api/auth/login", null,
+                        "{\"email\":\"" + EscapeJson(email) + "\",\"password\":\"" + EscapeJson(password) + "\"}", out loginStatus);
+                    if (login == null || loginStatus != 200 || !login.Contains("\"token\""))
+                    {
+                        rejected = IsRejection(loginStatus);
+                        return null;
+                    }
+                    HrmsToken = ExtractJsonValue(login, "token");
+                }
+
+                int status;
+                string body = HrmsRequest("GET", "/api/staff/attendance/today-punch", HrmsToken, null, out status);
+                if (status == 401) { HrmsToken = ""; continue; }  // token expired: sign in to EktaHR again
+                if (status == 200 && body != null) return ParseTodayShift(body, DateTime.Today);
+                // EktaHR answered without a shift (an admin account, attendance not in the plan): all day
+                if (status >= 400 && status < 500) return new ShiftInfo { Day = DateTime.Today, FetchedAt = DateTime.Now };
+                return null;
+            }
+            return null;
+        }
+
+        public static bool ShiftNeedsRefresh()
+        {
+            ShiftInfo s = TodayShift;
+            return s == null || s.Day != DateTime.Today || (DateTime.Now - s.FetchedAt).TotalHours >= 2;
+        }
+
+        private static void SetTodayShift(ShiftInfo s)
+        {
+            ShiftInfo old = TodayShift;
+            if (old != null && old.Day < s.Day) PreviousShift = old;
+            TodayShift = s;
+        }
+
+        // Reads today's shift (true = EktaHR answered). Not reached: a shift saved earlier is used - today's,
+        // or the times of the last one known (shift times rarely change; days off are not carried over).
+        public static bool RefreshTodayShift(string email, string password, out bool rejected)
+        {
+            ShiftInfo s = FetchTodayShift(email, password, out rejected);
+            if (s != null)
+            {
+                SetTodayShift(s);
+                try
+                {
+                    Directory.CreateDirectory(AgentDataDir);
+                    File.WriteAllText(ShiftCacheFile, s.Day.ToString("yyyy-MM-dd") + "|" + (s.Known ? 1 : 0) + "|" + (s.OffToday ? 1 : 0) + "|" +
+                        s.StartMinutes + "|" + s.EndMinutes + "|" + s.OffReason);
+                }
+                catch { }
+                return true;
+            }
+
+            ShiftInfo current = TodayShift;
+            if (current == null || current.Day != DateTime.Today)
+            {
+                try
+                {
+                    string[] p = File.ReadAllText(ShiftCacheFile).Split(new[] { '|' }, 6);
+                    DateTime day;
+                    if (p.Length == 6 && DateTime.TryParseExact(p[0], "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out day))
+                    {
+                        bool sameDay = day == DateTime.Today;
+                        ShiftInfo cached = new ShiftInfo { Day = DateTime.Today, FetchedAt = DateTime.MinValue };
+                        cached.StartMinutes = int.Parse(p[3]);
+                        cached.EndMinutes = int.Parse(p[4]);
+                        cached.OffToday = sameDay && p[2] == "1";
+                        cached.OffReason = cached.OffToday ? p[5] : "";
+                        cached.Known = cached.OffToday || (p[1] == "1" && cached.StartMinutes != cached.EndMinutes);
+                        SetTodayShift(cached);
+                    }
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        // Monitoring now? Unknown shift = yes (all day, as before)
+        public static bool IsInShift(DateTime now)
+        {
+            ShiftInfo today = TodayShift;
+            if (today == null || !today.Known) return true;
+            int m = now.Hour * 60 + now.Minute;
+            // The small hours of an overnight shift that began yesterday (yesterday's not known: today's times)
+            ShiftInfo night = PreviousShift != null && PreviousShift.Day == now.Date.AddDays(-1) ? PreviousShift : today;
+            if (night.Known && !night.OffToday && night.Overnight && m < night.EndMinutes) return true;
+            if (today.OffToday) return false;
+            if (!today.Overnight) return m >= today.StartMinutes && m < today.EndMinutes;
+            return m >= today.StartMinutes; // until midnight; the rest is tomorrow's small hours
+        }
+
+        public static string ShiftHoursText(ShiftInfo s)
+        {
+            return FormatClock(s.StartMinutes) + " - " + FormatClock(s.EndMinutes);
+        }
+
+        // Shown while signed in but outside the shift
+        public static string OffShiftMessage(DateTime now)
+        {
+            ShiftInfo s = TodayShift;
+            if (s == null || !s.Known) return "";
+            if (s.OffToday) return s.OffReason + ". Monitoring starts again at your next shift.";
+            int m = now.Hour * 60 + now.Minute;
+            if (m < s.StartMinutes) return "Off shift. Monitoring starts at your shift: " + ShiftHoursText(s) + ".";
+            return "Your shift (" + ShiftHoursText(s) + ") is over. Monitoring starts again at your next shift.";
+        }
+
+        // Settings > Tracking
+        public static string TrackingText()
+        {
+            ShiftInfo s = TodayShift;
+            if (s == null || !s.Known) return "All day";
+            if (s.OffToday) return "Off today";
+            return "Shift " + ShiftHoursText(s);
+        }
+
         // ================= AUTHENTICATION & DEVICE REGISTRATION =================
         // Signs in straight against the EktaHR backend (no DMA server needed) when the online server
         // is not reachable. Sets the session identity; the agent then attaches to the online server
@@ -698,12 +1016,14 @@ namespace EktaDMAAgent
                 if (respText.IndexOf("\"requiresOtp\":true", StringComparison.OrdinalIgnoreCase) >= 0)
                 {
                     errorMsg = "OTP login is enabled for this account and is not supported by the desktop agent.";
+                    LastLoginRejected = true;
                     return false;
                 }
                 if (respText.IndexOf("\"token\"", StringComparison.Ordinal) < 0)
                 {
                     errorMsg = ExtractJsonValue(respText, "message");
                     if (string.IsNullOrEmpty(errorMsg)) errorMsg = "Invalid EktaHR login credentials.";
+                    LastLoginRejected = true;
                     return false;
                 }
 
@@ -722,6 +1042,8 @@ namespace EktaDMAAgent
             }
             catch (WebException wex)
             {
+                HttpWebResponse errResp = wex.Response as HttpWebResponse;
+                if (errResp != null) LastLoginRejected = IsRejection((int)errResp.StatusCode);
                 try
                 {
                     if (wex.Response != null)
@@ -776,6 +1098,9 @@ namespace EktaDMAAgent
 
         // True when the last online registration got an answer from the online server (even a rejection)
         public static bool LastOnlineLoginReachedServer = false;
+        // The last sign-in was refused (wrong password, blocked, signed in on another PC) rather than not
+        // reaching a server: a remembered sign-in is then forgotten instead of being retried
+        public static bool LastLoginRejected = false;
 
         // Registers this PC with the online server (reachable from any network) for the online
         // connection and screenshot uploads. Leaves the office LAN registration untouched.
@@ -851,6 +1176,7 @@ namespace EktaDMAAgent
                             errorMsg = ExtractJsonValue(respText, "error");
                             if (string.IsNullOrEmpty(errorMsg)) errorMsg = ExtractJsonValue(respText, "message");
                             if (string.IsNullOrEmpty(errorMsg)) errorMsg = "Authentication failed.";
+                            LastLoginRejected = true;
                             return false;
                         }
                     }
@@ -858,6 +1184,8 @@ namespace EktaDMAAgent
             }
             catch (WebException wex)
             {
+                HttpWebResponse errResp = wex.Response as HttpWebResponse;
+                if (errResp != null) LastLoginRejected = IsRejection((int)errResp.StatusCode);
                 try
                 {
                     if (wex.Response != null)
@@ -1503,6 +1831,7 @@ namespace EktaDMAAgent
                     {
                         g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
                     }
+                    PrivacyMask.Apply(rawBmp, bounds.Location);
 
                     ImageCodecInfo jpegEncoder = null;
                     ImageCodecInfo[] encoders = ImageCodecInfo.GetImageEncoders();
@@ -1569,6 +1898,8 @@ namespace EktaDMAAgent
                         if (json.Contains("\"CONFIG\""))
                         {
                             ApplyIdleThresholdFromServer(json);
+                            // Older servers send no list: the agent then keeps the one it has
+                            if (json.Contains("\"privacySites\":")) PrivacyMask.SetSites(link.Kind, ExtractJsonValue(json, "privacySites"));
                         }
                         else if (json.Contains("START_STREAM"))
                         {
@@ -1912,6 +2243,8 @@ namespace EktaDMAAgent
                 else if (json.Contains("MOUSE_CLICK"))
                 {
                     SetCursorPos(x, y);
+                    // Personal website / app (hidden in the frame): remote clicks and scrolls stay out of it
+                    if (PrivacyMask.IsHiddenAt(new Point(x, y))) return;
                     uint down = MOUSEEVENTF_LEFTDOWN;
                     uint up = MOUSEEVENTF_LEFTUP;
                     if (json.Contains("RIGHT"))
@@ -1926,10 +2259,13 @@ namespace EktaDMAAgent
                 {
                     int delta = ExtractInt(json, "delta");
                     if (delta == 0) delta = 120;
+                    if (PrivacyMask.IsHiddenAt(Cursor.Position)) return;
                     mouse_event(MOUSEEVENTF_WHEEL, 0, 0, (uint)delta, 0);
                 }
                 else if (json.Contains("KEY_DOWN") && vk > 0)
                 {
+                    // Key releases always go through, so a key pressed before can never stay stuck down
+                    if (PrivacyMask.IsHiddenWindow(GetForegroundWindow())) return;
                     keybd_event((byte)vk, 0, KEYEVENTF_KEYDOWN, 0);
                 }
                 else if (json.Contains("KEY_UP") && vk > 0)
@@ -1959,6 +2295,7 @@ namespace EktaDMAAgent
                             {
                                 g.CopyFromScreen(Point.Empty, Point.Empty, bounds.Size, CopyPixelOperation.SourceCopy);
                             }
+                            PrivacyMask.Apply(rawBmp, Point.Empty);
 
                             // Online: send a smaller frame (remote input is scaled back in HandleInputEvent)
                             link.FrameScale = link.ScaleFor(bounds.Width);
@@ -2043,10 +2380,7 @@ namespace EktaDMAAgent
                         if (hWnd != IntPtr.Zero)
                         {
                             StringBuilder sb = new StringBuilder(256);
-                            if (GetWindowText(hWnd, sb, 256) > 0)
-                            {
-                                ActiveWindowTitle = sb.ToString();
-                            }
+                            string title = GetWindowText(hWnd, sb, 256) > 0 ? sb.ToString() : ActiveWindowTitle;
                             uint pid;
                             GetWindowThreadProcessId(hWnd, out pid);
                             try
@@ -2055,6 +2389,8 @@ namespace EktaDMAAgent
                                 ActiveProcessName = proc.ProcessName;
                             }
                             catch { }
+                            // A personal website's title (a Gmail address, a video name) is never sent to the server
+                            ActiveWindowTitle = PrivacyMask.IsPersonal(title, ActiveProcessName) ? PrivacyMask.HiddenTitle : title;
                         }
                     }
                 }
@@ -2168,6 +2504,331 @@ namespace EktaDMAAgent
                 ws.Dispose();
             }
             catch { }
+        }
+    }
+
+    // ================= PRIVACY: PERSONAL WEBSITES / APPS =================
+    // A browser window whose title contains a word from the company's list (Admin Console > Profile &
+    // Settings > Personal websites), or an app whose name does, is painted over in every screenshot and
+    // live-view frame before the image leaves this PC. Remote clicks and keys never reach it, and its
+    // title is not sent in heartbeats.
+    public static class PrivacyMask
+    {
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out RECT pvAttribute, int cbAttribute);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmGetWindowAttribute(IntPtr hWnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        private static extern bool QueryFullProcessImageName(IntPtr hProcess, int dwFlags, StringBuilder lpExeName, ref int lpdwSize);
+
+        [DllImport("kernel32.dll")]
+        private static extern bool CloseHandle(IntPtr hObject);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TRANSPARENT = 0x20;
+        private const int WS_EX_TOOLWINDOW = 0x80;
+        private const int WS_EX_LAYERED = 0x80000;
+        private const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
+        private const int DWMWA_CLOAKED = 14;
+        private const uint GA_ROOT = 2;
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+        public const string HiddenTitle = "Personal website (hidden)";
+
+        // Same list as BUILT_IN_SITES in dma/server/src/privacySites.js: used until a DMA server sends the company's own
+        public static readonly string[] DefaultSites = {
+            "WhatsApp", "Facebook", "Instagram", "Messenger", "Telegram", "Snapchat",
+            "YouTube", "Netflix", "Prime Video", "Hotstar", "JioCinema", "Spotify",
+            "Gmail", "Yahoo Mail", "NetBanking", "Net Banking", "Internet Banking", "Online Banking"
+        };
+
+        // Browsers (and the host of Store apps such as Netflix / WhatsApp) are matched on the window title;
+        // any other app only on its own name (WhatsApp.exe, Telegram.exe, ...), so a document that merely
+        // mentions a word stays visible
+        private static readonly HashSet<string> TitleMatchedApps = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+            "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "iexplore", "browser", "chromium",
+            "waterfox", "librewolf", "thorium", "applicationframehost"
+        };
+
+        private static readonly object sync = new object();
+        // The list from each DMA server ("LAN" / "ONLINE"); a word on either one is hidden
+        private static readonly Dictionary<string, string[]> sitesBySource = new Dictionary<string, string[]>();
+        private static string[] sites = Lowered(DefaultSites);
+        private static readonly Dictionary<uint, string> processNames = new Dictionary<uint, string>();
+        private static DateTime processNamesAt = DateTime.UtcNow;
+
+        private class WindowInfo
+        {
+            public IntPtr Handle;
+            public Rectangle Bounds;
+            public uint Pid;
+            public string Title;
+            public bool CanCover;
+            public bool IsPersonal;
+        }
+
+        private static string[] Lowered(IEnumerable<string> words)
+        {
+            List<string> list = new List<string>();
+            foreach (string w in words)
+            {
+                string t = (w ?? "").Trim().ToLowerInvariant();
+                if (t.Length >= 2 && !list.Contains(t)) list.Add(t);
+            }
+            return list.ToArray();
+        }
+
+        // CONFIG from a DMA server: privacySites is its '|'-separated list (empty = hide nothing)
+        public static void SetSites(string source, string joined)
+        {
+            string[] list = (joined ?? "").Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+            lock (sync)
+            {
+                sitesBySource[source] = list;
+                List<string> all = new List<string>();
+                foreach (string[] l in sitesBySource.Values) all.AddRange(l);
+                sites = Lowered(all);
+            }
+        }
+
+        public static bool IsPersonal(string title, string processName)
+        {
+            string[] words;
+            lock (sync) words = sites;
+            if (words.Length == 0) return false;
+            string t = (title ?? "").ToLowerInvariant();
+            string p = (processName ?? "").ToLowerInvariant();
+            bool byTitle = t.Length > 0 && TitleMatchedApps.Contains(p);
+            foreach (string w in words)
+            {
+                if (byTitle && t.Contains(w)) return true;
+                string compact = w.Replace(" ", "");
+                if (compact.Length >= 4 && p.Contains(compact)) return true;
+            }
+            return false;
+        }
+
+        private static string ProcessName(uint pid)
+        {
+            lock (sync)
+            {
+                // Process ids get reused: forget the names every minute
+                if ((DateTime.UtcNow - processNamesAt).TotalSeconds > 60)
+                {
+                    processNames.Clear();
+                    processNamesAt = DateTime.UtcNow;
+                }
+                string cached;
+                if (processNames.TryGetValue(pid, out cached)) return cached;
+            }
+            string name = "";
+            IntPtr h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+            if (h != IntPtr.Zero)
+            {
+                try
+                {
+                    StringBuilder sb = new StringBuilder(1024);
+                    int size = sb.Capacity;
+                    if (QueryFullProcessImageName(h, 0, sb, ref size)) name = Path.GetFileNameWithoutExtension(sb.ToString());
+                }
+                catch { }
+                finally { CloseHandle(h); }
+            }
+            lock (sync) processNames[pid] = name;
+            return name;
+        }
+
+        // Top-level windows on screen now, topmost first
+        private static List<WindowInfo> VisibleWindows()
+        {
+            List<WindowInfo> list = new List<WindowInfo>();
+            StringBuilder sb = new StringBuilder(512);
+            EnumWindows((hWnd, lParam) =>
+            {
+                try
+                {
+                    if (!IsWindowVisible(hWnd) || IsIconic(hWnd)) return true;
+                    int cloaked; // on another virtual desktop / a suspended Store app: not on screen
+                    if (DwmGetWindowAttribute(hWnd, DWMWA_CLOAKED, out cloaked, 4) == 0 && cloaked != 0) return true;
+                    RECT r;
+                    if (DwmGetWindowAttribute(hWnd, DWMWA_EXTENDED_FRAME_BOUNDS, out r, Marshal.SizeOf(typeof(RECT))) != 0 && !GetWindowRect(hWnd, out r)) return true;
+                    if (r.Right <= r.Left || r.Bottom <= r.Top) return true;
+
+                    sb.Length = 0;
+                    GetWindowText(hWnd, sb, sb.Capacity);
+                    uint pid;
+                    GetWindowThreadProcessId(hWnd, out pid);
+                    int ex = GetWindowLong(hWnd, GWL_EXSTYLE);
+                    WindowInfo w = new WindowInfo();
+                    w.Handle = hWnd;
+                    w.Bounds = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+                    w.Pid = pid;
+                    w.Title = sb.ToString();
+                    // Click-through overlays, shadows and see-through popups don't hide what is under them
+                    w.CanCover = (ex & WS_EX_TRANSPARENT) == 0 &&
+                        !((ex & WS_EX_LAYERED) != 0 && ((ex & WS_EX_TOOLWINDOW) != 0 || w.Title.Length == 0));
+                    list.Add(w);
+                }
+                catch { }
+                return true;
+            }, IntPtr.Zero);
+            return list;
+        }
+
+        // Each personal window with the part of it that is on screen (windows above it cut that down).
+        // Callers dispose the regions.
+        private static List<KeyValuePair<WindowInfo, Region>> FindHidden()
+        {
+            List<KeyValuePair<WindowInfo, Region>> result = new List<KeyValuePair<WindowInfo, Region>>();
+            lock (sync) { if (sites.Length == 0) return result; }
+
+            List<WindowInfo> windows = VisibleWindows();
+            HashSet<uint> personalPids = new HashSet<uint>();
+            foreach (WindowInfo w in windows)
+            {
+                w.IsPersonal = IsPersonal(w.Title, ProcessName(w.Pid));
+                if (w.IsPersonal) personalPids.Add(w.Pid);
+            }
+            if (personalPids.Count == 0) return result;
+
+            using (Region covered = new Region(Rectangle.Empty))
+            {
+                foreach (WindowInfo w in windows)
+                {
+                    if (w.IsPersonal)
+                    {
+                        Region visible = new Region(w.Bounds);
+                        visible.Exclude(covered);
+                        result.Add(new KeyValuePair<WindowInfo, Region>(w, visible));
+                    }
+                    // A personal page's own untitled popups (menus, drop-downs) stay hidden with it
+                    bool popupOfPersonal = w.Title.Length == 0 && personalPids.Contains(w.Pid);
+                    if (w.IsPersonal || (w.CanCover && !popupOfPersonal)) covered.Union(w.Bounds);
+                }
+            }
+            return result;
+        }
+
+        private static void Dispose(List<KeyValuePair<WindowInfo, Region>> hidden)
+        {
+            foreach (KeyValuePair<WindowInfo, Region> h in hidden) h.Value.Dispose();
+        }
+
+        // Paints over every personal window on a capture of the screen whose top-left corner is origin
+        public static void Apply(Bitmap bmp, Point origin)
+        {
+            List<KeyValuePair<WindowInfo, Region>> hidden;
+            try { hidden = FindHidden(); }
+            catch { return; }
+            if (hidden.Count == 0) return;
+            try
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                using (SolidBrush fill = new SolidBrush(Color.FromArgb(51, 65, 85)))
+                using (Font font = new Font("Segoe UI", 22f, FontStyle.Bold, GraphicsUnit.Pixel))
+                using (StringFormat center = new StringFormat())
+                using (Matrix identity = new Matrix())
+                {
+                    center.Alignment = StringAlignment.Center;
+                    center.LineAlignment = StringAlignment.Center;
+                    foreach (KeyValuePair<WindowInfo, Region> h in hidden)
+                    {
+                        Region area = h.Value;
+                        area.Translate(-origin.X, -origin.Y);
+                        if (area.IsEmpty(g)) continue;
+                        g.FillRegion(fill, area);
+
+                        // Label in the biggest uncovered piece of the window
+                        RectangleF best = RectangleF.Empty;
+                        foreach (RectangleF piece in area.GetRegionScans(identity))
+                        {
+                            if (piece.Width * piece.Height > best.Width * best.Height) best = piece;
+                        }
+                        if (best.Width >= 120 && best.Height >= 30)
+                        {
+                            g.SetClip(area, CombineMode.Replace);
+                            g.DrawString("Personal content hidden", font, Brushes.White, best, center);
+                            g.ResetClip();
+                        }
+                    }
+                }
+            }
+            catch { }
+            finally { Dispose(hidden); }
+        }
+
+        // Remote click / scroll at this screen point would land on a personal window
+        public static bool IsHiddenAt(Point screenPoint)
+        {
+            List<KeyValuePair<WindowInfo, Region>> hidden;
+            try { hidden = FindHidden(); }
+            catch { return false; }
+            try
+            {
+                foreach (KeyValuePair<WindowInfo, Region> h in hidden)
+                {
+                    if (h.Value.IsVisible(screenPoint)) return true;
+                }
+                return false;
+            }
+            finally { Dispose(hidden); }
+        }
+
+        // Remote keys would go to this (foreground) window
+        public static bool IsHiddenWindow(IntPtr hWnd)
+        {
+            try
+            {
+                if (hWnd == IntPtr.Zero) return false;
+                IntPtr root = GetAncestor(hWnd, GA_ROOT);
+                if (root != IntPtr.Zero) hWnd = root;
+                StringBuilder sb = new StringBuilder(512);
+                GetWindowText(hWnd, sb, sb.Capacity);
+                uint pid;
+                GetWindowThreadProcessId(hWnd, out pid);
+                return IsPersonal(sb.ToString(), ProcessName(pid));
+            }
+            catch { return false; }
         }
     }
 
@@ -2568,6 +3229,7 @@ namespace EktaDMAAgent
         private Label lblProfStatus;
         private EktaToggleSwitch swAutoUpdate;
         private Label lblLatestVersion;
+        private Label lblTracking;
 
         private System.Windows.Forms.Timer uiTimer;
 
@@ -2621,14 +3283,29 @@ namespace EktaDMAAgent
 
             // Default View
             SwitchToView("LOGIN");
+
+            // Started by Windows with a remembered sign-in: straight to the tray (the shift decides when
+            // monitoring runs); without one the login window shows, so the employee signs in once
+            startHidden = Program.StartedByWindows && Program.HasRememberedLogin();
+            if (startHidden) this.Opacity = 0;
         }
+
+        private readonly bool startHidden;
 
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            this.WindowState = FormWindowState.Normal;
-            this.BringToFront();
-            this.Activate();
+            if (startHidden)
+            {
+                this.Hide();
+                this.Opacity = 1;
+            }
+            else
+            {
+                this.WindowState = FormWindowState.Normal;
+                this.BringToFront();
+                this.Activate();
+            }
             StartAfterShown();
         }
 
@@ -2657,6 +3334,101 @@ namespace EktaDMAAgent
             updateCheckTimer.Tick += (s, e) => CheckForUpdatesInBackground();
             updateCheckTimer.Start();
             CheckForUpdatesInBackground();
+
+            scheduleTimer = new System.Windows.Forms.Timer { Interval = 30 * 1000 };
+            scheduleTimer.Tick += (s, e) => ScheduleTick();
+            scheduleTimer.Start();
+            ScheduleTick();
+        }
+
+        // ---- Shift schedule (remembered sign-in only; see Program "REMEMBERED SIGN-IN + SHIFT SCHEDULE") ----
+        private System.Windows.Forms.Timer scheduleTimer;
+        private bool scheduleBusy = false;
+        private DateTime nextShiftFetch = DateTime.MinValue;
+        private DateTime nextAutoSignIn = DateTime.MinValue;
+
+        // Every 30 s: keep today's shift fresh, sign in when the shift is on, out when it is over
+        private async void ScheduleTick()
+        {
+            string email, pass;
+            if (scheduleBusy || !Program.LoadRememberedLogin(out email, out pass)) return;
+            scheduleBusy = true;
+            try
+            {
+                if (Program.ShiftNeedsRefresh() && DateTime.Now >= nextShiftFetch)
+                {
+                    bool rejected = false;
+                    bool reached = await Task.Run(() => Program.RefreshTodayShift(email, pass, out rejected));
+                    if (rejected)
+                    {
+                        AskToSignInAgain("Your EktaHR password was not accepted. Please sign in again.");
+                        return;
+                    }
+                    // Not reached: the saved shift is used meanwhile; ask EktaHR again in 5 minutes
+                    nextShiftFetch = reached ? DateTime.MinValue : DateTime.Now.AddMinutes(5);
+                }
+
+                bool inShift = Program.IsInShift(DateTime.Now);
+                if (inShift && !Program.IsLoggedIn && DateTime.Now >= nextAutoSignIn)
+                {
+                    if (await SignInAsync(email, pass, null))
+                    {
+                        if (Program.IsLoggedIn) ShowTrayBalloon("ektaHr Agent", "Your shift has started - monitoring is on.");
+                    }
+                    else if (Program.LastLoginRejected)
+                    {
+                        AskToSignInAgain(lblLoginError.Text);
+                    }
+                    else
+                    {
+                        nextAutoSignIn = DateTime.Now.AddMinutes(2);
+                    }
+                }
+                else if (!inShift && Program.IsLoggedIn)
+                {
+                    Program.StopSession();
+                    ShowOffShift();
+                    ShowTrayBalloon("ektaHr Agent", "Your shift is over - monitoring has stopped.");
+                }
+                else if (!inShift && pnlLoginView.Visible)
+                {
+                    ShowOffShift();
+                }
+            }
+            catch { }
+            finally { scheduleBusy = false; }
+        }
+
+        // Signed in, outside the shift: the login screen says when monitoring starts
+        private void ShowOffShift()
+        {
+            string email, pass;
+            if (Program.LoadRememberedLogin(out email, out pass)) txtEmail.Text = email;
+            txtPassword.Text = "";
+            SwitchToView("LOGIN");
+            ShowLoginMessage(Program.OffShiftMessage(DateTime.Now), false);
+            trayIcon.Text = "ektaHr Agent - Off shift";
+        }
+
+        // The remembered sign-in no longer works (password changed, ...): forget it and show the login window
+        private void AskToSignInAgain(string message)
+        {
+            Program.ForgetRememberedLogin();
+            if (Program.IsLoggedIn) Program.StopSession();
+            SwitchToView("LOGIN");
+            ShowLoginMessage(message, true);
+            trayIcon.Text = "ektaHr Agent - Logged Out";
+            this.Show();
+            this.WindowState = FormWindowState.Normal;
+            this.BringToFront();
+            ShowTrayBalloon("ektaHr Agent", "Please sign in again to keep the agent running.", ToolTipIcon.Warning);
+        }
+
+        // Login screen line: amber for information (off shift), red for errors
+        private void ShowLoginMessage(string text, bool isError)
+        {
+            lblLoginError.ForeColor = isError ? Color.FromArgb(239, 68, 68) : Color.FromArgb(239, 170, 31);
+            lblLoginError.Text = text;
         }
 
         private async void CheckForUpdatesInBackground()
@@ -2693,18 +3465,24 @@ namespace EktaDMAAgent
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            if (Program.IsLoggedIn && e.CloseReason == CloseReason.UserClosing)
+            // Signed in (also outside the shift): keep running in the tray, so monitoring can start with the shift
+            if ((Program.IsLoggedIn || Program.HasRememberedLogin()) && e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
-                this.Hide();
-                if (trayIcon != null)
-                {
-                    trayIcon.ShowBalloonTip(3000, "ektaHr Monitoring", "Tracking is active in the background. Double-click tray icon to open.", ToolTipIcon.Info);
-                }
+                HideToTray();
                 return;
             }
             if (trayIcon != null) trayIcon.Visible = false;
             base.OnFormClosing(e);
+        }
+
+        private void HideToTray()
+        {
+            this.Hide();
+            if (trayIcon == null) return;
+            trayIcon.ShowBalloonTip(3000, "ektaHr Monitoring", Program.IsLoggedIn
+                ? "Tracking is active in the background. Double-click tray icon to open."
+                : "Monitoring starts by itself at your shift. Double-click tray icon to open.", ToolTipIcon.Info);
         }
 
         protected override void WndProc(ref Message m)
@@ -2956,13 +3734,9 @@ namespace EktaDMAAgent
             };
             btnExit.Click += (s, e) =>
             {
-                if (Program.IsLoggedIn)
+                if (Program.IsLoggedIn || Program.HasRememberedLogin())
                 {
-                    this.Hide();
-                    if (trayIcon != null)
-                    {
-                        trayIcon.ShowBalloonTip(3000, "ektaHr Monitoring", "Tracking is active in the background. Double-click tray icon to open.", ToolTipIcon.Info);
-                    }
+                    HideToTray();
                 }
                 else
                 {
@@ -3125,7 +3899,8 @@ namespace EktaDMAAgent
             EktaCardPanel cardApp = new EktaCardPanel() { Location = new Point(24, 246), Size = new Size(396, 250), BorderRadius = 10 };
 
             Label l1;
-            CreateDataRow(cardApp, "Tracking", "Enabled", 12, out l1);
+            // When monitoring runs: today's shift from EktaHR, or all day when there are no shift times
+            CreateDataRow(cardApp, "Tracking", Program.TrackingText(), 12, out lblTracking);
             CreateDataRow(cardApp, "Screenshot frequency", "5 minute(s)", 42, out l1);
             // Non-production builds say so next to the version
             CreateDataRow(cardApp, "Version", Program.AgentVersion + (BuildEnv.Name == "production" ? "" : " (" + BuildEnv.Name + ")"), 72, out l1);
@@ -3315,17 +4090,20 @@ namespace EktaDMAAgent
 
             if (string.IsNullOrEmpty(email) || string.IsNullOrEmpty(pass))
             {
-                lblLoginError.Text = "Please enter both email and password.";
+                ShowLoginMessage("Please enter both email and password.", true);
                 return;
             }
             await SignInAsync(email, pass, sender as Control);
         }
 
-        // Signs in (Login button, or automatically right after an update restart) and starts tracking
+        // Signs in (Login button, the shift schedule, or right after an update restart) and remembers the
+        // sign-in. Tracking starts now when the shift is on (or no shift times are known); otherwise the
+        // login screen says when it starts. True = the sign-in was accepted.
         private async Task<bool> SignInAsync(string email, string pass, Control loginButton)
         {
             if (loginButton != null) loginButton.Enabled = false;
-            lblLoginError.Text = "Signing in...";
+            ShowLoginMessage("Signing in...", false);
+            Program.LastLoginRejected = false;
 
             // Off the window's thread, so the window stays responsive while signing in
             string displayName = email;
@@ -3343,16 +4121,34 @@ namespace EktaDMAAgent
             if (loginButton != null) loginButton.Enabled = true;
             if (!ok)
             {
-                lblLoginError.Text = err;
+                ShowLoginMessage(err, true);
                 return false;
             }
 
-            lblLoginError.Text = "";
+            Program.SaveRememberedLogin(email, pass);
+            if (Program.ShiftNeedsRefresh())
+            {
+                bool rejected = false;
+                await Task.Run(() => Program.RefreshTodayShift(email, pass, out rejected));
+            }
+            if (!Program.IsInShift(DateTime.Now))
+            {
+                ShowOffShift();
+                return true;
+            }
+
+            ShowLoginMessage("", false);
             Program.StartSession(displayName, Program.ServerHttpUrl, Program.ServerWsUrl, deviceId, hostname, email, pass);
 
             SwitchToView("HOME");
-            trayIcon.Text = "ektaHr Agent - Active (" + displayName + ")";
+            SetTrayText("ektaHr Agent - Active (" + displayName + ")");
             return true;
+        }
+
+        // NotifyIcon refuses a tooltip over 63 characters (a long email address)
+        private void SetTrayText(string text)
+        {
+            trayIcon.Text = text.Length > 63 ? text.Substring(0, 60) + "..." : text;
         }
 
         // Prompts for the DMA server IP, verifies it on the LAN and saves it to domain.txt for future logins
@@ -3416,6 +4212,8 @@ namespace EktaDMAAgent
 
         private void BtnLogout_Click(object sender, EventArgs e)
         {
+            // Logged out on purpose: no more signing in by itself at the next shift
+            Program.ForgetRememberedLogin();
             Program.StopSession();
 
             // Logged out = nobody is working in the agent: install a downloaded update (restarts at the
@@ -3428,7 +4226,7 @@ namespace EktaDMAAgent
             }
 
             SwitchToView("LOGIN");
-            lblLoginError.Text = "Logged out successfully.";
+            ShowLoginMessage("Logged out successfully.", true);
             trayIcon.Text = "ektaHr Agent - Logged Out";
         }
 
@@ -3436,9 +4234,11 @@ namespace EktaDMAAgent
         {
             try
             {
+                // Signed in on another PC now: signing back in here at the next check would throw that one out
+                Program.ForgetRememberedLogin();
                 Program.StopSession();
                 SwitchToView("LOGIN");
-                if (lblLoginError != null) lblLoginError.Text = msg;
+                if (lblLoginError != null) ShowLoginMessage(msg, true);
                 if (trayIcon != null) trayIcon.Text = "ektaHr Agent - Logged Out";
                 this.Show();
                 this.WindowState = FormWindowState.Normal;
@@ -3481,6 +4281,7 @@ namespace EktaDMAAgent
             // Auto update on: install a downloaded update right away (waits while the admin is viewing
             // this screen); the agent restarts and signs the employee straight back in
             if (stagedUpdate != null && autoUpdate) InstallUpdateAndRestart(false);
+            lblTracking.Text = Program.TrackingText();
 
             if (Program.IsLoggedIn)
             {

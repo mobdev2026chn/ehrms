@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, Mail, Shield, Globe, Wifi, RefreshCw, Download, LogOut, Server, Monitor, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { getServerBaseUrl, getServerInfo, isOnlineOrigin } from '../config';
+import PrivacySites from './PrivacySites';
 
 // Profile + Settings tab: who is signed in, this Admin Console's version and auto-update (office
 // server inside the Admin Console updates itself from the online server - adminConsoleUpdate.js).
@@ -225,6 +226,8 @@ export default function SettingsPanel({ user, onlineState, onLogout }) {
           </div>
         )}
       </div>
+
+      <PrivacySites user={user} />
     </div>
   );
 }

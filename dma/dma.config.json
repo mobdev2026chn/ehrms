@@ -3,8 +3,8 @@
 
   "environment": "production",
   "serverMode": "online",
-  "agentVersion": "1.2.1",
-  "adminConsoleVersion": "2026.10.31.3",
+  "agentVersion": "1.2.2",
+  "adminConsoleVersion": "2026.10.31.4",
 
   "environments": {
     "production": {
