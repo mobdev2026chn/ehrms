@@ -411,4 +411,12 @@ function getConnectedAgents() {
   return connected;
 }
 
-module.exports = { initWebSocketServer, getConnectedAgents };
+// An admin is watching / controlling a screen right now (updates wait until they are done)
+function hasActiveViewers() {
+  for (const group of viewerSockets.values()) {
+    for (const vWs of group) if (vWs.readyState === WebSocket.OPEN) return true;
+  }
+  return false;
+}
+
+module.exports = { initWebSocketServer, getConnectedAgents, hasActiveViewers };

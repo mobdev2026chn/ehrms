@@ -95,6 +95,8 @@ namespace EktaHR.AdminConsole
 
         /// Returns the folder holding node\node.exe and server\src\index.js:
         ///  - a "dma-server" folder next to the exe, if one was shipped that way; else
+        ///  - the newest Admin Console version on this PC: one the office server installed itself
+        ///    (auto-update, %LOCALAPPDATA%\EktaHR DMA\server-<newer ver>) - never an older one; else
         ///  - the server embedded in this exe, unpacked once to %LOCALAPPDATA%\EktaHR DMA\server-<ver>.
         /// Sets BundledServerProblem and returns null on failure.
         private static string ResolveServerRoot()
@@ -103,6 +105,9 @@ namespace EktaHR.AdminConsole
             {
                 string beside = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "dma-server");
                 if (File.Exists(Path.Combine(beside, "node", "node.exe"))) return beside;
+
+                string updated = NewestInstalledServer();
+                if (updated != null) return updated;
 
                 string target = Path.Combine(DataDir, "server-" + ServerPayloadVersion);
                 string ready = Path.Combine(target, "ready.ok");
@@ -136,6 +141,30 @@ namespace EktaHR.AdminConsole
                 BundledServerProblem = "Could not unpack the DMA server: " + ex.Message;
                 return null;
             }
+        }
+
+        // Newest complete server-<version> folder that is newer than the one inside this exe, or null
+        private static string NewestInstalledServer()
+        {
+            try
+            {
+                if (!Directory.Exists(DataDir)) return null;
+                Version embedded;
+                if (!Version.TryParse(ServerPayloadVersion, out embedded)) return null;
+                string best = null;
+                Version bestVersion = embedded;
+                foreach (string dir in Directory.GetDirectories(DataDir, "server-*"))
+                {
+                    Version v;
+                    if (!Version.TryParse(Path.GetFileName(dir).Substring("server-".Length), out v) || v <= bestVersion) continue;
+                    if (!File.Exists(Path.Combine(dir, "ready.ok")) || !File.Exists(Path.Combine(dir, "node", "node.exe")) ||
+                        !File.Exists(Path.Combine(dir, "server", "src", "index.js"))) continue;
+                    best = dir;
+                    bestVersion = v;
+                }
+                return best;
+            }
+            catch { return null; }
         }
 
         private static bool TryStartBundledServer()

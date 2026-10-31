@@ -86,6 +86,7 @@ The admin sees an employee wherever they log in: on the office LAN **and** from 
   cd dma
   powershell -ExecutionPolicy Bypass -File .\build.ps1 -AgentOnly   # agent only -> agent\publish + release\EktaHR-DMA-<today>
   powershell -ExecutionPolicy Bypass -File .\build.ps1              # agent + Admin Console (office server, console, Node packed inside)
+  powershell -ExecutionPolicy Bypass -File .\build.ps1 -AdminOnly   # Admin Console only, packing the published agent (agent\publish)
   ```
   - Versions and environment come from [`dma.config.json`](dma.config.json) (see **Release config** below).
   - `-Env development` builds another environment than the config file's; `-Release <folder name>` picks the release folder.
@@ -169,6 +170,32 @@ Employee PCs update themselves; only the first 1.1.0 agent has to be copied by h
 
 - Agents from before 1.1.0 report no version and can't auto-update. The Admin Console marks them "Agent: old version — update by hand once".
 - An office server (inside the Admin Console exe) offers the agent it was built with. Rebuild the Admin Console when you want office servers to carry the new agent too, though the online server alone is enough.
+
+## 🔄 Admin Console Auto-Update (2026.10.31.1 and later) + Profile & Settings
+
+The office server inside the Admin Console updates itself from the online server. Only the first self-updating version (`2026.10.31.1`) has to be copied by hand.
+
+**Releasing a new Admin Console version**
+
+1. In `dma.config.json`, raise `adminConsoleVersion`, for example `"2026.10.31.1"` → `"2026.11.05.1"`.
+2. Build: `powershell -ExecutionPolicy Bypass -File .\build.ps1 -AdminOnly` (or without `-AdminOnly` to also build a new agent). This rebuilds `admin_console/dist` too.
+3. Push, then on the online server run `git pull` and `pm2 restart <dma-app>`.
+
+**What happens next**
+
+- The online server hands out the release straight from its git checkout: `server/src`, `admin_console/dist`, the published agent and `dma.config.json`.
+  - These routes are public, and `.env` is never included: `/api/v1/admin-console/latest`, `/manifest` and `/file`.
+- Every office server checks every 30 minutes. When **Auto update** is on and no admin is watching a screen, it downloads only the changed files and sets them up as `%LOCALAPPDATA%\EktaHR DMA\server-<new version>`.
+  - It reuses its Node, npm packages and `.env`, then restarts into the new version in about a second.
+  - Admins stay signed in, and the console reloads.
+- The Admin Console exe always starts the newest installed version. The version before is kept, and older ones are removed.
+- A version that needs different npm packages (`server/package.json` dependencies) can't update this way. Settings shows a message, and the new Admin Console exe has to be copied by hand once.
+
+**Profile & Settings tab** (also opened by clicking your name at the top right)
+
+- **Profile:** name, email, role, environment, and which servers you're signed in to.
+- **Admin Console:** version, latest version, **Auto update** switch, **Update** (install now) and **Check now**.
+- On the online server's own console, the version is shown, with a note that it's updated by its deploy.
 
 ## ⚙️ Idle Time Setting (one place)
 

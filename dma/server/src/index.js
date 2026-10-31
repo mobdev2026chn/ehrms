@@ -11,10 +11,12 @@ const { getAllDevices, getLanAgents, postScreenshot, getScreenshots, serveScreen
 const { startRetentionJob, STORAGE_DIR } = require('./storage/fileStore');
 const { getActivitySummary, getEmployeeActivity } = require('./controllers/activityController');
 const { getAlerts } = require('./alerts');
-const { initWebSocketServer } = require('./ws/signalingServer');
+const { initWebSocketServer, hasActiveViewers } = require('./ws/signalingServer');
 const { initIdleTracker, getIdleLogs, getDailyIdleSummary } = require('./db/idleTracker');
 const { DMA_MODE, IS_ONLINE, MODE_SOURCE, ONLINE_SERVER_URL, DMA_ENV, ENV_SOURCE, HRMS_API_URL, USE_DATABASE, JWT_SECRET_SOURCE } = require('./config');
 const { getPublishedAgent } = require('./agentUpdate');
+const adminConsoleUpdate = require('./adminConsoleUpdate');
+const { startAutoUpdate } = adminConsoleUpdate;
 
 console.log(`[Env] ${DMA_ENV} (from ${ENV_SOURCE}): logins via ${HRMS_API_URL}` +
   `${USE_DATABASE && process.env.MONGODB_URI ? ' (DEV_HRMS database first)' : ''}`);
@@ -50,6 +52,42 @@ app.get('/download/agent', downloadAgent);
 // Newest agent this server hands out: { version, sha256, size } - used by Settings > Update in the
 // agent, and handy in a browser to see which version is hosted
 app.get('/api/v1/agent/latest', (req, res) => res.json({ success: true, ...(getPublishedAgent() || { version: null }) }));
+
+// Admin Console auto-update (adminConsoleUpdate.js). Public: the release this server hands out
+// (server code, web console, agent - never .env). Admin only: this console's version, settings, update.
+app.get('/api/v1/admin-console/latest', (req, res) => res.json({ success: true, version: adminConsoleUpdate.publishedVersion() }));
+app.get('/api/v1/admin-console/manifest', (req, res) => res.json({ success: true, ...adminConsoleUpdate.getManifest() }));
+app.get('/api/v1/admin-console/file', (req, res) => {
+  const file = adminConsoleUpdate.resolvePackageFile(String(req.query.path || ''));
+  if (!file) return res.status(404).json({ error: 'Not part of the Admin Console release' });
+  res.sendFile(file);
+});
+app.get('/api/v1/admin-console/status', verifyTokenMiddleware, requireAdminRole, async (req, res) => {
+  if (req.query.check === '1' && adminConsoleUpdate.CAN_SELF_UPDATE) await adminConsoleUpdate.checkLatest();
+  const agent = getPublishedAgent();
+  res.json({
+    success: true, ...adminConsoleUpdate.getStatus(),
+    env: DMA_ENV, mode: DMA_MODE, onlineServerUrl: ONLINE_SERVER_URL, agentVersion: agent ? agent.version : null
+  });
+});
+app.put('/api/v1/admin-console/settings', verifyTokenMiddleware, requireAdminRole, (req, res) => {
+  if (typeof (req.body || {}).autoUpdate !== 'boolean') return res.status(400).json({ success: false, error: 'autoUpdate (true/false) required' });
+  res.json({ success: true, settings: adminConsoleUpdate.writeSettings({ autoUpdate: req.body.autoUpdate }) });
+});
+app.post('/api/v1/admin-console/update', verifyTokenMiddleware, requireAdminRole, async (req, res) => {
+  if (!adminConsoleUpdate.CAN_SELF_UPDATE) {
+    return res.status(400).json({ success: false, error: 'This console runs on a server that is updated by its deploy (git pull).' });
+  }
+  try {
+    await adminConsoleUpdate.checkLatest();
+    const status = adminConsoleUpdate.getStatus();
+    if (!status.updateAvailable) return res.json({ success: true, updating: false, ...status });
+    // Files are put in place first; the server then restarts into the new version (~1 s)
+    res.json({ success: true, ...(await adminConsoleUpdate.installUpdate()) });
+  } catch (e) {
+    res.status(500).json({ success: false, error: e.message });
+  }
+});
 
 // Devices API
 app.get('/api/v1/devices', verifyTokenMiddleware, requireAdminRole, getAllDevices);
@@ -120,15 +158,29 @@ if (fs.existsSync(adminDistPath)) {
 }
 
 const PORT = process.env.PORT || 2005;
+// Address to listen on: all networks (default), or e.g. 127.0.0.1 behind a reverse proxy / for tests
+const LISTEN_HOST = process.env.LISTEN_HOST || '0.0.0.0';
 const server = http.createServer(app);
 
 // Initialize WebSocket Signaling
 initWebSocketServer(server);
 
-server.listen(PORT, '0.0.0.0', () => {
+// After an Admin Console update the previous server may still be closing: retry while the port is busy
+let listenTries = 0;
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE' && ++listenTries <= 30) {
+    console.warn(`[EktaDMA Server] Port ${PORT} still in use - retrying (${listenTries})`);
+    setTimeout(() => server.listen(PORT, LISTEN_HOST), 1000);
+    return;
+  }
+  console.error('[EktaDMA Server] Cannot listen:', err.message);
+  process.exit(1);
+});
+
+server.listen(PORT, LISTEN_HOST, () => {
   console.log(`=======================================================`);
-  console.log(`[EktaDMA Server] Running on http://0.0.0.0:${PORT}`);
-  console.log(`[WebSocket] Listening on ws://0.0.0.0:${PORT}/agent & /viewer`);
+  console.log(`[EktaDMA Server] Running on http://${LISTEN_HOST}:${PORT}`);
+  console.log(`[WebSocket] Listening on ws://${LISTEN_HOST}:${PORT}/agent & /viewer`);
   console.log(`[LAN Guard] ${LAN_ONLY ? 'LAN-only mode ON (public IPs are rejected)' : 'LAN-only mode OFF'}`);
   console.log(IS_ONLINE
     ? '[Mode] ONLINE server: employees on any network, agent & viewer tokens required'
@@ -140,7 +192,7 @@ server.listen(PORT, '0.0.0.0', () => {
 
 // Zero-Conf UDP LAN Server Beacon for Instant Auto-Discovery (office LAN servers only — agents
 // must never mistake the online server for the office one)
-if (!IS_ONLINE) try {
+function startUdpBeacon(attempt) {
   const dgram = require('dgram');
   const udpServer = dgram.createSocket('udp4');
 
@@ -156,12 +208,27 @@ if (!IS_ONLINE) try {
   });
 
   udpServer.on('error', (err) => {
+    try { udpServer.close(); } catch (e) {}
+    // The previous server (Admin Console update) may still hold the port for a moment
+    if (err.code === 'EADDRINUSE' && attempt < 30) {
+      setTimeout(() => startUdpBeacon(attempt + 1), 1000);
+      return;
+    }
     console.error('[UDP Discovery] Server error:', err.message);
   });
 
-  udpServer.bind(9002, '0.0.0.0', () => {
+  udpServer.bind(9002, LISTEN_HOST, () => {
     console.log(`[UDP Discovery] Listening for LAN auto-discovery beacons on UDP port 9002`);
   });
-} catch (udpErr) {
-  console.error('[UDP Discovery] Failed to bind UDP beacon:', udpErr.message);
 }
+
+if (!IS_ONLINE) {
+  try {
+    startUdpBeacon(1);
+  } catch (udpErr) {
+    console.error('[UDP Discovery] Failed to bind UDP beacon:', udpErr.message);
+  }
+}
+
+// Office server inside the Admin Console: keep itself up to date from the online server
+startAutoUpdate(hasActiveViewers);

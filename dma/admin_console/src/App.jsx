@@ -3,8 +3,9 @@ import LoginModal from './components/LoginModal';
 import DeviceGrid from './components/DeviceGrid';
 import RemoteViewer from './components/RemoteViewer';
 import ActivityReport from './components/ActivityReport';
+import SettingsPanel from './components/SettingsPanel';
 import IdleAlerts from './components/IdleAlerts';
-import { LogOut, Monitor, Activity, Wifi, RefreshCw, CalendarDays } from 'lucide-react';
+import { LogOut, Monitor, Activity, Wifi, RefreshCw, CalendarDays, Settings } from 'lucide-react';
 
 import {
   loadServerInfo, getServerInfo, isOnlineOrigin, hasSeparateOnlineServer,
@@ -250,7 +251,8 @@ export default function App() {
             }}
           />
 
-          <div style={{ textAlign: 'right' }}>
+          {/* Opens Profile & Settings */}
+          <div style={{ textAlign: 'right', cursor: 'pointer' }} title="Profile & Settings" onClick={() => setActiveTab('SETTINGS')}>
             <div style={{ fontSize: '0.9rem', fontWeight: 600, color: '#0f172a' }}>
               {user?.fullName || user?.username}
             </div>
@@ -310,7 +312,8 @@ export default function App() {
         <div style={{ display: 'inline-flex', background: '#f1f5f9', padding: '4px', borderRadius: '10px', border: '1px solid #e2e8f0', marginBottom: '18px' }}>
           {[
             { key: 'LIVE', label: 'Live Devices', icon: <Monitor size={16} /> },
-            { key: 'ACTIVITY', label: 'Activity Report', icon: <CalendarDays size={16} /> }
+            { key: 'ACTIVITY', label: 'Activity Report', icon: <CalendarDays size={16} /> },
+            { key: 'SETTINGS', label: 'Profile & Settings', icon: <Settings size={16} /> }
           ].map(t => (
             <button
               key={t.key}
@@ -336,7 +339,9 @@ export default function App() {
           ))}
         </div>
 
-        {activeTab === 'ACTIVITY' ? (
+        {activeTab === 'SETTINGS' ? (
+          <SettingsPanel user={user} onlineState={onlineState} onLogout={handleLogout} />
+        ) : activeTab === 'ACTIVITY' ? (
           <ActivityReport />
         ) : (
         /* Device Grid Component */
